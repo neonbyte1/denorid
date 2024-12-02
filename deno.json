@@ -1,0 +1,18 @@
+{
+  "tasks": {
+    "dev": "deno run --watch main.ts"
+  },
+  "workspace":[
+    "./packages/core"
+  ],
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1"
+  },
+  "compilerOptions": {
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true
+  },
+  "lint": {
+    "exclude": ["node_modules/"]
+  }
+}
