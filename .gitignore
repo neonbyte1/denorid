@@ -1,0 +1,13 @@
+.idea/
+.vs/
+.vscode/
+.vscode-test/
+.DS_Store
+/[Bb]uild/
+/[Cc]ov/
+/[Cc]overage/
+/[Dd]ata/
+/[Dd]ist/
+*.env
+*.log
+*.tmp
