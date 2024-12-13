@@ -23,6 +23,13 @@
     "dependencies": [
       "jsr:@std/assert@^1.0.9",
       "jsr:@std/fmt@^1.0.3"
-    ]
+    ],
+    "members": {
+      "packages/logger": {
+        "dependencies": [
+          "jsr:@std/fmt@^1.0.3"
+        ]
+      }
+    }
   }
 }

@@ -3,7 +3,8 @@
     "dev": "deno run --watch main.ts"
   },
   "workspace":[
-    "./packages/core"
+    "./packages/core",
+    "./packages/logger"
   ],
   "imports": {
     "@std/assert": "jsr:@std/assert@^1.0.9",

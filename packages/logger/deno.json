@@ -3,5 +3,8 @@
   "version": "0.1.0",
   "exports": {
     ".": "./mod.ts"
+  },
+  "imports": {
+    "@std/fmt": "jsr:@std/fmt@^1.0.3"
   }
 }
