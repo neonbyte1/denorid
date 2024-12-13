@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-PKG_DIR="${SCRIPT_DIR}/packages"
+PKG_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)/packages"
 
 function die() {
   echo "❌ $1"
@@ -37,9 +36,6 @@ if [[ \
 ]]; then
   if ! test -z "${GITHUB_RUN_ID}"; then
     echo "☁️  publishing to https://jsr.io/@denorid/${1} ..."
-
-    cp "${SCRIPT_DIR}/README.md" .
-    cp "${SCRIPT_DIR}/LICENSE.md" .
 
     npx jsr publish
   else
