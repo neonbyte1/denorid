@@ -1,7 +1,7 @@
 .idea/
 .vs/
-.vscode/
-.vscode-test/
+.vscode/*
+!/.vscode/settings.json
 .DS_Store
 /[Bb]uild/
 /[Cc]ov/
