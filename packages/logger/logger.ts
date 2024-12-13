@@ -55,8 +55,8 @@ export class Logger implements LoggerService {
   /**
    * Creates a new `Logger` instance with optional context and configuration options.
    *
-   * @param context - The context or scope of the logger, typically a module or component name.
-   * @param options - Partial configuration for the logger.
+   * @param {string|null} context - The context or scope of the logger, typically a module or component name.
+   * @param {Partial<LoggerOptions>|undefined} options - Partial configuration for the logger.
    */
   public constructor(
     private readonly context: string | null,
@@ -83,89 +83,119 @@ export class Logger implements LoggerService {
   /**
    * Logs a debug  message.
    *
-   * @param message - The message to log.
-   * @param params - Additional arguments or objects to log.
+   * @param {unknown} message - The message to log.
+   * @param {unknown[]} params - Additional arguments or objects to log.
    */
   public debug(
     message: unknown,
     ...params: unknown[]
   ): void {
-    this.formatAndPrint("debug", message, null, ...params);
+    this.formatAndPrint(
+      "debug",
+      message,
+      null,
+      params.length > 1 ? params : params.at(0),
+    );
   }
 
   /**
    * Logs a verbose  message.
    *
-   * @param message - The message to log.
-   * @param params - Additional arguments or objects to log.
+   * @param {unknown} message - The message to log.
+   * @param {unknown[]} params - Additional arguments or objects to log.
    */
   public verbose(
     message: unknown,
     ...params: unknown[]
   ): void {
-    this.formatAndPrint("verbose", message, null, ...params);
+    this.formatAndPrint(
+      "verbose",
+      message,
+      null,
+      params.length > 1 ? params : params.at(0),
+    );
   }
 
   /**
    * Logs a standard log  message.
    *
-   * @param message - The message to log.
-   * @param params - Additional arguments or objects to log.
+   * @param {unknown} message - The message to log.
+   * @param {unknown[]} params - Additional arguments or objects to log.
    */
   public log(
     message: unknown,
     ...params: unknown[]
   ): void {
-    this.formatAndPrint("log", message, null, ...params);
+    this.formatAndPrint(
+      "log",
+      message,
+      null,
+      params.length > 1 ? params : params.at(0),
+    );
   }
 
   /**
    * Logs a warning message.
    *
-   * @param message - The message to log.
-   * @param params - Additional arguments or objects to log.
+   * @param {unknown} message - The message to log.
+   * @param {unknown[]} params - Additional arguments or objects to log.
    */
   public warn(
     message: unknown,
     ...params: unknown[]
   ): void {
-    this.formatAndPrint("warn", message, null, ...params);
+    this.formatAndPrint(
+      "warn",
+      message,
+      null,
+      params.length > 1 ? params : params.at(0),
+    );
   }
 
   /**
    * Logs an error message.
    *
-   * @param message - The message to log.
-   * @param params - Additional arguments or objects to log.
+   * @param {unknown} message - The message to log.
+   * @param {unknown[]} params - Additional arguments or objects to log.
    */
   public error(
     message: unknown,
     ...params: unknown[]
   ): void {
-    this.formatAndPrint("error", message, null, ...params);
+    this.formatAndPrint(
+      "error",
+      message,
+      null,
+      params.length > 1 ? params : params.at(0),
+    );
   }
 
   /**
    * Logs a fatal error message, indicating critical errors.
    *
-   * @param message - The message to log.
-   * @param params - Additional arguments or objects to log.
+   * @param {unknown} message - The message to log.
+   * @param {unknown[]} params - Additional arguments or objects to log.
    */
   public fatal(
     message: unknown,
     ...params: unknown[]
   ): void {
-    this.formatAndPrint("fatal", message, null, ...params);
+    this.formatAndPrint(
+      "fatal",
+      message,
+      null,
+      params.length > 1 ? params : params.at(0),
+    );
   }
 
   /**
    * Logs a debug-level message using the global logger instance.
    * This method is overloaded to allow specifying optional context and additional arguments.
    *
-   * @param message - The main message to log. Can be a string, number, boolean, null, or undefined.
-   * @param context - (Optional) The logging context, typically indicating the source or scope of the log.
+   * @param {unknown} message - The main message to log. Can be a string, number, boolean, null, or undefined.
+   * @param {string} context - The logging context, typically indicating the source or scope of the log.
    *                  If omitted, context may be part of `contextOrArgs`.
-   * @param args - (Optional) Additional data to log alongside the message.
+   * @param {unknown|undefined} args - (Optional) Additional data to log alongside the message.
    *               Can be omitted if the second parameter is `contextOrArgs`.
    */
   public static debug(
@@ -177,8 +207,8 @@ export class Logger implements LoggerService {
    * Logs a debug-level message using the global logger instance.
    * This overload allows for passing only a single context or additional argument.
    *
-   * @param message - The main message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
+   * @param {unknown} message - The main message to log.
+   * @param {unknown|undefined} contextOrArgs - (Optional) Either the logging context (a string) or additional data to log.
    */
   public static debug(
     message: unknown,
@@ -188,9 +218,9 @@ export class Logger implements LoggerService {
    * Logs a debug-level message using the global logger instance.
    * This is the actual implementation that handles all overloads.
    *
-   * @param message - The main message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
-   * @param args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
+   * @param {unknown} message - The main message to log.
+   * @param {unknown} contextOrArgs - Either the logging context (a string) or additional data to log.
+   * @param {unknown} args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
    */
   public static debug(
     message: unknown,
@@ -204,10 +234,10 @@ export class Logger implements LoggerService {
    * Logs a verbose-level message using the global logger instance.
    * This method is overloaded to allow specifying optional context and additional arguments.
    *
-   * @param message - The main message to log. Can be a string, number, boolean, null, or undefined.
-   * @param context - (Optional) The logging context, typically indicating the source or scope of the log.
+   * @param {unknown} message - The main message to log. Can be a string, number, boolean, null, or undefined.
+   * @param {string} context - The logging context, typically indicating the source or scope of the log.
    *                  If omitted, context may be part of `contextOrArgs`.
-   * @param args - (Optional) Additional data to log alongside the message.
+   * @param {unknown|undefined} args - (Optional) Additional data to log alongside the message.
    *               Can be omitted if the second parameter is `contextOrArgs`.
    */
   public static verbose(
@@ -219,8 +249,8 @@ export class Logger implements LoggerService {
    * Logs a verbose-level message using the global logger instance.
    * This overload allows for passing only a single context or additional argument.
    *
-   * @param message - The main message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
+   * @param {unknown} message - The main message to log.
+   * @param {unknown|undefined} contextOrArgs - Either the logging context (a string) or additional data to log.
    */
   public static verbose(
     message: unknown,
@@ -230,9 +260,9 @@ export class Logger implements LoggerService {
    * Logs a verbose-level message using the global logger instance.
    * This is the actual implementation that handles all overloads.
    *
-   * @param message - The main message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
-   * @param args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
+   * @param {unknown} message - The main message to log.
+   * @param {unknown|undefined} contextOrArgs - Either the logging context (a string) or additional data to log.
+   * @param {unknown|undefined} args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
    */
   public static verbose(
     message: unknown,
@@ -246,10 +276,10 @@ export class Logger implements LoggerService {
    * Logs a message at the "log" level using the global logger instance.
    * This method is overloaded to allow specifying optional context and additional arguments.
    *
-   * @param message - The main message to log. Can be a string, number, boolean, null, or undefined.
-   * @param context - (Optional) The logging context, typically indicating the source or scope of the log.
+   * @param {undefined} message - The main message to log. Can be a string, number, boolean, null, or undefined.
+   * @param {string} context - The logging context, typically indicating the source or scope of the log.
    *                  If omitted, context may be part of `contextOrArgs`.
-   * @param args - (Optional) Additional data to log alongside the message.
+   * @param {unknown|undefined} args - (Optional) Additional data to log alongside the message.
    *               Can be omitted if the second parameter is `contextOrArgs`.
    */
   public static log(
@@ -272,9 +302,9 @@ export class Logger implements LoggerService {
    * Logs a message at the "log" level using the global logger instance.
    * This is the actual implementation that handles all overloads.
    *
-   * @param message - The main message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
-   * @param args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
+   * @param {unknown} message - The main message to log.
+   * @param {unknown|undefined} contextOrArgs - Either the logging context (a string) or additional data to log.
+   * @param {unknown|undefined} args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
    */
   public static log(
     message: unknown,
@@ -288,10 +318,10 @@ export class Logger implements LoggerService {
    * Logs a warning message at the "warn" level using the global logger instance.
    * This method is overloaded to allow specifying optional context and additional arguments.
    *
-   * @param message - The main warning message to log. Can be a string, number, boolean, null, or undefined.
-   * @param context - (Optional) The logging context, typically indicating the source or scope of the log.
+   * @param {unknown} message - The main warning message to log. Can be a string, number, boolean, null, or undefined.
+   * @param {string} context - The logging context, typically indicating the source or scope of the log.
    *                  If omitted, context may be part of `contextOrArgs`.
-   * @param args - (Optional) Additional data to log alongside the message.
+   * @param {unknown|undefined} args - (Optional) Additional data to log alongside the message.
    *               Can be omitted if the second parameter is `contextOrArgs`.
    */
   public static warn(
@@ -303,8 +333,8 @@ export class Logger implements LoggerService {
    * Logs a warning message at the "warn" level using the global logger instance.
    * This overload allows for passing only a single context or additional argument.
    *
-   * @param message - The main warning message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
+   * @param {unknown} message - The main warning message to log.
+   * @param {unknown|undefined} contextOrArgs - Either the logging context (a string) or additional data to log.
    */
   public static warn(
     message: unknown,
@@ -314,9 +344,9 @@ export class Logger implements LoggerService {
    * Logs a warning message at the "warn" level using the global logger instance.
    * This is the actual implementation that handles all overloads.
    *
-   * @param message - The main warning message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
-   * @param args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
+   * @param {unknown}message - The main warning message to log.
+   * @param {unknown|undefined} contextOrArgs - Either the logging context (a string) or additional data to log.
+   * @param {unknown|undefined} args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
    */
   public static warn(
     message: unknown,
@@ -330,10 +360,10 @@ export class Logger implements LoggerService {
    * Logs an error message at the "error" level using the global logger instance.
    * This method is overloaded to allow specifying optional context and additional arguments.
    *
-   * @param message - The main error message to log. Can be a string, number, boolean, null, or undefined.
-   * @param context - (Optional) The logging context, typically indicating the source or scope of the log.
+   * @param {unknown} message - The main error message to log. Can be a string, number, boolean, null, or undefined.
+   * @param {string} context - The logging context, typically indicating the source or scope of the log.
    *                  If omitted, context may be part of `contextOrArgs`.
-   * @param args - (Optional) Additional data to log alongside the message.
+   * @param {unknown|undefined} args - (Optional) Additional data to log alongside the message.
    *               Can be omitted if the second parameter is `contextOrArgs`.
    */
   public static error(
@@ -345,8 +375,8 @@ export class Logger implements LoggerService {
    * Logs an error message at the "error" level using the global logger instance.
    * This overload allows for passing only a single context or additional argument.
    *
-   * @param message - The main error message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
+   * @param {unknown} message - The main error message to log.
+   * @param {unknown|undefined} contextOrArgs - (Optional) Either the logging context (a string) or additional data to log.
    */
   public static error(
     message: unknown,
@@ -356,9 +386,9 @@ export class Logger implements LoggerService {
    * Logs an error message at the "error" level using the global logger instance.
    * This is the actual implementation that handles all overloads.
    *
-   * @param message - The main error message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
-   * @param args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
+   * @param {unknown} message - The main error message to log.
+   * @param {unknown|undefined} contextOrArgs - (Optional) Either the logging context (a string) or additional data to log.
+   * @param {unknown|undefined} args - (Optional) Additional data to log alongside the message, if not already provided in `contextOrArgs`.
    */
   public static error(
     message: unknown,
@@ -372,10 +402,10 @@ export class Logger implements LoggerService {
    * Logs a critical message at the "fatal" level using the global logger instance.
    * This method is overloaded to allow specifying optional context and additional arguments.
    *
-   * @param message - The main critical message to log. Can be a string, number, boolean, null, or undefined.
-   * @param context - (Optional) The logging context, typically indicating the source or scope of the log.
+   * @param {unknown} message - The main critical message to log. Can be a string, number, boolean, null, or undefined.
+   * @param {string} context - The logging context, typically indicating the source or scope of the log.
    *                  If omitted, context may be part of `contextOrArgs`.
-   * @param args - (Optional) Additional data to log alongside the message.
+   * @param {unknown|undefined} args - (Optional) Additional data to log alongside the message.
    *               Can be omitted if the second parameter is `contextOrArgs`.
    */
   public static fatal(
@@ -387,8 +417,8 @@ export class Logger implements LoggerService {
    * Logs a critical message at the "fatal" level using the global logger instance.
    * This overload allows for passing only a single context or additional argument.
    *
-   * @param message - The main critical message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
+   * @param {unknown} message - The main critical message to log.
+   * @param {unknown|undefined} contextOrArgs - (Optional) Either the logging context (a string) or additional data to log.
    */
   public static fatal(
     message: unknown,
@@ -398,9 +428,9 @@ export class Logger implements LoggerService {
    * Logs a critical message at the "fatal" level using the global logger instance.
    * This is the actual implementation that handles all overloads.
    *
-   * @param message - The main critical message to log.
-   * @param contextOrArgs - Either the logging context (a string) or additional data to log.
-   * @param args - Additional data to log alongside the message, if not already provided in `contextOrArgs`.
+   * @param {unknown} message - The main critical message to log.
+   * @param {unknown|undefined} contextOrArgs - (Optional) Either the logging context (a string) or additional data to log.
+   * @param {unknown|undefined} args - (Optional) Additional data to log alongside the message, if not already provided in `contextOrArgs`.
    */
   public static fatal(
     message: unknown,
@@ -414,11 +444,11 @@ export class Logger implements LoggerService {
    * A private static method to format and print log messages. Delegates the actual work
    * to an instance of the global logger. If no global logger exists, one is initialized.
    *
-   * @param level - The log level of the message. Determines the formatting and severity.
-   * @param message - The primary content of the log message. Can be a string, number, boolean, null, or undefined.
-   * @param contextOrArgs - Optional parameter that may represent the logging context (a string) or additional arguments.
+   * @param {LogLevel} level - The log level of the message. Determines the formatting and severity.
+   * @param {unknown} message - The primary content of the log message. Can be a string, number, boolean, null, or undefined.
+   * @param {unknown|undefined} contextOrArgs - Optional parameter that may represent the logging context (a string) or additional arguments.
    *                        If it is a string, it is treated as the context.
-   * @param args - Optional parameter representing additional data to log, only used if `contextOrArgs` is not a string.
+   * @param {unknown|undefined} args - Optional parameter representing additional data to log, only used if `contextOrArgs` is not a string.
    */
   private static formatAndPrint(
     level: LogLevel,
@@ -439,8 +469,8 @@ export class Logger implements LoggerService {
    * A private instance method to retrieve the appropriate color formatter for a given log level.
    * The color formatter function adds visual formatting to text based on the log level.
    *
-   * @param level - The log level for which to retrieve the color formatter.
-   * @returns A function that accepts a string and returns the colored version of the string.
+   * @param {LogLevel} level - The log level for which to retrieve the color formatter.
+   * @returns {string} A function that accepts a string and returns the colored version of the string.
    *          Default color (green) is returned for unknown log levels.
    */
   private getColorByLevel(level: LogLevel): (text: string) => string {
@@ -465,13 +495,13 @@ export class Logger implements LoggerService {
    * since the last log was written. If a timestamp is enabled in the logger options, the method
    * includes the difference in the formatted output.
    *
-   * @returns A string representing the time difference since the last log, formatted in milliseconds.
+   * @returns {string} A string representing the time difference since the last log, formatted in milliseconds.
    *          If no timestamp is enabled or no previous timestamp exists, it returns an empty string.
    */
   private updateAndGetTimestampDiff(): string {
     const now = Date.now();
     const diff = this.options.timestamp && this.lastTimestamp
-      ? yellow(` +${now - this.lastTimestamp}ms`)
+      ? yellow(`+${now - this.lastTimestamp}ms`)
       : "";
 
     this.lastTimestamp = now;
@@ -483,9 +513,9 @@ export class Logger implements LoggerService {
    * A private instance method that determines whether the given data can be printed inline in the log message.
    * It checks whether the data is a simple primitive type (string, number, or boolean) or null/undefined.
    *
-   * @param data - The data to check for inline printability. Can be of any type.
-   * @returns `true` if the data can be printed inline (string, number, boolean, null, or undefined).
-   *          `false` if the data is more complex (like objects or arrays).
+   * @param {unknown} data - The data to check for inline printability. Can be of any type.
+   * @returns {boolean} `true` if the data can be printed inline (string, number, boolean, null, or undefined).
+   *                    `false` if the data is more complex (like objects or arrays).
    */
   private canInlineMessage(data: unknown): boolean {
     if (data === null || data === undefined) return true;
@@ -506,7 +536,7 @@ export class Logger implements LoggerService {
    * the message is logged with the appropriate color based on the log level and that it adheres to the logger's
    * configuration for verbosity and log levels.
    *
-   * @param level - The log level that determines the severity of the log message. It can be one of:
+   * @param {LogLevel} level - The log level that determines the severity of the log message. It can be one of:
    *   - "debug"
    *   - "verbose"
    *   - "log"
@@ -514,12 +544,12 @@ export class Logger implements LoggerService {
    *   - "error"
    *   - "fatal"
    *
-   * @param message - The main message to log. It can be a string, number, boolean, null, or undefined.
+   * @param {unknown} message - The main message to log. It can be a string, number, boolean, null, or undefined.
    *
-   * @param staticContext - The context of the log, often representing the source of the log message. This is optional
+   * @param {string|undefined|null} staticContext - The context of the log, often representing the source of the log message. This is optional
    *                        and can be `null` or `undefined` if not provided.
    *
-   * @param args - Additional arguments to print along with the message. Can be any type.
+   * @param {unknown} args - Additional arguments to print along with the message. Can be any type.
    *               These are printed after the main message unless they are inline (string, number, or boolean).
    *
    * @returns {void} - This method does not return any value. It outputs to the console.
@@ -559,6 +589,7 @@ export class Logger implements LoggerService {
           args !== undefined && this.canInlineMessage(args)
             ? col(`${args}`)
             : "",
+          this.options.timestamp ? this.updateAndGetTimestampDiff() : "",
         ] as string[]).filter(({ length }: string) => length > 0).join(" "),
       );
 
