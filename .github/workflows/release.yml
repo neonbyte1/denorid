@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        package:
+          - logger
+    steps:
+      - name: 🌀 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 👷 Publish package
+        run: ./publish.sh ${{ matrix.package }} "${GITHUB_REF#refs/tags/}"
