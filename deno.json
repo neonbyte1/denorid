@@ -15,6 +15,9 @@
     "experimentalDecorators": true
   },
   "lint": {
+    "rules": {
+      "tags": ["recommended", "jsr"]
+    },
     "exclude": ["node_modules/"]
   }
 }
