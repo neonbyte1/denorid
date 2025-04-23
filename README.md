@@ -7,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="https://jsr.io/@denorid"><img alt="JSR" src="https://jsr.io/badges/@denorid" /></a>
   <a href="#" target="_blank"><img alt="WIP" src="https://img.shields.io/badge/WORK%20IN%20PROGRESS-8A2BE2" /></a>
   <a href="https://discord.gg/uytbwfPHZy" target="_blank"><img alt="Discord" src="https://img.shields.io/discord/1313255221941633044?logo=discord&label=Discord&color=7289DA"></a>
 </p>
