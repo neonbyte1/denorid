@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - develop
+      - next
+  pull_request:
+    branches:
+      - main
+      - develop
+      - next
+
+jobs:
+  linter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🏗️ setup deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🌀 checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🔍 lint files
+        run: deno lint
+
+  testing:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🏗️ setup deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🌀 checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🧪 run all tests and print coverage
+        run: deno test --clean --coverage && deno coverage --detailed coverage
