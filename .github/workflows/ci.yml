@@ -29,6 +29,10 @@ jobs:
   testing:
     runs-on: ubuntu-latest
     steps:
+      - name: 📦 install lcov
+        run: sudo apt-get update -y && sudo apt-get install -y lcov
+        if: github.event_name == 'pull_request'
+
       - name: 🏗️ setup deno
         uses: denoland/setup-deno@v2
         with:
