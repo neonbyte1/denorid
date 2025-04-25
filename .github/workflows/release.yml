@@ -7,7 +7,6 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
@@ -15,9 +14,8 @@ jobs:
       matrix:
         package:
           - logger
-    steps:
-      - name: 🌀 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 👷 Publish package
-        run: ./publish.sh ${{ matrix.package }} "${GITHUB_REF#refs/tags/}"
+          - reflection
+    uses: ./.github/workflows/jsr.yml
+    with:
+      package: ${{ matrix.package }}
+      semantic-version: "${GITHUB_REF#refs/tags/}"

@@ -1,0 +1,21 @@
+name: jsr
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        type: string
+        required: true
+      semantic-version:
+        type: string
+        required: true
+
+jobs:
+  jsr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🌀 checkout repository
+        uses: actions/checkout@v4
+
+      - name: 👷 publish package
+        run: ./publish.sh ${{ inputs.package }} ${{ inputs.semantic-version }}

@@ -1,7 +1,7 @@
 The MIT License (MIT)
 =====================
 
-_Copyright © `2024` - [neonbyte](https://github.com/neonbyte1)_
+_Copyright © `2024-2025` - [neonbyte](https://github.com/neonbyte1)_
 
 Permission is hereby granted, free of charge, to any person
 obtaining a copy of this software and associated documentation

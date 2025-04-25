@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - develop
+      - next
+  pull_request:
+    branches:
+      - main
+      - develop
+      - next
+
+jobs:
+  linter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🏗️ setup deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🌀 checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🔍 lint files
+        run: deno lint
+
+  testing:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: 📦 install lcov
+        run: sudo apt-get update -y && sudo apt-get install -y lcov
+        if: github.event_name == 'pull_request'
+
+      - name: 🏗️ setup deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: 🌀 checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🧪 run all tests and print coverage
+        run: deno test --clean --coverage && deno coverage --detailed coverage
+        if: github.event_name != 'pull_request'
+
+      - name: 🧪 run all tests and generate lcov file
+        run: deno test --clean --coverage && deno coverage --lcov --output=coverage.lcov coverage
+        if: github.event_name == 'pull_request'
+
+      - name: 📢 report coverage to PR
+        uses: zgosalvez/github-actions-report-lcov@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          artifact-name: coverage-report
+          coverage-files: coverage.lcov
+          minimum-coverage: 90
+          update-comment: true
+        if: github.event_name == 'pull_request'
