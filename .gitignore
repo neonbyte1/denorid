@@ -11,3 +11,5 @@
 *.env
 *.log
 *.tmp
+*.lcov
+*.info
