@@ -1,0 +1,14 @@
+comment: true
+codecov:
+  require_ci_to_pass: true
+
+flags:
+  injector:
+    paths:
+      - packages/injector
+    carryforward: true
+
+coverage:
+  status:
+    project: false
+    patch: false
