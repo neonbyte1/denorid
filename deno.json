@@ -2,18 +2,9 @@
   "tasks": {
     "dev": "deno run --watch main.ts"
   },
-  "workspace":[
-    "./packages/core",
-    "./packages/logger",
-    "./packages/reflection"
-  ],
+  "workspace":[],
   "imports": {
-    "@std/assert": "jsr:@std/assert@^1.0.13",
-    "@std/fmt": "jsr:@std/fmt@^1.0.6"
-  },
-  "compilerOptions": {
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true
+    "@std/assert": "jsr:@std/assert@^1.0.18"
   },
   "lint": {
     "rules": {
