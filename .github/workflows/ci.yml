@@ -41,7 +41,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🧪 run all tests and generate lcov file
-        run: deno test --clean --coverage && deno coverage --lcov --output=coverage.lcov coverage
+        run: |
+          deno test --clean --coverage
+          deno coverage --lcov --output=coverage.lcov coverage
+          rm -rf coverage
 
       - name: 📢 report lcov to PR
         uses: zgosalvez/github-actions-report-lcov@v4
