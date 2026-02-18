@@ -110,3 +110,15 @@ export interface RecursiveResolutionOption {
    */
   recursive?: boolean;
 }
+
+/**
+ * Generic Stage 3 decorator signature.
+ *
+ * @template Context - The decorator context type (e.g., `ClassDecoratorContext`, `ClassFieldDecoratorContext`, etc.)
+ * @template Target - The target type
+ * @template Return - The decorator function return type
+ */
+export type Decorator<Context, Target = unknown, Return = void> = (
+  target: Target,
+  ctx: Context,
+) => Return;

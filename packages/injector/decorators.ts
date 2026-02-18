@@ -8,11 +8,11 @@ import {
   TAG_METADATA,
 } from "./_metadata.ts";
 import type {
+  Decorator,
   InjectableOptions,
   InjectionToken,
   InjectOptions,
   Tag,
-  Type,
 } from "./common.ts";
 import type { ModuleMetadata } from "./modules.ts";
 
@@ -34,7 +34,10 @@ import type { ModuleMetadata } from "./modules.ts";
  * }
  * ```
  */
-export function Inject(token: InjectionToken, options?: InjectOptions) {
+export function Inject(
+  token: InjectionToken,
+  options?: InjectOptions,
+): Decorator<ClassFieldDecoratorContext> {
   return (_: unknown, ctx: ClassFieldDecoratorContext): void => {
     if (ctx.static) {
       throw new Error("@Inject cannot be used on static fields");
@@ -70,7 +73,9 @@ export function Inject(token: InjectionToken, options?: InjectOptions) {
  * class RequestContext { }
  * ```
  */
-export function Injectable(options?: InjectableOptions) {
+export function Injectable(
+  options?: InjectableOptions,
+): Decorator<ClassDecoratorContext> {
   return (_: unknown, ctx: ClassDecoratorContext): void => {
     ctx.metadata[INJECTABLE_METADATA] ??= {
       ...(options ?? {}),
@@ -92,8 +97,8 @@ export function Injectable(options?: InjectableOptions) {
  * class ConfigModule { }
  * ```
  */
-export function Global() {
-  return (_: Type, ctx: ClassDecoratorContext): void => {
+export function Global(): Decorator<ClassDecoratorContext> {
+  return (_: unknown, ctx: ClassDecoratorContext): void => {
     ctx.metadata[GLOBAL_MODULE_METADATA] = true;
   };
 }
@@ -111,8 +116,10 @@ export function Global() {
  * class UserModule { }
  * ```
  */
-export function Module(metadata: ModuleMetadata) {
-  return (target: Type, ctx: ClassDecoratorContext): void => {
+export function Module(
+  metadata: ModuleMetadata,
+): Decorator<ClassDecoratorContext> {
+  return (target: unknown, ctx: ClassDecoratorContext): void => {
     // modules are also "injectables", they could implement a lifecycle hook
     // and therefore we should apply the decorator as well.
     Injectable()(target, ctx);
@@ -136,8 +143,8 @@ export function Module(metadata: ModuleMetadata) {
  *
  * ```
  */
-export function Tags(...tags: Tag[]) {
-  return (_: Type, ctx: ClassDecoratorContext): void => {
+export function Tags(...tags: Tag[]): Decorator<ClassDecoratorContext> {
+  return (_: unknown, ctx: ClassDecoratorContext): void => {
     const existingTags = (ctx.metadata[TAG_METADATA] ?? []) as Tag[];
 
     ctx.metadata[TAG_METADATA] = [...new Set<Tag>([...existingTags, ...tags])];
