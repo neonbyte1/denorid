@@ -3,7 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      # use `date +%Y%m%d` as tag
+      - '20*'
 
 jobs:
   publish:
@@ -13,8 +14,7 @@ jobs:
     strategy:
       matrix:
         package:
-          - logger
-          - reflection
+          - injector
     uses: ./.github/workflows/jsr.yml
     with:
       package: ${{ matrix.package }}
