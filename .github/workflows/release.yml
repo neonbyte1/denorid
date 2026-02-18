@@ -3,7 +3,6 @@ name: Release
 on:
   push:
     tags:
-      # use `date +%Y%m%d` as tag
       - '20*'
 
 jobs:
@@ -18,4 +17,3 @@ jobs:
     uses: ./.github/workflows/jsr.yml
     with:
       package: ${{ matrix.package }}
-      semantic-version: "${GITHUB_REF#refs/tags/}"
