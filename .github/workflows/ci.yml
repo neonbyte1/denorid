@@ -42,7 +42,6 @@ jobs:
 
       - name: 🧪 run all tests and generate lcov file
         run: deno test --clean --coverage && deno coverage --lcov --output=coverage.lcov coverage
-        if: github.event_name == 'pull_request'
 
       - name: 📢 report lcov to PR
         uses: zgosalvez/github-actions-report-lcov@v4
