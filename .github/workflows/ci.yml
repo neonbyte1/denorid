@@ -44,10 +44,6 @@ jobs:
       - name: 🌀 checkout repository
         uses: actions/checkout@v4
 
-      - name: 🧪 run all tests and print coverage
-        run: deno test --clean --coverage && deno coverage --detailed coverage
-        if: github.event_name != 'pull_request'
-
       - name: 🧪 run all tests and generate lcov file
         run: deno test --clean --coverage && deno coverage --lcov --output=coverage.lcov coverage
         if: github.event_name == 'pull_request'
@@ -61,3 +57,12 @@ jobs:
           minimum-coverage: 90
           update-comment: true
         if: github.event_name == 'pull_request'
+
+      - name: 📢 upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          name: denorid-coverage
+          files: coverage.lcov
+          flags: packages
