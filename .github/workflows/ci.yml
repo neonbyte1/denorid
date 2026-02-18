@@ -48,16 +48,6 @@ jobs:
         run: deno test --clean --coverage && deno coverage --lcov --output=coverage.lcov coverage
         if: github.event_name == 'pull_request'
 
-      - name: 📢 report coverage to PR
-        uses: zgosalvez/github-actions-report-lcov@v4
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          artifact-name: coverage-report
-          coverage-files: coverage.lcov
-          minimum-coverage: 90
-          update-comment: true
-        if: github.event_name == 'pull_request'
-
       - name: 📢 upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
