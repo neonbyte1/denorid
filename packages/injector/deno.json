@@ -1,0 +1,14 @@
+{
+  "name": "@denorid/injector",
+  "version": "0.0.1",
+  "license": "MIT",
+  "exports": {
+    ".": "./mod.ts",
+    "./common": "./common.ts",
+    "./errors": "./errors.ts",
+    "./hooks": "./hooks.ts",
+    "./modules": "./modules.ts",
+    "./module_ref": "./module_ref.ts",
+    "./providers": "./provider.ts"
+  }
+}
