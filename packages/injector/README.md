@@ -67,4 +67,4 @@ await ctx.close();
 
 ## License
 
-The [@denorid/reflection](https://github.com/neonbyte1/denorid) repository is [MIT licensed](../../LICENSE.md).
+The [@denorid/injector](https://github.com/neonbyte1/denorid) repository is [MIT licensed](../../LICENSE.md).
