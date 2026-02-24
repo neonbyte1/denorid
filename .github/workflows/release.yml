@@ -13,6 +13,7 @@ jobs:
     strategy:
       matrix:
         package:
+          - drizzle
           - injector
     uses: ./.github/workflows/jsr.yml
     with:
