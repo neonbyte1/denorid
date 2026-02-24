@@ -2,14 +2,12 @@
 .vs/
 .vscode/*
 !/.vscode/settings.json
-!/.vscode/extensions.json
 .DS_Store
 /[Bb]uild/
 /[Cc]ov/
 /[Cc]overage/
 /[Dd]ata/
 /[Dd]ist/
-/packages/**/docs/
 *.env
 *.log
 *.tmp
