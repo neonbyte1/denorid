@@ -1,0 +1,10 @@
+{
+  "name": "@denorid/drizzle",
+  "version": "0.0.1",
+  "exports": {
+    ".": "./src/mod.ts"
+  },
+  "imports": {
+    "drizzle-orm": "npm:drizzle-orm@^1.0.0-beta.15-859cf75"
+  }
+}

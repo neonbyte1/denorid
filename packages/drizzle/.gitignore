@@ -1,0 +1,15 @@
+.idea/
+.vs/
+.vscode/*
+!/.vscode/settings.json
+.DS_Store
+/[Bb]uild/
+/[Cc]ov/
+/[Cc]overage/
+/[Dd]ata/
+/[Dd]ist/
+*.env
+*.log
+*.tmp
+*.lcov
+*.info
