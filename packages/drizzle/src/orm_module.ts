@@ -1,5 +1,4 @@
-import type { DynamicModule } from "@denorid/injector";
-import { Module } from "../../injector/decorators.ts";
+import { type DynamicModule, Module } from "@denorid/injector";
 import { DRIZZLE_CONNECTION_OPTIONS } from "./_internal.ts";
 import { DrizzleService } from "./drizzle_service.ts";
 import type {
