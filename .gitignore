@@ -8,6 +8,7 @@
 /[Cc]overage/
 /[Dd]ata/
 /[Dd]ist/
+/packages/**/docs/
 *.env
 *.log
 *.tmp
