@@ -36,9 +36,10 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          cache: true
 
       - name: 🌀 checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: 🧪 run all tests and generate lcov file
         run: |
@@ -46,15 +47,15 @@ jobs:
           deno coverage --lcov --output=coverage.lcov coverage
           rm -rf coverage
 
-      - name: 📢 report lcov to PR
-        uses: zgosalvez/github-actions-report-lcov@v4
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          artifact-name: coverage-report
-          coverage-files: coverage.lcov
-          minimum-coverage: 90
-          update-comment: true
-        if: github.event_name == 'pull_request'
+#      - name: 📢 report lcov to PR
+#        uses: zgosalvez/github-actions-report-lcov@v4
+#        with:
+#          github-token: ${{ secrets.GITHUB_TOKEN }}
+#          artifact-name: coverage-report
+#          coverage-files: coverage.lcov
+#          minimum-coverage: 90
+#          update-comment: true
+#        if: github.event_name == 'pull_request'
 
       - name: 📢 upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
