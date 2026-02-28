@@ -9,6 +9,7 @@ import {
 import { SimpleService, TAG_A } from "./_test_fixtures.ts";
 import type { Tag } from "./common.ts";
 import { Global, Inject, Injectable, Module, Tags } from "./decorators.ts";
+import { InvalidStaticMemberDecoratorUsageError } from "./errors.ts";
 
 describe("decorators.ts", () => {
   describe("@Injectable()", () => {
@@ -71,8 +72,8 @@ describe("decorators.ts", () => {
             static dep: SimpleService;
           }
         },
-        Error,
-        "static",
+        InvalidStaticMemberDecoratorUsageError,
+        'Decorator @Inject() cannot be applied to static property "dep".',
       );
     });
 

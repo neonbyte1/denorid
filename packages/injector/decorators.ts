@@ -14,6 +14,7 @@ import type {
   InjectOptions,
   Tag,
 } from "./common.ts";
+import { InvalidStaticMemberDecoratorUsageError } from "./errors.ts";
 import type { ModuleMetadata } from "./modules.ts";
 
 /**
@@ -40,7 +41,11 @@ export function Inject(
 ): Decorator<ClassFieldDecoratorContext> {
   return (_: unknown, ctx: ClassFieldDecoratorContext): void => {
     if (ctx.static) {
-      throw new Error("@Inject cannot be used on static fields");
+      throw new InvalidStaticMemberDecoratorUsageError(
+        "Inject",
+        ctx.name,
+        "property",
+      );
     }
 
     const dependencies =
