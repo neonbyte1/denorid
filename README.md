@@ -7,8 +7,9 @@
 </p>
 
 <p align="center">
-  <a href="https://jsr.io/@denorid"><img alt="JSR" src="https://jsr.io/badges/@denorid" /></a>
-  <a href="#" target="_blank"><img alt="WIP" src="https://img.shields.io/badge/WORK%20IN%20PROGRESS-8A2BE2" /></a>
+  <a href="https://jsr.io/@denorid"><img alt="JSR" src="https://jsr.io/badges/@denorid"/></a>
+  <a href="https://codecov.io/github/neonbyte1/denorid"><img src="https://codecov.io/github/neonbyte1/denorid/graph/badge.svg?token=5IZTIW5KF1"/></a>
+  <a href="#" target="_blank"><img alt="WIP" src="https://img.shields.io/badge/WORK%20IN%20PROGRESS-8A2BE2"/></a>
 </p>
 
 ## Description
