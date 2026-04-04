@@ -3,7 +3,8 @@
   "workspace":[
     "./packages/core",
     "./packages/drizzle",
-    "./packages/injector"
+    "./packages/injector",
+    "./packages/logger"
   ],
   "imports": {
     "@std/assert": "jsr:@std/assert@^1.0.18",
