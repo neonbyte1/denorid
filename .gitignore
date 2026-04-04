@@ -9,6 +9,7 @@
 /[Cc]overage/
 /[Dd]ata/
 /[Dd]ist/
+/packages/**/coverage/
 /packages/**/docs/
 *.env
 *.log

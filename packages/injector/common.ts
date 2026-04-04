@@ -122,3 +122,48 @@ export type Decorator<Context, Target = unknown, Return = void> = (
   target: Target,
   ctx: Context,
 ) => Return;
+
+/**
+ * Type definition for a class decorator method.
+ *
+ * This type represents the signature of any class method, capturing its context (`this`),
+ * parameters, and return value. It's used as a constraint for method decorators to ensure
+ * they're only applied to valid class methods.
+ *  *
+ * @template T - The type of the class instance that the method belongs to
+ *
+ * @param this - The class instance context (implicit parameter)
+ * @param args - Any number of arguments of any type
+ * @returns Any value type
+ */
+export type ClassMethodDecoratorInitializer<T> = (
+  this: T,
+  // deno-lint-ignore no-explicit-any
+  ...args: any[]
+  // deno-lint-ignore no-explicit-any
+) => any;
+
+/**
+ * Type definition for a method decorator compatible with TypeScript's decorator metadata.
+ *
+ * This type represents a function that can be used as a method decorator in TypeScript.
+ * It follows the TC39 decorator specification and TypeScript's implementation, providing
+ * type-safe decorator creation with proper context information.
+ *
+ * @template T - The type of the class instance that owns the method
+ * @template V - The type of the method being decorated (extends ClassMethodDecoratorInitializer<T>)
+ *
+ * @param {V} target - The method being decorated
+ * @param {ClassMethodDecoratorContext<T, V>} context - Metadata about the method and its context
+ * @returns The original method or a replacement method with the same signature
+ *
+ * @see {@link https://github.com/tc39/proposal-decorators | TC39 Decorator Proposal}
+ * @see {@link https://www.typescriptlang.org/docs/handbook/decorators.html | TypeScript Decorators}
+ */
+export type MethodDecorator = <
+  T extends object,
+  V extends ClassMethodDecoratorInitializer<T>,
+>(
+  target: V,
+  context: ClassMethodDecoratorContext<T, V>,
+) => V;

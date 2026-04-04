@@ -7,7 +7,9 @@
 </p>
 
 <p align="center">
-  <a href="https://jsr.io/@denorid"><img alt="JSR" src="https://jsr.io/badges/@denorid" /></a>
+  <a href="https://jsr.io/@denorid/injector">
+    <img src="https://jsr.io/badges/@denorid/injector" alt="Denorid Injector version" />
+  </a>
 </p>
 
 ## Installation

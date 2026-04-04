@@ -115,3 +115,25 @@ export class InvalidProviderError extends InjectionError {
     this.name = "InvalidProviderError";
   }
 }
+
+/**
+ * Error thrown when trying to decorate a static member.
+ */
+export class InvalidStaticMemberDecoratorUsageError extends Error {
+  /**
+   * @param {string} decoratorName The decorator function name
+   * @param {string | symbol} member The name or symbol of the class member
+   * @param {"function"|"property"} memberType The type of the `member`
+   */
+  public constructor(
+    decoratorName: string,
+    member: string | symbol,
+    memberType: "function" | "property",
+  ) {
+    super(
+      `Decorator @${decoratorName}() cannot be applied to static ${memberType} "${
+        String(member)
+      }".`,
+    );
+  }
+}

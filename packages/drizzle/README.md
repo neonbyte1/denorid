@@ -7,7 +7,9 @@
 </p>
 
 <p align="center">
-  <a href="https://jsr.io/@denorid"><img alt="JSR" src="https://jsr.io/badges/@denorid" /></a>
+  <a href="https://jsr.io/@denorid/drizzle">
+    <img src="https://jsr.io/badges/@denorid/drizzle" alt="Denorid Drizzle ORM version" />
+  </a>
 </p>
 
 ## Installation
