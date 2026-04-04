@@ -2,8 +2,9 @@
   "name": "@denorid/drizzle",
   "version": "0.0.1",
   "license": "MIT",
-  "exports": "./src/mod.ts",
+  "exports": "./mod.ts",
   "imports": {
+    "@denorid/injector": "jsr:@denorid/injector@^0.0.1",
     "drizzle-orm": "npm:drizzle-orm@^1.0.0-beta.15-859cf75"
   }
 }
