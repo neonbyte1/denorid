@@ -174,11 +174,15 @@ describe("ExceptionHandler", () => {
     it("returns undefined for a non-Error value", async () => {
       const handler = new ExceptionHandler(makeCtx([], new Map()));
 
+      disableLoggerOutput(handler);
+
       assertEquals(await handler.handle("oops", mockHost), undefined);
     });
 
     it("returns undefined when no filter is registered for the error type", async () => {
       const handler = new ExceptionHandler(makeCtx([], new Map()));
+
+      disableLoggerOutput(handler);
 
       assertEquals(await handler.handle(new TestError(), mockHost), undefined);
     });
@@ -313,6 +317,8 @@ describe("ExceptionHandler", () => {
         handler["logger"] as Logger,
         "error" as keyof Logger,
       );
+
+      disableLoggerOutput(handler);
 
       await handler.register();
       await handler.handle(new IntrinsicException("intrinsic"), mockHost);
