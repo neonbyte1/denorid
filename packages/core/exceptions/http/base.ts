@@ -96,28 +96,56 @@ export class HttpException extends IntrinsicException {
   }
 
   /**
-   * Builds an {@linkcode HttpExceptionBody} from its constituent parts.
+   * Builds an {@linkcode HttpExceptionBody} with only `message` and `statusCode`.
+   * Use when there is no primary error label — the body will not include an `error` field.
    *
-   * **Overload 1** — `nil` first argument: body contains only `message` and `statusCode`.
-   * **Overload 2** — scalar `message` first: body includes `message`, `error`, and `statusCode`.
-   * **Overload 3** — object first: body is the object merged with `message` and `statusCode`.
-   * **Overload 4** — single object argument: returned as-is (passthrough for custom bodies).
+   * @param {undefined | null | ""} nil - Must be `undefined`, `null`, or `""` to select this overload.
+   * @param {HttpExceptionBodyMessage} message - The human-readable message (string, string array, or numeric code).
+   * @param {number} statusCode - The HTTP status code to embed in the body.
+   * @returns {HttpExceptionBody}
    */
   public static createBody(
     nil: undefined | null | "",
     message: HttpExceptionBodyMessage,
     statusCode: number,
   ): HttpExceptionBody;
+  /**
+   * Builds an {@linkcode HttpExceptionBody} with `message`, `error`, and `statusCode`.
+   * Use when a scalar message and a short error label (e.g. `"Bad Request"`) are both available.
+   *
+   * @param {HttpExceptionBodyMessage} message - The human-readable message (string, string array, or numeric code).
+   * @param {string} error - A short error label, typically the HTTP status phrase.
+   * @param {number} statusCode - The HTTP status code to embed in the body.
+   * @returns {HttpExceptionBody}
+   */
   public static createBody(
     message: HttpExceptionBodyMessage,
     error: string,
     statusCode: number,
   ): HttpExceptionBody;
+  /**
+   * Builds a body from an object or scalar, merging `message` and `statusCode` onto it.
+   * When `objectOrError` is a scalar (string, string[], or number) the result includes an
+   * `error` field; when it is a plain object it is returned as-is with `message` and
+   * `statusCode` spread in.
+   *
+   * @param {string | string[] | Record<string, unknown> | undefined} objectOrError - Either a scalar message or an arbitrary object to merge into.
+   * @param {HttpExceptionBodyMessage} message - Fallback message used when `objectOrError` is an object.
+   * @param {number} statusCode - The HTTP status code to embed in the body.
+   * @returns {HttpExceptionBody | Record<string, unknown>}
+   */
   public static createBody(
-    objectOrError: string | Record<string, unknown> | undefined,
+    objectOrError: string | string[] | Record<string, unknown> | undefined,
     message: HttpExceptionBodyMessage,
     statusCode: number,
   ): HttpExceptionBody | Record<string, unknown>;
+  /**
+   * Passthrough overload — returns a fully-formed custom body as-is without modification.
+   * Use when the caller has already assembled the complete response object.
+   *
+   * @param {Body} custom - A pre-built body object; returned unchanged.
+   * @returns {Body}
+   */
   public static createBody<Body extends Record<string, unknown>>(
     custom: Body,
   ): Body;
