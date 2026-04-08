@@ -29,12 +29,12 @@ export class BadRequestException extends HttpException {
    * response body, pass an object instead. Denorid will serialize the object and return it
    * as the JSON response body.
    *
-   * @param {string|object} objectOrError Describing the error condition
+   * @param {string|string[]|object} objectOrError Describing the error condition
    * @param {string|HttpExceptionOptions} descriptionOrOptions Either a short description of the HTTP error
    * or an options {@linkcode HttpExceptionOptions} object used to provide an underlying error cause
    */
   public constructor(
-    objectOrError?: string | Record<string, unknown>,
+    objectOrError?: string | string[] | Record<string, unknown>,
     descriptionOrOptions?: string | HttpExceptionOptions,
   ) {
     const { description, httpExceptionOptions } = HttpException
