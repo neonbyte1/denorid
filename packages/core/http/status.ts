@@ -586,3 +586,40 @@ export const STATUS_TEXT = {
   [StatusCode.NetworkReadTimeoutError]: "Cloudflare: Read Timeout Error",
   [StatusCode.NetworkConnectTimeoutError]: "Cloudflare: Origin Unavailable",
 } as const;
+
+/**
+ * A union of all HTTP status codes that represent error responses (4xx and 5xx).
+ *
+ * Includes standard client error codes (4xx) such as {@linkcode StatusCode.BadRequest},
+ * {@linkcode StatusCode.Unauthorized}, and {@linkcode StatusCode.NotFound}, as well as
+ * server error codes (5xx) such as {@linkcode StatusCode.InternalServerError} and
+ * {@linkcode StatusCode.ServiceUnavailable}.
+ *
+ * Useful for narrowing response types or constraining exception constructors to
+ * only accept valid error status codes.
+ */
+export type ErrorHttpStatusCode =
+  | StatusCode.BadGateway
+  | StatusCode.BadRequest
+  | StatusCode.Conflict
+  | StatusCode.Forbidden
+  | StatusCode.GatewayTimeout
+  | StatusCode.Gone
+  | StatusCode.InsufficientStorage
+  | StatusCode.InternalServerError
+  | StatusCode.Locked
+  | StatusCode.MethodNotAllowed
+  | StatusCode.NotAcceptable
+  | StatusCode.NotFound
+  | StatusCode.NotImplemented
+  | StatusCode.ContentTooLarge
+  | StatusCode.PaymentRequired
+  | StatusCode.PreconditionFailed
+  | StatusCode.RequestTimeout
+  | StatusCode.ServiceUnavailable
+  | StatusCode.Teapot
+  | StatusCode.TooEarly
+  | StatusCode.Unauthorized
+  | StatusCode.UnavailableForLegalReasons
+  | StatusCode.UnprocessableContent
+  | StatusCode.UnsupportedMediaType;
