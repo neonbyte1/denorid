@@ -6,6 +6,9 @@
     ".": "./mod.ts"
   },
   "imports": {
-    "@std/http": "jsr:@std/http@^1.0.25"
+    "@hono/hono": "jsr:@hono/hono@^4.12.12",
+    "@std/http": "jsr:@std/http@^1.0.25",
+    "@std/uuid": "jsr:@std/uuid@^1.1.0",
+    "zod": "npm:zod@^4.3.6"
   }
 }
