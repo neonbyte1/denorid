@@ -4,7 +4,8 @@
     "./packages/core",
     "./packages/drizzle",
     "./packages/injector",
-    "./packages/logger"
+    "./packages/logger",
+    "./packages/platform-hono"
   ],
   "imports": {
     "@std/assert": "jsr:@std/assert@^1.0.18",
