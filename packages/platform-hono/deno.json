@@ -1,0 +1,11 @@
+{
+  "name": "@denorid/platform-hono",
+  "version": "0.0.1",
+  "license": "MIT",
+  "exports": "./mod.ts",
+  "imports": {
+    "@denorid/core": "jsr:@denorid/core@^0.0.1",
+    "@hono/hono": "jsr:@hono/hono@^4.12.12",
+    "zod": "npm:zod@^4.3.6"
+  }
+}
