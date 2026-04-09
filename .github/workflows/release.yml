@@ -6,7 +6,25 @@ on:
       - '20*'
 
 jobs:
+  injector:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/jsr.yml
+    with:
+      package: injector
+
+  core:
+    needs: injector
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/jsr.yml
+    with:
+      package: core
+
   publish:
+    needs: core
     permissions:
       contents: read
       id-token: write
@@ -14,8 +32,8 @@ jobs:
       matrix:
         package:
           - drizzle
-          - injector
           - logger
+          - platform-hono
     uses: ./.github/workflows/jsr.yml
     with:
       package: ${{ matrix.package }}
