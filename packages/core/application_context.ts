@@ -23,7 +23,7 @@ export interface ApplicationContext {
    * Initializes the application context, bootstrapping all registered providers.
    *
    * This is called automatically during application startup unless `autoInitialize`
-   * is explicitly set to `false` in the `ApplicationOptions`.
+   * is explicitly set to `false` in the {@linkcode ApplicationOptions}.
    *
    * @returns {Promise<void>}
    */
