@@ -3,9 +3,15 @@
   "version": "0.0.1",
   "license": "MIT",
   "exports": {
-    ".": "./mod.ts"
+    ".": "./mod.ts",
+    "./exceptions": "./exceptions/mod.ts",
+    "./exceptions/http": "./exceptions/http/mod.ts",
+    "./http": "./http/mod.ts",
+    "./pipes": "./pipes/mod.ts"
   },
   "imports": {
+    "@denorid/logger": "jsr:@denorid/core@^0.3.0",
+    "@denorid/injector": "jsr:@denorid/injector@^0.0.1",
     "@std/http": "jsr:@std/http@^1.0.25",
     "@std/uuid": "jsr:@std/uuid@^1.1.0",
     "zod": "npm:zod@^4.3.6"
