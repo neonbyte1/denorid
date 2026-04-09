@@ -84,6 +84,9 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
     }
   }
 
+  // We don't need to test the injector twice, so ignore the coverage here.
+  // deno-coverage-ignore-start
+
   /**
    * @inheritdoc
    */
@@ -100,4 +103,6 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   public listen(): void {
     this.adapter.listen(this.options.port);
   }
+
+  // deno-coverage-ignore-stop
 }

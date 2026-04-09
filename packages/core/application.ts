@@ -59,6 +59,9 @@ export class Application<
     this.exceptionHandler = new ExceptionHandler(ctx);
   }
 
+  // We don't need to test the injector twice, so ignore the coverage here.
+  // deno-coverage-ignore-start
+
   /**
    * @inheritdoc
    */
@@ -91,8 +94,11 @@ export class Application<
   /**
    * @inheritdoc
    */
+
   public async close(): Promise<void> {
     await this.ctx.onBeforeApplicationShutdown();
     await this.ctx.onApplicationShutdown();
   }
+
+  // deno-coverage-ignore-stop
 }
