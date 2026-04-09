@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🔍 lint files
-        run: deno lint
+        run: deno lint packages/
 
   testing:
     runs-on: ubuntu-latest
@@ -43,7 +43,7 @@ jobs:
 
       - name: 🧪 run all tests and generate lcov file
         run: |
-          deno test --clean --coverage
+          deno test --clean --coverage packages/
           deno coverage --lcov --output=coverage.lcov coverage
           rm -rf coverage
 
