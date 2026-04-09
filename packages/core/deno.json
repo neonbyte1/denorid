@@ -10,7 +10,7 @@
     "./pipes": "./pipes/mod.ts"
   },
   "imports": {
-    "@denorid/logger": "jsr:@denorid/core@^0.3.0",
+    "@denorid/logger": "jsr:@denorid/logger@^0.3.0",
     "@denorid/injector": "jsr:@denorid/injector@^0.0.1",
     "@std/http": "jsr:@std/http@^1.0.25",
     "@std/uuid": "jsr:@std/uuid@^1.1.0",
