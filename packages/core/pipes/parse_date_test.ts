@@ -34,7 +34,7 @@ describe("ParseDatePipe", () => {
     });
   });
 
-  describe("transform:  optional nil handling", () => {
+  describe("transform: optional nil handling", () => {
     it("returns null when optional and value is null", () => {
       const pipe = new ParseDatePipe({ optional: true });
 
@@ -68,7 +68,7 @@ describe("ParseDatePipe", () => {
     });
   });
 
-  describe("transform:  invalid inputs", () => {
+  describe("transform: invalid inputs", () => {
     it("throws BadRequestException for an invalid date string", () => {
       assertThrows(
         () => new ParseDatePipe({ optional: false }).transform("not-a-date"),
@@ -106,6 +106,27 @@ describe("ParseDatePipe", () => {
 
       assertThrows(() => pipe.transform("not-a-date"));
       assertSpyCalls(factory, 1);
+    });
+  });
+
+  describe("toDate: ensure nested ternary operator logic is correct", () => {
+    it("returns null unchanged when value is null", () => {
+      const pipe = new ParseDatePipe({ optional: false });
+
+      assertEquals(pipe["toDate"](null), null);
+    });
+
+    it("returns undefined unchanged when value is undefined", () => {
+      const pipe = new ParseDatePipe({ optional: false });
+
+      assertEquals(pipe["toDate"](undefined), undefined);
+    });
+
+    it("returns the same Date instance when value is already a Date", () => {
+      const pipe = new ParseDatePipe({ optional: false });
+      const date = new Date("2024-01-15");
+
+      assertEquals(pipe["toDate"](date), date);
     });
   });
 });
