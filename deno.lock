@@ -773,6 +773,8 @@
     "members": {
       "packages/core": {
         "dependencies": [
+          "jsr:@denorid/injector@^0.0.1",
+          "jsr:@denorid/logger@0.3",
           "jsr:@std/http@^1.0.25",
           "jsr:@std/uuid@^1.1.0",
           "npm:zod@^4.3.6"
@@ -784,15 +786,16 @@
           "npm:drizzle-orm@^1.0.0-beta.15-859cf75"
         ]
       },
-      "packages/hono": {
-        "dependencies": [
-          "jsr:@hono/hono@^4.12.12",
-          "npm:zod@^4.3.6"
-        ]
-      },
       "packages/logger": {
         "dependencies": [
           "jsr:@std/fmt@^1.0.9"
+        ]
+      },
+      "packages/platform-hono": {
+        "dependencies": [
+          "jsr:@denorid/core@^0.0.1",
+          "jsr:@hono/hono@^4.12.12",
+          "npm:zod@^4.3.6"
         ]
       }
     }
