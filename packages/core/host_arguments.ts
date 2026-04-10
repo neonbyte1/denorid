@@ -1,3 +1,5 @@
+import type { RequestContext } from "./http/request_context.ts";
+
 /**
  * Methods to obtain request and response objects.
  */
@@ -5,12 +7,10 @@ export interface HttpHostArguments {
   /**
    * Returns the in-flight `request` object.
    *
-   * @template {unknown} T
-   *
-   * @returns {T} The request object, where the actual type depends on the underlying
-   * implementation.
+   * @returns The current request context where you can access the
+   * underlying context.
    */
-  getRequest<T = unknown>(): T;
+  getRequest(): RequestContext;
 
   /**
    * Returns the in-flight `response` object.

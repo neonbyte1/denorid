@@ -771,7 +771,15 @@ describe("HonoControllerMapping", () => {
       const { ctx } = makeHonoContext();
       await capturedRoutes[0].handler(ctx);
 
-      assertEquals(capturedHost!.switchToHttp().getRequest(), ctx.req);
+      assertInstanceOf(
+        capturedHost!.switchToHttp().getRequest(),
+        HonoRequestContext,
+      );
+      assertEquals(
+        capturedHost!.switchToHttp().getRequest<HonoRequestContext>()
+          .getUnderlying(),
+        ctx.req,
+      );
       assertEquals(capturedHost!.switchToHttp().getResponse(), ctx);
     });
   });

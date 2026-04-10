@@ -25,7 +25,15 @@ export type InferIfZod<T> = T extends ZodType ? z.infer<T> : T;
  * @template Dto - The type or Zod schema describing the request body.
  */
 export abstract class RequestContext<Dto = unknown> {
-  public constructor(public readonly dto: InferIfZod<Dto> | undefined) {}
+  public constructor(public dto: InferIfZod<Dto> | undefined) {}
+
+  /**
+   * Returns the underlying request type. The return value depends on the
+   * implementation, for Hono it's `HonoRequest` from '@hono/hono'.
+   *
+   * @template T - The underlying request object.
+   */
+  public abstract getUnderlying<T = unknown>(): T;
 
   /**
    * Returns all request headers as a key/value map.

@@ -11,6 +11,7 @@ import {
   HttpException,
   HttpMethod,
   InternalServerErrorException,
+  type RequestContext,
   type RequestMappingMetadata,
   StatusCode,
   UnprocessableContentException,
@@ -63,7 +64,8 @@ export class HonoControllerMapping extends ControllerMapping {
           controllerClass,
         );
 
-        const hostArguments = this.createHostArguments(c);
+        const context = new HonoRequestContext<unknown>(c, null);
+        const hostArguments = this.createHostArguments(c, context);
         const executionContext: ExecutionContext = {
           ...hostArguments,
           getClass: <T = HttpController>() => controllerClass as Type<T>,
@@ -75,10 +77,10 @@ export class HonoControllerMapping extends ControllerMapping {
             throw new ForbiddenException();
           }
 
-          const validatedDto = await this.validateRequest(c, route);
-          const res = await controller[route.name](
-            new HonoRequestContext(c, validatedDto),
-          );
+          context.dto = await this.validateRequest(c, route);
+
+          const res = await controller[route.name](context);
+
           return this.resolveResponse(c, res, route.statusCode);
         } catch (err) {
           return await this.handleError(c, hostArguments, err);
@@ -166,10 +168,10 @@ export class HonoControllerMapping extends ControllerMapping {
       : (responsePayload as Response);
   }
 
-  private createHostArguments(c: Context): HostArguments {
+  private createHostArguments(c: Context, ctx: RequestContext): HostArguments {
     return {
       switchToHttp: () => ({
-        getRequest: <T>() => c.req as T,
+        getRequest: () => ctx,
         getResponse: <T>() => c as T,
       }),
     };
