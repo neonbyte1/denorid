@@ -1,5 +1,9 @@
 import type { InjectionToken, Tag } from "@denorid/injector";
+import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
 
+/**
+ * Interface defining the core application context.
+ */
 export interface ApplicationContext {
   /**
    * Resolves a registered provider by its injection token.
@@ -22,9 +26,6 @@ export interface ApplicationContext {
   /**
    * Initializes the application context, bootstrapping all registered providers.
    *
-   * This is called automatically during application startup unless `autoInitialize`
-   * is explicitly set to `false` in the {@linkcode ApplicationOptions}.
-   *
    * @returns {Promise<void>}
    */
   init(): Promise<void>;
@@ -37,7 +38,21 @@ export interface ApplicationContext {
   close(): Promise<void>;
 }
 
-export interface HttpApplicationContext extends ApplicationContext {
+/**
+ * Interface defining the `useGlobalGuards` function that must be implemented by
+ * an application.
+ */
+export interface GlobalGuardContext {
+  /**
+   * Registers one or more guards to be applied globally across all routes.
+   *
+   * @param {...(CanActivate | CanActivateFn)[]} guards - The guards to register globally.
+   */
+  useGlobalGuards(...guards: (CanActivate | CanActivateFn)[]): void;
+}
+
+export interface HttpApplicationContext
+  extends ApplicationContext, GlobalGuardContext {
   /**
    * Starts the HTTP server and begins accepting incoming requests.
    */

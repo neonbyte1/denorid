@@ -16,12 +16,6 @@ export interface ApplicationOptions {
    * @default ["log", "warn", "error", "fatal"]
    */
   logLevel?: LogLevel[];
-  /**
-   * When `true`, the application is initialized automatically after creation.
-   *
-   * @default true
-   */
-  autoInitialize?: boolean;
 }
 
 /**

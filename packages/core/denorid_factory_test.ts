@@ -10,6 +10,7 @@ import { Application } from "./application.ts";
 import type { HttpApplicationContext } from "./application_context.ts";
 import { DenoridFactory } from "./denorid_factory.ts";
 import type { ExceptionHandler } from "./exceptions/handler.ts";
+import type { ExecutionContext } from "./guards/execution_context.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
 import { HttpApplication } from "./http_application.ts";
@@ -79,38 +80,6 @@ describe("DenoridFactory", () => {
       }
     });
 
-    it("auto-initializes by default (calls onApplicationBootstrap)", async () => {
-      const ctx = makeInjectorContext();
-      const bootstrapSpy = spy(ctx, "onApplicationBootstrap");
-
-      using _s = stub(
-        InjectorContextImpl,
-        "create",
-        () => Promise.resolve(ctx),
-      );
-
-      await DenoridFactory.create(RootModule as Type);
-
-      assertSpyCalls(bootstrapSpy, 1);
-    });
-
-    it("always auto-initializes regardless of autoInitialize in plain options", async () => {
-      const ctx = makeInjectorContext();
-      const bootstrapSpy = spy(ctx, "onApplicationBootstrap");
-
-      using _s = stub(
-        InjectorContextImpl,
-        "create",
-        () => Promise.resolve(ctx),
-      );
-
-      await DenoridFactory.create(RootModule as Type, {
-        autoInitialize: false,
-      });
-
-      assertSpyCalls(bootstrapSpy, 1);
-    });
-
     it("does not expose a listen method (not an HttpApplicationContext)", async () => {
       using _s = stub(
         InjectorContextImpl,
@@ -165,7 +134,8 @@ describe("DenoridFactory", () => {
       const adapter = makeHttpAdapter();
       const createMappingSpy = spy(adapter, "createControllerMapping");
 
-      await DenoridFactory.create(RootModule as Type, adapter);
+      const app = await DenoridFactory.create(RootModule as Type, adapter);
+      await app.init();
 
       assertSpyCalls(createMappingSpy, 1);
     });
@@ -180,7 +150,11 @@ describe("DenoridFactory", () => {
       const mapping = makeControllerMapping();
       const registerSpy = spy(mapping, "register");
 
-      await DenoridFactory.create(RootModule as Type, makeHttpAdapter(mapping));
+      const app = await DenoridFactory.create(
+        RootModule as Type,
+        makeHttpAdapter(mapping),
+      );
+      await app.init();
 
       assertSpyCalls(registerSpy, 1);
     });
@@ -195,33 +169,37 @@ describe("DenoridFactory", () => {
       const mapping = makeControllerMapping();
       const registerSpy = spy(mapping, "register");
 
-      await DenoridFactory.create(
+      const app = await DenoridFactory.create(
         RootModule as Type,
         makeHttpAdapter(mapping),
         {
           basePath: "/api",
         },
       );
+      await app.init();
 
       assertSpyCalls(registerSpy, 1);
       assertEquals(registerSpy.calls[0].args[0], "/api");
     });
 
-    it("skips init when autoInitialize is false", async () => {
+    it("ensure the same Guard won't be used twice", async () => {
       using _s = stub(
         InjectorContextImpl,
         "create",
         () => Promise.resolve(makeInjectorContext()),
       );
 
-      const adapter = makeHttpAdapter();
-      const createMappingSpy = spy(adapter, "createControllerMapping");
+      const mapping = makeControllerMapping();
+      const app = await DenoridFactory.create(
+        RootModule as Type,
+        makeHttpAdapter(mapping),
+      );
 
-      await DenoridFactory.create(RootModule as Type, adapter, {
-        autoInitialize: false,
-      });
+      const testGuard = (_: ExecutionContext): boolean => false;
 
-      assertSpyCalls(createMappingSpy, 0);
+      app.useGlobalGuards(testGuard, testGuard, testGuard);
+
+      assertEquals((app as HttpApplication)["guards"].size, 1);
     });
   });
 
@@ -250,25 +228,8 @@ describe("DenoridFactory", () => {
       const adapter = makeHttpAdapter();
       const createMappingSpy = spy(adapter, "createControllerMapping");
 
-      await DenoridFactory.create(RootModule as Type, { adapter });
-
-      assertSpyCalls(createMappingSpy, 1);
-    });
-
-    it("always auto-initializes regardless of autoInitialize in internal options", async () => {
-      using _s = stub(
-        InjectorContextImpl,
-        "create",
-        () => Promise.resolve(makeInjectorContext()),
-      );
-
-      const adapter = makeHttpAdapter();
-      const createMappingSpy = spy(adapter, "createControllerMapping");
-
-      await DenoridFactory.create(RootModule as Type, {
-        adapter,
-        autoInitialize: false,
-      });
+      const app = await DenoridFactory.create(RootModule as Type, { adapter });
+      await app.init();
 
       assertSpyCalls(createMappingSpy, 1);
     });
@@ -283,10 +244,11 @@ describe("DenoridFactory", () => {
       const mapping = makeControllerMapping();
       const registerSpy = spy(mapping, "register");
 
-      await DenoridFactory.create(RootModule as Type, {
+      const app = await DenoridFactory.create(RootModule as Type, {
         adapter: makeHttpAdapter(mapping),
         basePath: "/v1",
       });
+      await app.init();
 
       assertSpyCalls(registerSpy, 1);
       assertEquals(registerSpy.calls[0].args[0], "/v1");

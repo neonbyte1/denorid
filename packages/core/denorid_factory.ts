@@ -69,10 +69,6 @@ export class DenoridFactory {
       options,
     );
 
-    if (options?.autoInitialize ?? true) {
-      await app.init();
-    }
-
     return app;
   }
 
