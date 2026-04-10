@@ -11,7 +11,7 @@
   },
   "imports": {
     "@denorid/logger": "jsr:@denorid/logger@^0.3.0",
-    "@denorid/injector": "jsr:@denorid/injector@^0.0.1",
+    "@denorid/injector": "jsr:@denorid/injector@^0.0.2",
     "@std/http": "jsr:@std/http@^1.0.25",
     "@std/uuid": "jsr:@std/uuid@^1.1.0",
     "zod": "npm:zod@^4.3.6"
