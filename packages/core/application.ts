@@ -38,17 +38,17 @@ export class Application<
   protected readonly exceptionHandler: ExceptionHandler;
 
   /**
-   * @param {Type} target - The root module class used to derive the logger name.
+   * @param {Type} metaType - The root module class used to derive the logger name.
    * @param {InjectorContext} ctx - The injector context for resolving providers.
    * @param {Options} options - Options to configure the application.
    */
   public constructor(
-    target: Type,
+    protected readonly metaType: Type,
     protected readonly ctx: InjectorContext,
     options: Options,
   ) {
     this.logger = options?.logger ??
-      new Logger(target.name, { levels: options?.logLevel, timestamp: true });
+      new Logger(metaType.name, { levels: options?.logLevel, timestamp: true });
 
     this.exceptionHandler = new ExceptionHandler(ctx);
   }
