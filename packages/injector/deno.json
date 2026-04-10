@@ -10,5 +10,8 @@
     "./modules": "./modules.ts",
     "./module_ref": "./module_ref.ts",
     "./providers": "./provider.ts"
+  },
+  "imports": {
+    "@denorid/logger": "jsr:@denorid/logger@^0.3.0"
   }
 }
