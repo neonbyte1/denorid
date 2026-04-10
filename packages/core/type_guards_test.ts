@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { isFunction, isNil, isString } from "./type_guards.ts";
+import { isClass, isFunction, isNil, isString } from "./type_guards.ts";
 
 describe("isNil", () => {
   it("returns true for null", () => {
@@ -87,5 +87,25 @@ describe("isFunction", () => {
 
   it("returns false for a number", () => {
     assertEquals(isFunction(42), false);
+  });
+});
+
+describe("isClass", () => {
+  it("returns true for a class constructor", () => {
+    class Foo {}
+    assertEquals(isClass(Foo), true);
+  });
+
+  it("returns false for an arrow function (passes isFunction but fails regex)", () => {
+    assertEquals(isClass(() => {}), false);
+  });
+
+  it("returns false for a regular function (passes isFunction but fails regex)", () => {
+    function bar() {}
+    assertEquals(isClass(bar), false);
+  });
+
+  it("returns false for a non-function value (fails isFunction short-circuit)", () => {
+    assertEquals(isClass("Foo"), false);
   });
 });

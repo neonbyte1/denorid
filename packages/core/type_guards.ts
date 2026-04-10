@@ -1,3 +1,5 @@
+import type { Type } from "@denorid/injector";
+
 /**
  * Checks wether the given value is `null` or `undefined`.
  *
@@ -53,4 +55,24 @@ export function isString<T extends string = string>(
 // deno-lint-ignore ban-types
 export function isFunction<T extends Function>(value: unknown): value is T {
   return typeof value === "function";
+}
+
+/**
+ * Checks whether the given value is a class constructor.
+ *
+ * @typeParam T - The instance type the class produces.
+ * @param {unknown} data The value to test.
+ * @returns {boolean} `true` when `data` is a class constructor, `false` otherwise.
+ *
+ * @example
+ * ```ts
+ * class Foo {}
+ * isClass(Foo);        // true
+ * isClass(() => {});   // false
+ * isClass("Foo");      // false
+ * ```
+ */
+export function isClass<T>(data: unknown): data is Type<T> {
+  return isFunction<Type<T>>(data) &&
+    /^class\s/.test(Function.prototype.toString.call(data));
 }
