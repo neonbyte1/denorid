@@ -33,3 +33,10 @@ export * from "./injector_context.ts";
 export * from "./module_ref.ts";
 export * from "./modules.ts";
 export * from "./provider.ts";
+
+export {
+  getInjectableMetadata,
+  getInjectionDependencies,
+  getModuleMetadata,
+  getTags,
+} from "./_internal.ts";
