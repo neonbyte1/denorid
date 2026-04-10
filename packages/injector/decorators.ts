@@ -1,12 +1,4 @@
-import {
-  GLOBAL_MODULE_METADATA,
-  INJECTABLE_METADATA,
-  type InjectableMetadata,
-  INJECTION_METADATA,
-  type InjectionDependency,
-  MODULE_METADATA,
-  TAG_METADATA,
-} from "./_metadata.ts";
+import type { InjectableMetadata, InjectionDependency } from "./_metadata.ts";
 import type {
   Decorator,
   InjectableOptions,
@@ -14,6 +6,13 @@ import type {
   InjectOptions,
   Tag,
 } from "./common.ts";
+import {
+  GLOBAL_MODULE_METADATA,
+  INJECTABLE_METADATA,
+  INJECTION_METADATA,
+  MODULE_METADATA,
+  TAG_METADATA,
+} from "./constants.ts";
 import { InvalidStaticMemberDecoratorUsageError } from "./errors.ts";
 import type { ModuleMetadata } from "./modules.ts";
 

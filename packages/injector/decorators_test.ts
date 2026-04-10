@@ -1,13 +1,13 @@
 import { assertEquals, assertExists, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
+import type { InjectableMetadata } from "./_metadata.ts";
+import { SimpleService, TAG_A } from "./_test_fixtures.ts";
+import type { Tag } from "./common.ts";
 import {
   GLOBAL_MODULE_METADATA,
   INJECTABLE_METADATA,
-  type InjectableMetadata,
   TAG_METADATA,
-} from "./_metadata.ts";
-import { SimpleService, TAG_A } from "./_test_fixtures.ts";
-import type { Tag } from "./common.ts";
+} from "./constants.ts";
 import { Global, Inject, Injectable, Module, Tags } from "./decorators.ts";
 import { InvalidStaticMemberDecoratorUsageError } from "./errors.ts";
 

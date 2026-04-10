@@ -1,13 +1,12 @@
+import type { InjectableMetadata, InjectionDependency } from "./_metadata.ts";
+import type { InjectionToken, Tag, Type } from "./common.ts";
 import {
   GLOBAL_MODULE_METADATA,
   INJECTABLE_METADATA,
-  type InjectableMetadata,
   INJECTION_METADATA,
-  type InjectionDependency,
   MODULE_METADATA,
   TAG_METADATA,
-} from "./_metadata.ts";
-import type { InjectionToken, Tag, Type } from "./common.ts";
+} from "./constants.ts";
 import type {
   OnApplicationBootstrap,
   OnApplicationShutdown,
