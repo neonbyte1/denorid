@@ -1,4 +1,9 @@
-import { getInjectionDependencies, getTags } from "./_internal.ts";
+import type { LoggerService } from "@denorid/logger";
+import {
+  getInjectionDependencies,
+  getTags,
+  serializeToken,
+} from "./_internal.ts";
 import { getCurrentModuleRef } from "./_module_context.ts";
 import {
   type NormalizedProvider,
@@ -102,7 +107,10 @@ export class Container {
    *
    * @param options - Optional container configuration (see {@linkcode ContainerOptions})
    */
-  public constructor(options?: ContainerOptions) {
+  public constructor(
+    private readonly logger: LoggerService,
+    options?: ContainerOptions,
+  ) {
     this.parent = options?.parent;
     this.exports = options?.exports ?? new Set();
     this.globalContainer = options?.globalContainer;
@@ -292,9 +300,15 @@ export class Container {
           return await child.resolve(token);
         } catch (e) {
           if (!(e instanceof TokenNotFoundError)) {
-            throw e;
+            const err = e as Error;
+
+            this.logger.error(
+              `Failed to resolve ${serializeToken(token)}: ${err.message}`,
+              err.stack,
+            );
+
+            throw err;
           }
-          /** @todo: double check this case, right now we just continue searching for other children */
         }
       }
     }
@@ -325,11 +339,12 @@ export class Container {
   public async tryResolve<T>(token: InjectionToken<T>): Promise<T | undefined> {
     try {
       return await this.resolve(token);
-    } catch (error) {
-      if (error instanceof TokenNotFoundError) {
+    } catch (e) {
+      if (e instanceof TokenNotFoundError) {
         return undefined;
       }
-      throw error;
+
+      throw e;
     }
   }
 
@@ -360,8 +375,19 @@ export class Container {
           const instance = await this.resolve(token);
 
           instances.push(instance as T);
-        } catch {
-          /** @todo: double check - should we log these if resolution fails? */
+        } catch (e) {
+          if (!(e instanceof TokenNotFoundError)) {
+            const err = e as Error;
+
+            this.logger.error(
+              `Failed to resolve "${serializeToken(token)}" with tag "${
+                String(tag)
+              }": ${err.message}`,
+              err.stack,
+            );
+
+            throw err;
+          }
         }
       }
     }
@@ -379,8 +405,19 @@ export class Container {
             const instance = await this.globalContainer.resolve(token);
 
             instances.push(instance as T);
-          } catch {
-            /** @todo: double check - should we log these if resolution fails? */
+          } catch (e) {
+            if (!(e instanceof TokenNotFoundError)) {
+              const err = e as Error;
+
+              this.logger.error(
+                `Failed to resolve "${serializeToken(token)}" with tag "${
+                  String(tag)
+                }" from global container: ${err.message}`,
+                err.stack,
+              );
+
+              throw err;
+            }
           }
         }
       }
@@ -471,12 +508,21 @@ export class Container {
         const resolved = await this.resolve(dep.token);
 
         (instance as Record<Tag, unknown>)[dep.field] = resolved;
-      } catch (error) {
-        if (dep.options?.optional && error instanceof TokenNotFoundError) {
+      } catch (e) {
+        const err = e as Error;
+
+        if (dep.options?.optional && err instanceof TokenNotFoundError) {
           continue;
         }
 
-        throw error;
+        this.logger.error(
+          `Failed to inject ${
+            serializeToken(dep.token)
+          } into ${target.name}: ${err.message}`,
+          err.stack,
+        );
+
+        throw e;
       }
     }
   }
@@ -522,7 +568,7 @@ export class Container {
    * @returns {Container} The function returns a newly created child container instance.
    */
   public createChild(options?: Omit<ContainerOptions, "parent">): Container {
-    return new Container({
+    return new Container(this.logger, {
       ...options,
       parent: this,
       globalContainer: this.globalContainer,
@@ -756,8 +802,19 @@ export class Container {
             const instance = await this.resolve(token);
 
             instances.push(instance as T);
-          } catch {
-            /** @todo: double check - should we log these if resolution fails? */
+          } catch (e) {
+            if (!(e instanceof TokenNotFoundError)) {
+              const err = e as Error;
+
+              this.logger.error(
+                `Failed to resolve exported "${
+                  serializeToken(token)
+                }" with tag "${String(tag)}": ${err.message}`,
+                err.stack,
+              );
+
+              throw err;
+            }
           }
         }
       }

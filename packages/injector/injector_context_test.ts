@@ -7,7 +7,11 @@ import {
   assertThrows,
 } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { RequestScopedService, SimpleService } from "./_test_fixtures.ts";
+import {
+  noopLogger,
+  RequestScopedService,
+  SimpleService,
+} from "./_test_fixtures.ts";
 import type { Type } from "./common.ts";
 import { Container } from "./container.ts";
 import { Global, Inject, Injectable, Module } from "./decorators.ts";
@@ -770,7 +774,7 @@ describe("Critical coverage tests (run first)", () => {
       value = "plain";
     }
 
-    const container = new Container();
+    const container = new Container(noopLogger);
 
     container.register({
       provide: PlainClass,
@@ -854,7 +858,7 @@ describe("Critical coverage tests (run first)", () => {
       id = crypto.randomUUID();
     }
 
-    const container = new Container();
+    const container = new Container(noopLogger);
 
     container.register({
       provide: FirstTransientTarget,

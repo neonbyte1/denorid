@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import {
   DependentService,
+  noopLogger,
   RequestScopedService,
   ServiceWithOptionalDep,
   SimpleService,
@@ -29,7 +30,7 @@ describe("Container", () => {
   let container: Container;
 
   beforeEach(() => {
-    container = new Container();
+    container = new Container(noopLogger);
   });
 
   afterEach(() => {
@@ -187,7 +188,7 @@ describe("Container", () => {
     });
 
     it("should handle existing provider (alias)", async () => {
-      const container = new Container();
+      const container = new Container(noopLogger);
 
       container.register(
         SimpleService,
@@ -204,7 +205,7 @@ describe("Container", () => {
     });
 
     it("should handle default mode in resolveWithMode", async () => {
-      const container = new Container();
+      const container = new Container(noopLogger);
 
       container.register({
         provide: "CUSTOM_MODE",
@@ -276,7 +277,9 @@ describe("Container", () => {
     });
 
     it("should return true for exported child provider", () => {
-      const child = new Container({ exports: new Set([SimpleService]) });
+      const child = new Container(noopLogger, {
+        exports: new Set([SimpleService]),
+      });
 
       child.register(SimpleService);
       container.addChild(child);
@@ -285,7 +288,7 @@ describe("Container", () => {
     });
 
     it("should return false for non-exported child provider", () => {
-      const child = new Container();
+      const child = new Container(noopLogger);
 
       child.register(SimpleService);
       container.addChild(child);
@@ -294,10 +297,10 @@ describe("Container", () => {
     });
 
     it("should return true for global provider", () => {
-      const global = new Container();
+      const global = new Container(noopLogger);
 
       global.register(SimpleService);
-      container = new Container({ globalContainer: global });
+      container = new Container(noopLogger, { globalContainer: global });
 
       assertEquals(container.canResolve(SimpleService), true);
     });
@@ -305,7 +308,9 @@ describe("Container", () => {
 
   describe("hierarchical resolution", () => {
     it("should resolve from exported child", async () => {
-      const child = new Container({ exports: new Set([SimpleService]) });
+      const child = new Container(noopLogger, {
+        exports: new Set([SimpleService]),
+      });
 
       child.register(SimpleService);
       container.addChild(child);
@@ -316,7 +321,7 @@ describe("Container", () => {
     });
 
     it("should not resolve from non-exported child", async () => {
-      const child = new Container();
+      const child = new Container(noopLogger);
 
       child.register(SimpleService);
       container.addChild(child);
@@ -328,10 +333,10 @@ describe("Container", () => {
     });
 
     it("should resolve from global container", async () => {
-      const global = new Container();
+      const global = new Container(noopLogger);
 
       global.register(SimpleService);
-      container = new Container({ globalContainer: global });
+      container = new Container(noopLogger, { globalContainer: global });
 
       const instance = await container.resolve(SimpleService);
       assertInstanceOf(instance, SimpleService);
@@ -348,7 +353,9 @@ describe("Container", () => {
         value = "child";
       }
 
-      const child = new Container({ exports: new Set(["SERVICE"]) });
+      const child = new Container(noopLogger, {
+        exports: new Set(["SERVICE"]),
+      });
 
       child.register({ provide: "SERVICE", useClass: ChildService });
       container.addChild(child);
@@ -360,7 +367,9 @@ describe("Container", () => {
     });
 
     it("should handle child resolve error (non-TokenNotFoundError)", async () => {
-      const child = new Container({ exports: new Set(["THROWING"]) });
+      const child = new Container(noopLogger, {
+        exports: new Set(["THROWING"]),
+      });
       child.register({
         provide: "THROWING",
         useFactory: () => {
@@ -407,7 +416,7 @@ describe("Container", () => {
     });
 
     it("should include exported child tags", async () => {
-      const child = new Container({
+      const child = new Container(noopLogger, {
         exports: new Set([TaggedServiceA]),
       });
 
@@ -421,10 +430,10 @@ describe("Container", () => {
     });
 
     it("should include global tags", async () => {
-      const global = new Container();
+      const global = new Container(noopLogger);
 
       global.register(TaggedServiceA);
-      container = new Container({ globalContainer: global });
+      container = new Container(noopLogger, { globalContainer: global });
       container.register(TaggedServiceB);
 
       const instances = await container.getByTag<{ name: string }>(TAG_A);
@@ -439,8 +448,10 @@ describe("Container", () => {
     });
 
     it("should handle getTokensByTag with child exports", () => {
-      const parent = new Container();
-      const child = new Container({ exports: new Set([TaggedServiceA]) });
+      const parent = new Container(noopLogger);
+      const child = new Container(noopLogger, {
+        exports: new Set([TaggedServiceA]),
+      });
 
       child.register(TaggedServiceA);
       parent.addChild(child);
@@ -451,8 +462,8 @@ describe("Container", () => {
     });
 
     it("should handle getTokensByTag with non-exported child", () => {
-      const parent = new Container();
-      const child = new Container();
+      const parent = new Container(noopLogger);
+      const child = new Container(noopLogger);
 
       child.register(TaggedServiceA);
       parent.addChild(child);
@@ -463,11 +474,11 @@ describe("Container", () => {
     });
 
     it("should handle getTokensByTag with global container", () => {
-      const global = new Container();
+      const global = new Container(noopLogger);
 
       global.register(TaggedServiceA);
 
-      const container = new Container({ globalContainer: global });
+      const container = new Container(noopLogger, { globalContainer: global });
       const tokens = container.getTokensByTag(TAG_A);
 
       assertEquals(tokens.length, 1);
@@ -498,7 +509,9 @@ describe("Container", () => {
     });
 
     it("should check child containers", () => {
-      const child = new Container({ exports: new Set([TransientService]) });
+      const child = new Container(noopLogger, {
+        exports: new Set([TransientService]),
+      });
 
       child.register(TransientService);
       container.addChild(child);
@@ -507,16 +520,16 @@ describe("Container", () => {
     });
 
     it("should check global container", () => {
-      const global = new Container();
+      const global = new Container(noopLogger);
 
       global.register(TransientService);
-      container = new Container({ globalContainer: global });
+      container = new Container(noopLogger, { globalContainer: global });
 
       assertEquals(container.getProviderMode(TransientService), "transient");
     });
 
     it("should handle factory provider mode inheritance from token", () => {
-      const container = new Container();
+      const container = new Container(noopLogger);
 
       @Injectable({ mode: "transient" })
       class TransientClass {}
@@ -530,7 +543,7 @@ describe("Container", () => {
     });
 
     it("should handle provider.provide as function for mode check", () => {
-      const container = new Container();
+      const container = new Container(noopLogger);
 
       @Injectable({ mode: "transient" })
       class MyClass {}
@@ -579,7 +592,9 @@ describe("Container", () => {
     });
 
     it("should return instances recursively", async () => {
-      const child = new Container({ exports: new Set([TransientService]) });
+      const child = new Container(noopLogger, {
+        exports: new Set([TransientService]),
+      });
 
       child.register(TransientService);
       container.addChild(child);
@@ -611,7 +626,7 @@ describe("Container", () => {
     });
 
     it("should return child containers", () => {
-      const child = new Container();
+      const child = new Container(noopLogger);
 
       container.addChild(child);
 
@@ -619,8 +634,8 @@ describe("Container", () => {
     });
 
     it("should handle parent linking in constructor", () => {
-      const parent = new Container();
-      const _ = new Container({ parent });
+      const parent = new Container(noopLogger);
+      const _ = new Container(noopLogger, { parent });
 
       assertEquals(parent.getChildren().length, 1);
     });
@@ -634,10 +649,10 @@ describe("Container", () => {
     });
 
     it("should inherit global container", () => {
-      const global = new Container();
+      const global = new Container(noopLogger);
 
       global.register(SimpleService);
-      container = new Container({ globalContainer: global });
+      container = new Container(noopLogger, { globalContainer: global });
 
       const child = container.createChild();
 
@@ -667,7 +682,7 @@ describe("Container", () => {
 
   describe("addChild", () => {
     it("should add child and set parent", () => {
-      const child = new Container();
+      const child = new Container(noopLogger);
 
       container.addChild(child);
 
@@ -677,7 +692,7 @@ describe("Container", () => {
 
   describe("Container tag edge cases", () => {
     it("should handle getByTag when own tag resolution fails", async () => {
-      const container = new Container();
+      const container = new Container(noopLogger);
       const FAIL_TAG = Symbol("FAIL_TAG");
 
       @Injectable()
@@ -703,10 +718,10 @@ describe("Container", () => {
         dep!: unknown;
       }
 
-      const global = new Container();
+      const global = new Container(noopLogger);
       global.register(GlobalFailingService);
 
-      const container = new Container({ globalContainer: global });
+      const container = new Container(noopLogger, { globalContainer: global });
 
       const instances = await container.getByTag(GLOBAL_FAIL_TAG);
       assertEquals(instances.length, 0);
@@ -722,20 +737,98 @@ describe("Container", () => {
         dep!: unknown;
       }
 
-      const child = new Container({ exports: new Set([ExportFailingService]) });
+      const child = new Container(noopLogger, {
+        exports: new Set([ExportFailingService]),
+      });
       child.register(ExportFailingService);
 
-      const parent = new Container();
+      const parent = new Container(noopLogger);
       parent.addChild(child);
 
       const instances = await parent.getByTag(EXPORT_FAIL_TAG);
       assertEquals(instances.length, 0);
     });
+
+    it("should rethrow non-TokenNotFoundError from own tag resolution", async () => {
+      const THROW_TAG = Symbol("THROW_TAG");
+
+      @Injectable()
+      @Tags(THROW_TAG)
+      class ThrowingOwnService {}
+
+      const container = new Container(noopLogger);
+
+      container.register({
+        provide: ThrowingOwnService,
+        useFactory: () => {
+          throw new Error("own factory error");
+        },
+      });
+
+      await assertRejects(
+        () => container.getByTag(THROW_TAG),
+        Error,
+        "own factory error",
+      );
+    });
+
+    it("should rethrow non-TokenNotFoundError from global tag resolution", async () => {
+      const GLOBAL_THROW_TAG = Symbol("GLOBAL_THROW_TAG");
+
+      @Injectable()
+      @Tags(GLOBAL_THROW_TAG)
+      class ThrowingGlobalService {}
+
+      const global = new Container(noopLogger);
+
+      global.register({
+        provide: ThrowingGlobalService,
+        useFactory: () => {
+          throw new Error("global factory error");
+        },
+      });
+
+      const container = new Container(noopLogger, { globalContainer: global });
+
+      await assertRejects(
+        () => container.getByTag(GLOBAL_THROW_TAG),
+        Error,
+        "global factory error",
+      );
+    });
+
+    it("should rethrow non-TokenNotFoundError from exported tag resolution", async () => {
+      const EXPORT_THROW_TAG = Symbol("EXPORT_THROW_TAG");
+
+      @Injectable()
+      @Tags(EXPORT_THROW_TAG)
+      class ThrowingExportedService {}
+
+      const child = new Container(noopLogger, {
+        exports: new Set([ThrowingExportedService]),
+      });
+
+      child.register({
+        provide: ThrowingExportedService,
+        useFactory: () => {
+          throw new Error("exported factory error");
+        },
+      });
+
+      const parent = new Container(noopLogger);
+      parent.addChild(child);
+
+      await assertRejects(
+        () => parent.getByTag(EXPORT_THROW_TAG),
+        Error,
+        "exported factory error",
+      );
+    });
   });
 
   describe("_normalized_provider edge cases", () => {
     it("should handle factory with non-function provide and no mode", async () => {
-      const container = new Container();
+      const container = new Container(noopLogger);
 
       container.register({
         provide: "STRING_FACTORY",
@@ -753,7 +846,7 @@ describe("Container", () => {
         id = crypto.randomUUID();
       }
 
-      const container = new Container();
+      const container = new Container(noopLogger);
 
       container.register({
         provide: FreshTransientClass,

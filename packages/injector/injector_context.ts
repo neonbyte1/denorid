@@ -1,3 +1,4 @@
+import { Logger } from "@denorid/logger";
 import {
   hasOnApplicationBootstrap,
   hasOnApplicationShutdown,
@@ -85,11 +86,12 @@ export class InjectorContext implements InjectorContextLifecycle {
     rootModule: Type | DynamicModule,
     options?: InjectorContextOptions,
   ): Promise<InjectorContext> {
+    const logger = new Logger("Injector", { timestamp: true });
     const compiler = new ModuleCompiler();
     const compiled = await compiler.compile(rootModule);
     const modulesInOrder = compiler.getModulesInInitOrder(compiled);
 
-    const globalContainer = new Container();
+    const globalContainer = new Container(logger);
     if (options?.useGlobals !== false) {
       globalContainer.register(...compiler.getGlobalProviders());
     }
@@ -107,7 +109,7 @@ export class InjectorContext implements InjectorContextLifecycle {
         childContainers.push(buildContainer(importedMod));
       }
 
-      const container = new Container({
+      const container = new Container(logger, {
         exports: mod.exports,
         globalContainer,
       });
@@ -184,6 +186,8 @@ export class InjectorContext implements InjectorContextLifecycle {
         const moduleInstance = await container.resolve(mod.type);
 
         await callOnModuleInit(moduleInstance);
+
+        logger.log(`${mod.type.name} dependencies initialized`);
       });
     }
 

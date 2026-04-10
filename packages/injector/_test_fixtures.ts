@@ -1,7 +1,15 @@
 // deno-coverage-ignore-file
 
+import type { LoggerService } from "@denorid/logger";
 import { Inject, Injectable, Tags } from "./decorators.ts";
 import type { ModuleRef } from "./module_ref.ts";
+
+export const noopLogger: LoggerService = {
+  log: () => {},
+  warn: () => {},
+  fatal: () => {},
+  error: () => {},
+};
 
 @Injectable()
 export class SimpleService {

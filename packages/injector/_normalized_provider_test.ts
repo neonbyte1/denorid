@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { noopLogger } from "./_test_fixtures.ts";
 import { Container } from "./container.ts";
 import { InvalidProviderError } from "./errors.ts";
 import type { Provider } from "./provider.ts";
@@ -8,7 +9,7 @@ describe("Provider normalization", () => {
   let container: Container;
 
   beforeEach(() => {
-    container = new Container();
+    container = new Container(noopLogger);
   });
 
   afterEach(() => {
