@@ -46,9 +46,11 @@ export interface GlobalGuardContext {
   /**
    * Registers one or more guards to be applied globally across all routes.
    *
-   * @param {...(CanActivate | CanActivateFn)[]} guards - The guards to register globally.
+   * @param {...(CanActivate|CanActivateFn)[]} guards - The guards to register globally.
    */
-  useGlobalGuards(...guards: (CanActivate | CanActivateFn)[]): void;
+  useGlobalGuards(
+    ...guards: (CanActivate | CanActivateFn)[]
+  ): void;
 }
 
 export interface HttpApplicationContext
