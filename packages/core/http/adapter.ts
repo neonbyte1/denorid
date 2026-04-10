@@ -1,5 +1,6 @@
 import type { InjectorContext } from "@denorid/injector";
 import type { ExceptionHandler } from "../exceptions/handler.ts";
+import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
 import type { ControllerMapping } from "./controller_mapping.ts";
 
 /**
@@ -34,5 +35,6 @@ export interface HttpAdapter {
   createControllerMapping(
     ctx: InjectorContext,
     exceptionHandler: ExceptionHandler,
+    globalGuards: (CanActivate | CanActivateFn)[],
   ): ControllerMapping | Promise<ControllerMapping>;
 }

@@ -1,7 +1,11 @@
 import {
   BadRequestException,
+  type CanActivate,
+  type CanActivateFn,
   ControllerMapping,
   type ExceptionHandler,
+  type ExecutionContext,
+  ForbiddenException,
   type HostArguments,
   type HttpController,
   HttpException,
@@ -22,8 +26,9 @@ export class HonoControllerMapping extends ControllerMapping {
     private readonly app: Hono,
     ctx: InjectorContext,
     exceptionHandler: ExceptionHandler,
+    globalGuards: (CanActivate | CanActivateFn)[],
   ) {
-    super(ctx, exceptionHandler);
+    super(ctx, exceptionHandler, globalGuards);
   }
 
   /**
@@ -33,6 +38,7 @@ export class HonoControllerMapping extends ControllerMapping {
   protected override async registerRoute(
     controllerClass: Type<HttpController>,
     controllerBasePath: string,
+    controllerGuards: (Type<CanActivate> | CanActivate | CanActivateFn)[],
     route: RequestMappingMetadata,
   ): Promise<void> {
     const fullPath = this.joinPaths(
@@ -41,6 +47,13 @@ export class HonoControllerMapping extends ControllerMapping {
     );
 
     const methodName = HttpMethod[route.method ?? HttpMethod.GET];
+    const guards = [
+      ...new Set([
+        ...this.globalGuards,
+        ...controllerGuards,
+        ...(route.guards ?? []),
+      ]),
+    ];
 
     this.app.on(methodName, fullPath, async (c) => {
       const requestId = c.req.header("x-request-id") ?? crypto.randomUUID();
@@ -50,14 +63,25 @@ export class HonoControllerMapping extends ControllerMapping {
           controllerClass,
         );
 
+        const hostArguments = this.createHostArguments(c);
+        const executionContext: ExecutionContext = {
+          ...hostArguments,
+          getClass: <T = HttpController>() => controllerClass as Type<T>,
+          getHandler: () => controller[route.name],
+        };
+
         try {
+          if (!await this.resolveGuards(executionContext, ...guards)) {
+            throw new ForbiddenException();
+          }
+
           const validatedDto = await this.validateRequest(c, route);
           const res = await controller[route.name](
             new HonoRequestContext(c, validatedDto),
           );
           return this.resolveResponse(c, res, route.statusCode);
         } catch (err) {
-          return await this.handleError(c, err);
+          return await this.handleError(c, hostArguments, err);
         }
       });
     });
@@ -122,10 +146,14 @@ export class HonoControllerMapping extends ControllerMapping {
     throw new UnprocessableContentException();
   }
 
-  private async handleError(c: Context, err: unknown): Promise<Response> {
+  private async handleError(
+    c: Context,
+    hostArguments: HostArguments,
+    err: unknown,
+  ): Promise<Response> {
     const responsePayload = (await this.exceptionHandler.handle(
       err,
-      this.createHostArguments(c),
+      hostArguments,
     )) ??
       (err instanceof HttpException ? err : new InternalServerErrorException(
         typeof err === "string"

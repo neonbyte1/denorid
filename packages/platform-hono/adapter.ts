@@ -1,4 +1,6 @@
 import type {
+  CanActivate,
+  CanActivateFn,
   ControllerMapping,
   ExceptionHandler,
   HttpAdapter,
@@ -33,7 +35,13 @@ export class HonoAdapter implements HttpAdapter {
   public createControllerMapping(
     ctx: InjectorContext,
     exceptionHandler: ExceptionHandler,
+    globalGuards: (CanActivate | CanActivateFn)[],
   ): ControllerMapping {
-    return new HonoControllerMapping(this.app, ctx, exceptionHandler);
+    return new HonoControllerMapping(
+      this.app,
+      ctx,
+      exceptionHandler,
+      globalGuards,
+    );
   }
 }

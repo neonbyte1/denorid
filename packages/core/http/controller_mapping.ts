@@ -6,6 +6,10 @@ import {
   HTTP_CONTROLLER_METADATA,
 } from "../_constants.ts";
 import type { ExceptionHandler } from "../exceptions/handler.ts";
+import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
+import { GUARDS_METADATA } from "../guards/decorator.ts";
+import type { ExecutionContext } from "../guards/execution_context.ts";
+import { isClass, isFunction } from "../type_guards.ts";
 import type { RequestMappingMetadata } from "./_request_mapping.ts";
 import type { ControllerOptions } from "./controller_options.ts";
 import type { RequestContext } from "./request_context.ts";
@@ -34,10 +38,12 @@ export abstract class ControllerMapping {
   /**
    * @param {InjectorContext} ctx - The injector context used to resolve controllers.
    * @param {ExceptionHandler} exceptionHandler - Handler invoked when a route throws.
+   * @param {CanActivate|CanActivateFn} globalGuards - Array of global guard instances or function.
    */
   public constructor(
     protected readonly ctx: InjectorContext,
     protected readonly exceptionHandler: ExceptionHandler,
+    protected readonly globalGuards: (CanActivate | CanActivateFn)[],
   ) {}
 
   /**
@@ -66,11 +72,16 @@ export abstract class ControllerMapping {
    * @param {Type<HttpController>} controllerClass - The controller class owning the route.
    * @param {string} controllerBasePath - The fully-resolved base path for the controller.
    * @param {RequestMappingMetadata} route - Metadata describing the route (method, path, handler).
+   * @param {(Type<CanActivate>|CanActivate|CanActivateFn)[]} controllerGuards - Guards defined on
+   * the controller level. Each guard is either a class reference (resolved via DI), an
+   * already-instantiated object, or a plain function. All guards must return `true`
+   * for the request to proceed.
    * @return {Promise<void>} Resolves when the route has been registered.
    */
   protected abstract registerRoute(
     controllerClass: Type<HttpController>,
     controllerBasePath: string,
+    controllerGuards: (Type<CanActivate> | CanActivate | CanActivateFn)[],
     route: RequestMappingMetadata,
   ): Promise<void>;
 
@@ -97,9 +108,48 @@ export abstract class ControllerMapping {
       (controllerClass[Symbol.metadata]?.[CONTROLLER_REQUEST_MAPPING] ??
         []) as RequestMappingMetadata[];
 
+    const controllerGuards = controllerClass[Symbol.metadata]
+      ?.[GUARDS_METADATA] as
+        | Set<Type<CanActivate> | CanActivate | CanActivateFn>
+        | undefined;
+
     for (const route of requestMapping) {
-      await this.registerRoute(controllerClass, controllerBasePath, route);
+      await this.registerRoute(
+        controllerClass,
+        controllerBasePath,
+        controllerGuards ? [...controllerGuards] : [],
+        route,
+      );
     }
+  }
+
+  protected async resolveGuards(
+    executionContext: ExecutionContext,
+    ...guards: (Type<CanActivate> | CanActivate | CanActivateFn)[]
+  ): Promise<boolean> {
+    for (const guard of guards) {
+      if (!(await this.resolveGuard(executionContext, guard))) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  protected async resolveGuard(
+    executionContext: ExecutionContext,
+    guard: Type<CanActivate> | CanActivate | CanActivateFn,
+  ): Promise<boolean> {
+    if (isClass<CanActivate>(guard)) {
+      return await (await this.ctx.resolve(guard)).canActivate(
+        executionContext,
+      );
+    }
+    if (isFunction<CanActivateFn>(guard)) {
+      return await guard(executionContext);
+    }
+
+    return await guard.canActivate(executionContext);
   }
 
   /**

@@ -26,8 +26,14 @@ export * from "./application.ts";
 export * from "./application_context.ts";
 export * from "./denorid_factory.ts";
 export * from "./exceptions/mod.ts";
+export * from "./guards/mod.ts";
 export * from "./host_arguments.ts";
 export * from "./http/mod.ts";
-export * from "./http_application.ts";
+export {
+  HttpApplication,
+  type HttpApplicationOptions,
+  type HttpCoreApplicationOptions,
+  type InternalHttpApplicationOptions,
+} from "./http_application.ts";
 export * from "./pipes/mod.ts";
 export * from "./type_guards.ts";

@@ -199,7 +199,7 @@ describe("DenoridFactory", () => {
 
       app.useGlobalGuards(testGuard, testGuard, testGuard);
 
-      assertEquals((app as HttpApplication)["guards"].size, 1);
+      assertEquals((app as HttpApplication)["globalGuards"].size, 1);
     });
   });
 

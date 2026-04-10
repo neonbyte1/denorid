@@ -1,4 +1,5 @@
 import type {
+  CanActivateFn,
   ExceptionHandler,
   HttpController,
   RequestMappingMetadata,
@@ -127,6 +128,7 @@ describe("HonoControllerMapping", () => {
     exHandler?: ExceptionHandler;
     basePath?: string;
     controllerPath?: string;
+    globalGuards?: CanActivateFn[];
   }) {
     class FakeController {}
     setControllerMetadata(FakeController, {
@@ -144,6 +146,7 @@ describe("HonoControllerMapping", () => {
       app,
       injectorCtx,
       opts.exHandler ?? makeExceptionHandler().exHandler,
+      opts.globalGuards ?? [],
     );
 
     await mapping.register(opts.basePath);
@@ -194,6 +197,7 @@ describe("HonoControllerMapping", () => {
         app,
         injectorCtx,
         makeExceptionHandler().exHandler,
+        [],
       );
 
       await mapping.register("v1");
@@ -228,6 +232,7 @@ describe("HonoControllerMapping", () => {
         app,
         injectorCtx,
         makeExceptionHandler().exHandler,
+        [],
       );
 
       await mapping.register();
@@ -768,6 +773,61 @@ describe("HonoControllerMapping", () => {
 
       assertEquals(capturedHost!.switchToHttp().getRequest(), ctx.req);
       assertEquals(capturedHost!.switchToHttp().getResponse(), ctx);
+    });
+  });
+
+  describe("guards", () => {
+    it("returns 403 Forbidden when a global guard returns false", async () => {
+      const denyGuard: CanActivateFn = () => false;
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "secret" },
+        controller: { secret: () => "ok" },
+        globalGuards: [denyGuard],
+      });
+
+      const { ctx, jsonSpy } = makeHonoContext();
+      await capturedRoutes[0].handler(ctx);
+
+      assertSpyCalls(jsonSpy, 1);
+      const [, status] = jsonSpy.calls[0].args as [unknown, number];
+      assertEquals(status, StatusCode.Forbidden);
+    });
+
+    it("exposes the correct handler via executionContext.getHandler()", async () => {
+      let capturedHandler: unknown;
+      const capturingGuard: CanActivateFn = (ctx) => {
+        capturedHandler = ctx.getHandler();
+        return true;
+      };
+      const handlerFn = spy(() => "ok");
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "guarded" },
+        controller: { guarded: handlerFn },
+        globalGuards: [capturingGuard],
+      });
+
+      const { ctx } = makeHonoContext();
+      await capturedRoutes[0].handler(ctx);
+
+      assertEquals(capturedHandler, handlerFn);
+    });
+
+    it("exposes the controller class via executionContext.getClass()", async () => {
+      let capturedClass: unknown;
+      const capturingGuard: CanActivateFn = (ctx) => {
+        capturedClass = ctx.getClass();
+        return true;
+      };
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "guarded" },
+        controller: { guarded: () => null },
+        globalGuards: [capturingGuard],
+      });
+
+      const { ctx } = makeHonoContext();
+      await capturedRoutes[0].handler(ctx);
+
+      assertEquals(typeof capturedClass, "function");
     });
   });
 });

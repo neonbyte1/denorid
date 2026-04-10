@@ -1,4 +1,5 @@
 import { InjectorContext, type Type } from "@denorid/injector";
+import { Logger } from "@denorid/logger";
 import { Application, type ApplicationOptions } from "./application.ts";
 import type {
   ApplicationContext,
@@ -61,6 +62,8 @@ export class DenoridFactory {
       | InternalHttpApplicationOptions,
     options?: HttpApplicationOptions,
   ): Promise<ApplicationContext | HttpApplicationContext> {
+    Logger.log("Bootstrapping application...", DenoridFactory.name);
+
     const ctx = await InjectorContext.create(appClass, { useGlobals: true });
     const app = this.instantiateApplication(
       appClass,
