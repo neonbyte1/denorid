@@ -1,14 +1,14 @@
+import { getInjectableMetadata } from "./_internal.ts";
+import type { InjectableMode, InjectionToken } from "./common.ts";
+import type { Container } from "./container.ts";
+import { InvalidProviderError } from "./errors.ts";
 import {
-  getInjectableMetadata,
   isClassProvider,
   isExistingProvider,
   isFactoryProvider,
   isValueProvider,
-} from "./_internal.ts";
-import type { InjectableMode, InjectionToken } from "./common.ts";
-import type { Container } from "./container.ts";
-import { InvalidProviderError } from "./errors.ts";
-import type { Provider } from "./provider.ts";
+  type Provider,
+} from "./provider.ts";
 
 /**
  * Represents a provider normalized for registration in the container.

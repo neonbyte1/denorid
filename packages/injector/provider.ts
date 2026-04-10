@@ -89,3 +89,102 @@ export type NativeProvider<T = unknown> =
 export type Provider<T = unknown> =
   | Type<T>
   | NativeProvider<T>;
+
+/**
+ * Base interface for provider guard check options.
+ */
+export interface ProviderCheckOptions {
+  /**
+   * If set to `true` then {@linkcode isBaseProvider} won't be called before validating
+   * the _use_ field of a provider.
+   *
+   * @default false
+   */
+  excludeBaseCheck?: boolean;
+}
+
+/**
+ * Checks whether `data` is a {@linkcode BaseProvider}.
+ *
+ * @param {unknown} data - The value to check.
+ * @param {ProviderCheckOptions} [options] - Optional flags controlling the check behaviour.
+ * @returns {boolean} `true` if `data` satisfies the {@linkcode BaseProvider} shape.
+ */
+export function isBaseProvider(
+  data: unknown,
+  options?: ProviderCheckOptions,
+): data is BaseProvider {
+  return typeof data === "object" &&
+    data !== null &&
+    !Array.isArray(data) &&
+    (options?.excludeBaseCheck ? true : "provide" in data);
+}
+
+/**
+ * Checks whether `data` is a {@linkcode ClassProvider}.
+ *
+ * @param {unknown} data - The value to check.
+ * @param {ProviderCheckOptions} [options] - Optional flags controlling the check behaviour.
+ * @returns {boolean} `true` if `data` satisfies the {@linkcode ClassProvider} shape.
+ */
+export function isClassProvider(
+  data: unknown,
+  options?: ProviderCheckOptions,
+): data is ClassProvider {
+  return isBaseProvider(data, options) && "useClass" in data;
+}
+
+/**
+ * Checks whether `data` is a {@linkcode FactoryProvider}.
+ *
+ * @param {unknown} data - The value to check.
+ * @param {ProviderCheckOptions} [options] - Optional flags controlling the check behaviour.
+ * @returns {boolean} `true` if `data` satisfies the {@linkcode FactoryProvider} shape.
+ */
+export function isFactoryProvider(
+  data: unknown,
+  options?: ProviderCheckOptions,
+): data is FactoryProvider {
+  return isBaseProvider(data, options) && "useFactory" in data;
+}
+
+/**
+ * Checks whether `data` is a {@linkcode ValueProvider}.
+ *
+ * @param {unknown} data - The value to check.
+ * @param {ProviderCheckOptions} [options] - Optional flags controlling the check behaviour.
+ * @returns {boolean} `true` if `data` satisfies the {@linkcode ValueProvider} shape.
+ */
+export function isValueProvider(
+  data: unknown,
+  options?: ProviderCheckOptions,
+): data is ValueProvider {
+  return isBaseProvider(data, options) && "useValue" in data;
+}
+
+/**
+ * Checks whether `data` is an {@linkcode ExistingProvider}.
+ *
+ * @param {unknown} data - The value to check.
+ * @param {ProviderCheckOptions} [options] - Optional flags controlling the check behaviour.
+ * @returns {boolean} `true` if `data` satisfies the {@linkcode ExistingProvider} shape.
+ */
+export function isExistingProvider(
+  data: unknown,
+  options?: ProviderCheckOptions,
+): data is ExistingProvider {
+  return isBaseProvider(data, options) && "useExisting" in data;
+}
+
+/**
+ * Extracts the injection token from a {@linkcode Provider}.
+ *
+ * For class providers (plain constructor functions) the class itself is returned.
+ * For all native provider objects the `provide` token is returned.
+ *
+ * @param {Provider} provider - The provider to extract the token from.
+ * @returns {InjectionToken} The injection token that identifies this provider in the container.
+ */
+export function getProviderToken(provider: Provider): InjectionToken {
+  return typeof provider === "function" ? provider : provider.provide;
+}

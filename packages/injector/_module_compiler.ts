@@ -1,13 +1,12 @@
 import {
   getModuleMetadata,
-  getProviderToken,
   isDynamicModule,
   isGlobalModule,
 } from "./_internal.ts";
 import type { InjectionToken, Type } from "./common.ts";
 import { ModuleCompilationError } from "./errors.ts";
 import type { DynamicModule, ModuleMetadata } from "./modules.ts";
-import type { Provider } from "./provider.ts";
+import { getProviderToken, type Provider } from "./provider.ts";
 
 /**
  * Interface of baked or compiled modules to cache.

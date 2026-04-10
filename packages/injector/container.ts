@@ -1,8 +1,4 @@
-import {
-  getInjectionDependencies,
-  getTags,
-  isClassProvider,
-} from "./_internal.ts";
+import { getInjectionDependencies, getTags } from "./_internal.ts";
 import { getCurrentModuleRef } from "./_module_context.ts";
 import {
   type NormalizedProvider,
@@ -21,7 +17,7 @@ import {
   RequestContextError,
   TokenNotFoundError,
 } from "./errors.ts";
-import type { Provider } from "./provider.ts";
+import { isClassProvider, type Provider } from "./provider.ts";
 
 /**
  * Interface to optionally configure the dependency container instance.

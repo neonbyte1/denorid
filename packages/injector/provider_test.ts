@@ -1,13 +1,13 @@
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
+import { SimpleService } from "./_test_fixtures.ts";
 import {
   isBaseProvider,
   isClassProvider,
   isExistingProvider,
   isFactoryProvider,
   isValueProvider,
-} from "./_internal.ts";
-import { SimpleService } from "./_test_fixtures.ts";
+} from "./provider.ts";
 
 describe("Providers", () => {
   describe("should handle isBaseProvider with excludeBaseCheck", () => {

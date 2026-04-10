@@ -15,65 +15,6 @@ import type {
   OnModuleInit,
 } from "./hooks.ts";
 import type { DynamicModule, ModuleMetadata } from "./modules.ts";
-import type {
-  BaseProvider,
-  ClassProvider,
-  ExistingProvider,
-  FactoryProvider,
-  Provider,
-  ValueProvider,
-} from "./provider.ts";
-
-/**
- * Base interface for provider guard check options.
- */
-interface ProviderCheckOptions {
-  /**
-   * If set to `true` then {@linkcode isBaseProvider} won't be called before validating
-   * the _use_ field of a provider.
-   *
-   * @default false
-   */
-  excludeBaseCheck?: boolean;
-}
-
-export function isBaseProvider(
-  data: unknown,
-  options?: ProviderCheckOptions,
-): data is BaseProvider {
-  return typeof data === "object" &&
-    data !== null &&
-    !Array.isArray(data) &&
-    (options?.excludeBaseCheck ? true : "provide" in data);
-}
-
-export function isClassProvider(
-  data: unknown,
-  options?: ProviderCheckOptions,
-): data is ClassProvider {
-  return isBaseProvider(data, options) && "useClass" in data;
-}
-
-export function isFactoryProvider(
-  data: unknown,
-  options?: ProviderCheckOptions,
-): data is FactoryProvider {
-  return isBaseProvider(data, options) && "useFactory" in data;
-}
-
-export function isValueProvider(
-  data: unknown,
-  options?: ProviderCheckOptions,
-): data is ValueProvider {
-  return isBaseProvider(data, options) && "useValue" in data;
-}
-
-export function isExistingProvider(
-  data: unknown,
-  options?: ProviderCheckOptions,
-): data is ExistingProvider {
-  return isBaseProvider(data, options) && "useExisting" in data;
-}
 
 export function isDynamicModule(
   data: unknown,
@@ -135,10 +76,12 @@ export function serializeToken(token: InjectionToken): string {
   }
 }
 
-export function getProviderToken(provider: Provider): InjectionToken {
-  return typeof provider === "function" ? provider : provider.provide;
-}
-
+/**
+ * Reads the {@linkcode InjectableMetadata} stored on `target` via `Symbol.metadata`.
+ *
+ * @param {Type} target - The class to read the metadata from.
+ * @returns {InjectableMetadata | undefined} The injectable metadata, or `undefined` if the class is not decorated with `@Injectable`.
+ */
 export function getInjectableMetadata(
   target: Type,
 ): InjectableMetadata | undefined {
@@ -147,22 +90,46 @@ export function getInjectableMetadata(
     | undefined;
 }
 
+/**
+ * Reads the list of constructor injection dependencies stored on `target` via `Symbol.metadata`.
+ *
+ * @param {Type} target - The class to read the dependencies from.
+ * @returns {InjectionDependency[]} The list of injection dependencies, or an empty array if none are registered.
+ */
 export function getInjectionDependencies(target: Type): InjectionDependency[] {
   return (target[Symbol.metadata]
     ?.[INJECTION_METADATA] as InjectionDependency[]) ??
     [];
 }
 
+/**
+ * Reads the {@linkcode ModuleMetadata} stored on `target` via `Symbol.metadata`.
+ *
+ * @param {Type} target - The class to read the metadata from.
+ * @returns {ModuleMetadata | undefined} The module metadata, or `undefined` if the class is not decorated with `@Module`.
+ */
 export function getModuleMetadata(target: Type): ModuleMetadata | undefined {
   return target[Symbol.metadata]?.[MODULE_METADATA] as
     | ModuleMetadata
     | undefined;
 }
 
+/**
+ * Checks whether `target` has been marked as a global module.
+ *
+ * @param {Type} target - The class to check.
+ * @returns {boolean} `true` if the class is decorated with `@Global`.
+ */
 export function isGlobalModule(target: Type): boolean {
   return target[Symbol.metadata]?.[GLOBAL_MODULE_METADATA] === true;
 }
 
+/**
+ * Reads the list of tags stored on `target` via `Symbol.metadata`.
+ *
+ * @param {Type} target - The class to read the tags from.
+ * @returns {Tag[]} The list of tags, or an empty array if none are registered.
+ */
 export function getTags(target: Type): Tag[] {
   return target[Symbol.metadata]?.[TAG_METADATA] as (Tag[] | undefined) ?? [];
 }
