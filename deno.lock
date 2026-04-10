@@ -786,6 +786,11 @@
           "npm:drizzle-orm@^1.0.0-beta.15-859cf75"
         ]
       },
+      "packages/injector": {
+        "dependencies": [
+          "jsr:@denorid/logger@0.3"
+        ]
+      },
       "packages/logger": {
         "dependencies": [
           "jsr:@std/fmt@^1.0.9"
