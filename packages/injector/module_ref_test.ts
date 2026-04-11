@@ -46,7 +46,7 @@ describe("ModuleRef", () => {
       assertInstanceOf(simple, SimpleService);
     });
 
-    it("should throw for non-module token (strict: false)", async () => {
+    it("should throw for non-module token (strict: true)", async () => {
       @Module({
         providers: [ServiceWithModuleRef],
         exports: [ServiceWithModuleRef],
@@ -57,7 +57,7 @@ describe("ModuleRef", () => {
       const service = await ctx.resolve(ServiceWithModuleRef);
 
       assertThrows(
-        () => service.moduleRef.get(SimpleService, { strict: false }),
+        () => service.moduleRef.get(SimpleService, { strict: true }),
         Error,
         "not available",
       );

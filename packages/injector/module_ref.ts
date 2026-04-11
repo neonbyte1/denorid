@@ -94,7 +94,7 @@ export class ModuleRef {
     {
       const strict = options?.strict ?? true;
 
-      if (!strict && !this.moduleTokens.has(token)) {
+      if (strict && !this.moduleTokens.has(token)) {
         throw new Error(
           `Token "${
             serializeToken(token)
