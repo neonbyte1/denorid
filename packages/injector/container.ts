@@ -440,10 +440,16 @@ export class Container {
    * Get all tokens registered with a specific tag (without resolving).
    *
    * @param {Tag} tag - The searchable tag
+   * @param {boolean|undefined} bypassExportCheck - Optional bypass the isExported() logic
    * @returns {InjectionToken[]} The function returns an array of `InjectionToken`
    *          that have the requested tag.
    */
-  public getTokensByTag(tag: Tag): InjectionToken[] {
+  public getTokensByTag(
+    tag: Tag,
+    bypassExportCheck?: boolean,
+  ): InjectionToken[] {
+    bypassExportCheck ??= false;
+
     const result: InjectionToken[] = [];
     const ownTokens = this.tagToTokens.get(tag);
 
@@ -456,7 +462,7 @@ export class Container {
 
       if (childTokens) {
         for (const token of childTokens) {
-          if (child.isExported(token)) {
+          if (bypassExportCheck || child.isExported(token)) {
             result.push(token);
           }
         }
