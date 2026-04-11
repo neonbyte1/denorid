@@ -6,7 +6,16 @@ on:
       - '20*'
 
 jobs:
+  logger:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/jsr.yml
+    with:
+      package: logger
+
   injector:
+    needs: logger
     permissions:
       contents: read
       id-token: write
@@ -32,7 +41,6 @@ jobs:
       matrix:
         package:
           - drizzle
-          - logger
           - platform-hono
     uses: ./.github/workflows/jsr.yml
     with:
