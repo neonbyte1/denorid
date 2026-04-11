@@ -94,8 +94,6 @@ export class Application<
    */
   public async init(): Promise<void> {
     if (!this.initialized) {
-      this.logger.log("Bootstrapping application...");
-
       await this.ctx.onApplicationBootstrap();
 
       this.initialized = true;

@@ -82,8 +82,6 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
         [...this.globalGuards],
       );
 
-      this.logger.log("Bootstrapping application...");
-
       await this.ctx.onApplicationBootstrap();
 
       await this.controller.register(this.options.basePath);
