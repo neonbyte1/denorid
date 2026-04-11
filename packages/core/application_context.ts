@@ -1,6 +1,7 @@
 import type {
   InjectionToken,
   ModuleRefContextOptions,
+  ModuleRefOptions,
   Tag,
 } from "@denorid/injector";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
@@ -13,25 +14,47 @@ export interface ApplicationContext {
    * Resolves a registered provider by its injection token.
    *
    * @param {InjectionToken<T>} token - The injection token to look up.
+   * @param {ModuleRefOptions} [options] - Optional resolution options.
    * @returns {Promise<T>} The resolved provider instance.
    *
    * @throws {TokenNotFoundError} When no provider is registered for the given token.
    */
-  get<T>(token: InjectionToken<T>): Promise<T>;
+  get<T>(token: InjectionToken<T>, options?: ModuleRefOptions): Promise<T>;
+  /**
+   * Resolves a registered provider by its injection token within a specific context.
+   *
+   * @param {InjectionToken<T>} token - The injection token to look up.
+   * @param {ModuleRefContextOptions} options - Context-scoped resolution options.
+   * @returns {Promise<T>} The resolved provider instance.
+   *
+   * @throws {TokenNotFoundError} When no provider is registered for the given token.
+   */
+  get<T>(
+    token: InjectionToken<T>,
+    options: ModuleRefContextOptions,
+  ): Promise<T>;
 
   /**
-   * Resolves all providers that have been registered with the given tags.
+   * Resolves all providers registered with a given tag.
    *
-   * @param {...Tag[]} tags - One or more tags to filter providers by.
-   * @returns {Promise<T[]>} An array of resolved provider instances matching the tags.
+   * @param {Tag} tag - Tag to filter providers by.
+   * @param {ModuleRefOptions} [options] - Optional resolution options.
+   * @returns {Promise<T[]>} Array of resolved provider instances matching the tag.
    */
   getByTag<T = unknown>(
     tag: Tag,
-    options?: ModuleRefContextOptions,
+    options?: ModuleRefOptions,
   ): Promise<T[]>;
+  /**
+   * Resolves all providers registered with the given tags within a specific context.
+   *
+   * @param {Tag[]} tags - Tags to filter providers by.
+   * @param {ModuleRefContextOptions} options - Context-scoped resolution options.
+   * @returns {Promise<T[]>} Array of resolved provider instances matching the tags.
+   */
   getByTag<T = unknown>(
     tags: Tag[],
-    options?: ModuleRefContextOptions,
+    options: ModuleRefContextOptions,
   ): Promise<T[]>;
 
   /**
