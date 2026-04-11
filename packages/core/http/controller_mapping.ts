@@ -57,7 +57,7 @@ export abstract class ControllerMapping {
 
     for (
       const token of this.ctx.container
-        .getTokensByTag(HTTP_CONTROLLER_METADATA)
+        .getTokensByTag(HTTP_CONTROLLER_METADATA, true)
     ) {
       await this.registerController(token as Type<HttpController>, basePath);
     }
