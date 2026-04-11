@@ -1,4 +1,10 @@
-import type { InjectionToken, InjectorContext, Type } from "@denorid/injector";
+import type {
+  InjectionToken,
+  InjectorContext,
+  ModuleRefContextOptions,
+  Tag,
+  Type,
+} from "@denorid/injector";
 import { Logger, type LoggerService, type LogLevel } from "@denorid/logger";
 import type { ApplicationContext } from "./application_context.ts";
 import { ExceptionHandler } from "./exceptions/handler.ts";
@@ -59,17 +65,28 @@ export class Application<
   /**
    * @inheritdoc
    */
-  public get<T>(token: InjectionToken<T>): Promise<T> {
-    return this.ctx.resolve<T>(token);
+  public get<T>(
+    token: InjectionToken<T>,
+    options?: ModuleRefContextOptions,
+  ): Promise<T> {
+    return this.ctx.getHostModuleRef().get<T>(token, options);
   }
 
   /**
    * @inheritdoc
    */
-  public async getByTag<T>(...tags: []): Promise<T[]> {
-    return (await Promise.all(
-      tags.map((tag) => this.ctx.container.getByTag<T>(tag)),
-    )).flat();
+  public async getByTag<T>(
+    arg0: Tag | Tag[],
+    options?: ModuleRefContextOptions,
+  ): Promise<T[]> {
+    if (Array.isArray(arg0)) {
+      return (await Promise.all(
+        arg0.map((tag) => this.getByTag<T>(tag, options)),
+      ))
+        .flat();
+    }
+
+    return this.ctx.getHostModuleRef().getByTag<T>(arg0, options);
   }
 
   /**

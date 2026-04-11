@@ -17,6 +17,18 @@ export interface ModuleRefOptions {
 }
 
 /**
+ * Extends {@linkcode ModuleRefOptions} with a required context identifier,
+ * scoping instance resolution to a specific request or execution context.
+ */
+export interface ModuleRefContextOptions extends ModuleRefOptions {
+  /**
+   * The context identifier used to scope instance resolution.
+   * Providers resolved with the same `contextId` share the same instance within that context.
+   */
+  contextId: string;
+}
+
+/**
  * Provides dynamic access to the dependency injection container.
  *
  * @note This **must** be injected via constructor (not `@Inject`) to get the module scope.
@@ -46,48 +58,87 @@ export class ModuleRef {
   /**
    * Resolve a provider by its token.
    *
-   * @template T The resolved instance type
+   * @template T The resolved instance type.
+   * @param {InjectionToken} token - The injection token to resolve.
+   * @param {ModuleRefOptions|undefined} options - Optional resolution options.
+   * @returns {Promise<T>} The function returns a `Promise` that resolves into the provider instance.
    *
-   * @param token - The injection token to resolve
-   * @param options - Resolution options (strict: true by default)
-   *
-   * @returns {T} The resolved instance.
-   *
-   * @throws {TokenNotFoundError} if the token is not found
-   * @throws {Error} if strict is false and token is not in module scope
+   * @throws {TokenNotFoundError} if the token is not found.
+   * @throws {Error} if `strict` is `false` and the token is not in the current module's scope.
    */
   public get<T>(
     token: InjectionToken<T>,
     options?: ModuleRefOptions,
+  ): Promise<T>;
+  /**
+   * Resolve a provider by its token within a given context.
+   *
+   * @template T The resolved instance type.
+   * @param {InjectionToken} token - The injection token to resolve.
+   * @param {ModuleRefContextOptions} options - Resolution options including a required `contextId`
+   *        to scope the resolution to a specific request or execution context.
+   * @returns {Promise<T>} The function returns a `Promise` that resolves into the provider instance
+   *          bound to the given context.
+   *
+   * @throws {TokenNotFoundError} if the token is not found.
+   * @throws {Error} if `strict` is `false` and the token is not in the current module's scope.
+   */
+  public get<T>(
+    token: InjectionToken<T>,
+    options: ModuleRefContextOptions,
+  ): Promise<T>;
+  public get<T>(
+    token: InjectionToken<T>,
+    options?: ModuleRefOptions | ModuleRefContextOptions,
   ): Promise<T> {
-    const strict = options?.strict ?? true;
+    {
+      const strict = options?.strict ?? true;
 
-    if (!strict && !this.moduleTokens.has(token)) {
-      throw new Error(
-        `Token "${
-          serializeToken(token)
-        }" is not available in this module's scope. ` +
-          `Use { strict: true } to resolve from the entire container.`,
-      );
+      if (!strict && !this.moduleTokens.has(token)) {
+        throw new Error(
+          `Token "${
+            serializeToken(token)
+          }" is not available in this module's scope. ` +
+            `Use { strict: true } to resolve from the entire container.`,
+        );
+      }
+
+      return options && "contextId" in options
+        ? this.container.resolveWithContext(token, options.contextId)
+        : this.container.resolve(token);
     }
-
-    return this.container.resolve(token);
   }
 
   /**
-   * Try to resolve a provider, returning `undefined` if not found.
+   * Try to resolve a provider by its token, returning `undefined` if not found.
    *
-   * @template T The resolved instance type
-   *
-   * @param {InjectionToken} token - The injection token to resolve
-   * @param {ModuleRefOptions|undefined} options - Resolution options
-   *
+   * @template T The resolved instance type.
+   * @param {InjectionToken} token - The injection token to resolve.
+   * @param {ModuleRefOptions|undefined} options - Optional resolution options.
    * @returns {Promise<T|undefined>} The function returns a `Promise` that resolves into
-   *          `T | undefined` when fulfilled.
+   *          `T` when the token is found, or `undefined` otherwise.
    */
-  public async tryGet<T>(
+  public tryGet<T>(
     token: InjectionToken<T>,
     options?: ModuleRefOptions,
+  ): Promise<T | undefined>;
+  /**
+   * Try to resolve a provider by its token within a given context, returning `undefined` if not found.
+   *
+   * @template T The resolved instance type.
+   * @param {InjectionToken} token - The injection token to resolve.
+   * @param {ModuleRefContextOptions} options - Resolution options including a required `contextId`
+   *        to scope the resolution to a specific request or execution context.
+   * @returns {Promise<T|undefined>} The function returns a `Promise` that resolves into
+   *          `T` when the token is found within the context, or `undefined` otherwise.
+   */
+  public tryGet<T>(
+    token: InjectionToken<T>,
+    options: ModuleRefContextOptions,
+  ): Promise<T | undefined>;
+  public async tryGet<T>(
+    token: InjectionToken<T>,
+    options?: ModuleRefOptions | ModuleRefContextOptions,
   ): Promise<T | undefined> {
     try {
       return await this.get(token, options);
@@ -122,8 +173,8 @@ export class ModuleRef {
    * Resolve all providers with a specific tag.
    *
    * @template T The instance type. Note: this type will be used for **all** instances.
-   * @param {Tag} tag - The tag to search for
-   * @param {ModuleRefOptions|undefined} options - Optional resolution options
+   * @param {Tag} tag - The tag to search for.
+   * @param {ModuleRefOptions|undefined} options - Optional resolution options.
    * @returns {Promise<T[]>} The function returns a `Promise` that resolves into an
    *          array of resolved instances.
    *
@@ -135,12 +186,41 @@ export class ModuleRef {
    * }
    * ```
    */
-  public async getByTag<T = unknown>(
+  public getByTag<T = unknown>(
     tag: Tag,
     options?: ModuleRefOptions,
+  ): Promise<T[]>;
+  /**
+   * Resolve all providers with a specific tag within a given context.
+   *
+   * @template T The instance type. Note: this type will be used for **all** instances.
+   * @param {Tag} tag - The tag to search for.
+   * @param {ModuleRefContextOptions} options - Resolution options including a required `contextId`
+   *        to scope the resolution to a specific request or execution context.
+   * @returns {Promise<T[]>} The function returns a `Promise` that resolves into an
+   *          array of resolved instances bound to the given context.
+   *
+   * @example
+   * ```ts
+   * const validators = await this.moduleRef.getByTag(VALIDATOR, { contextId });
+   * for (const validator of validators) {
+   *   validator.validate(input);
+   * }
+   * ```
+   */
+  public getByTag<T = unknown>(
+    tag: Tag,
+    options: ModuleRefContextOptions,
+  ): Promise<T[]>;
+  public async getByTag<T = unknown>(
+    tag: Tag,
+    options?: ModuleRefContextOptions,
   ): Promise<T[]> {
     const strict = options?.strict ?? true;
-    const allInstances = await this.container.getByTag<T>(tag);
+    const allInstances = await this.container.getByTag<T>(
+      tag,
+      options?.contextId,
+    );
 
     if (strict) {
       return allInstances;

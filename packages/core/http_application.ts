@@ -1,10 +1,4 @@
-import {
-  type DynamicModule,
-  getModuleMetadata,
-  type InjectorContext,
-  Module,
-  type Type,
-} from "@denorid/injector";
+import type { InjectorContext, Type } from "@denorid/injector";
 import { Application, type ApplicationOptions } from "./application.ts";
 import type { HttpApplicationContext } from "./application_context.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
@@ -46,19 +40,6 @@ export interface InternalHttpApplicationOptions extends HttpApplicationOptions {
   adapter: HttpAdapter;
 }
 
-@Module({})
-export class GlobalProviderModule {
-  public static register(guards: Set<Type<CanActivate>>): DynamicModule {
-    return {
-      module: GlobalProviderModule,
-      global: true,
-      providers: [
-        ...[...guards].map((guard) => guard),
-      ],
-    };
-  }
-}
-
 /**
  * HTTP-capable application that extends {@link Application} with route mapping
  * and an underlying {@link HttpAdapter}.
@@ -94,12 +75,6 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   public override async init(): Promise<void> {
     if (!this.initialized) {
       this.initialized = true;
-
-      const metadata = getModuleMetadata(this.metaType);
-
-      if (metadata !== undefined) {
-        (metadata.imports ??= []).push(GlobalProviderModule);
-      }
 
       this.controller = await this.adapter.createControllerMapping(
         this.ctx,

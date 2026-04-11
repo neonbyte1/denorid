@@ -7,8 +7,12 @@ import {
 import type { Context, HonoRequest } from "@hono/hono";
 
 export class HonoRequestContext<Dto = unknown> extends RequestContext<Dto> {
-  public constructor(private readonly ctx: Context, dto: Dto) {
-    super(dto as InferIfZod<Dto>);
+  public constructor(
+    private readonly ctx: Context,
+    contextId: string,
+    dto: Dto,
+  ) {
+    super(contextId, dto as InferIfZod<Dto>);
   }
 
   /**

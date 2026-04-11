@@ -447,6 +447,34 @@ describe("Container", () => {
       assertEquals(instances.length, 0);
     });
 
+    it("should resolve by tag with contextId", async () => {
+      container.register(TaggedServiceA, TaggedServiceB);
+
+      const instances = await container.getByTag<{ name: string }>(
+        TAG_A,
+        "ctx-1",
+      );
+
+      assertEquals(instances.length, 2);
+    });
+
+    it("should resolve exported child tags with contextId", async () => {
+      const child = new Container(noopLogger, {
+        exports: new Set([TaggedServiceA]),
+      });
+
+      child.register(TaggedServiceA);
+      container.addChild(child);
+      container.register(TaggedServiceB);
+
+      const instances = await container.getByTag<{ name: string }>(
+        TAG_A,
+        "ctx-1",
+      );
+
+      assertEquals(instances.length, 2);
+    });
+
     it("should handle getTokensByTag with child exports", () => {
       const parent = new Container(noopLogger);
       const child = new Container(noopLogger, {
@@ -668,6 +696,178 @@ describe("Container", () => {
 
       assertEquals(container.has(SimpleService), false);
       assertEquals(container.getInstances().length, 0);
+    });
+
+    it("should also clear context caches", async () => {
+      container.register(TransientService);
+      const a = await container.resolveWithContext(TransientService, "ctx-1");
+      container.clear();
+
+      container.register(TransientService);
+      const b = await container.resolveWithContext(TransientService, "ctx-1");
+
+      assert(a.id !== b.id);
+    });
+  });
+
+  describe("resolveWithContext", () => {
+    it("should return same transient instance within same contextId", async () => {
+      container.register(TransientService);
+
+      const a = await container.resolveWithContext(TransientService, "ctx-1");
+      const b = await container.resolveWithContext(TransientService, "ctx-1");
+
+      assertEquals(a.id, b.id);
+    });
+
+    it("should return different transient instances for different contextIds", async () => {
+      container.register(TransientService);
+
+      const a = await container.resolveWithContext(TransientService, "ctx-1");
+      const b = await container.resolveWithContext(TransientService, "ctx-2");
+
+      assert(a.id !== b.id);
+    });
+
+    it("should return singleton regardless of contextId", async () => {
+      container.register(SimpleService);
+
+      const a = await container.resolveWithContext(SimpleService, "ctx-1");
+      const b = await container.resolveWithContext(SimpleService, "ctx-2");
+
+      assertEquals(a, b);
+    });
+
+    it("should throw RequestContextError for request-scoped outside request context", async () => {
+      container.register(RequestScopedService);
+
+      await assertRejects(
+        () => container.resolveWithContext(RequestScopedService, "ctx-1"),
+        RequestContextError,
+      );
+    });
+
+    it("should throw TokenNotFoundError for unknown token", async () => {
+      await assertRejects(
+        () => container.resolveWithContext(SimpleService, "ctx-1"),
+        TokenNotFoundError,
+      );
+    });
+
+    it("should throw CircularDependencyError for circular deps", async () => {
+      container.register({
+        provide: "CIRCULAR_CTX",
+        useFactory: () => container.resolveWithContext("CIRCULAR_CTX", "ctx-1"),
+        mode: "transient" as InjectableMode,
+      });
+
+      await assertRejects(
+        () => container.resolveWithContext("CIRCULAR_CTX", "ctx-1"),
+        CircularDependencyError,
+      );
+    });
+
+    it("should resolve transient from child container within contextId", async () => {
+      const child = new Container(noopLogger, {
+        exports: new Set([TransientService]),
+      });
+      child.register(TransientService);
+      container.addChild(child);
+
+      const a = await container.resolveWithContext(TransientService, "ctx-1");
+      const b = await container.resolveWithContext(TransientService, "ctx-1");
+
+      assertEquals(a.id, b.id);
+    });
+
+    it("should return different transient from child for different contextIds", async () => {
+      const child = new Container(noopLogger, {
+        exports: new Set([TransientService]),
+      });
+      child.register(TransientService);
+      container.addChild(child);
+
+      const a = await container.resolveWithContext(TransientService, "ctx-1");
+      const b = await container.resolveWithContext(TransientService, "ctx-2");
+
+      assert(a.id !== b.id);
+    });
+
+    it("should rethrow non-TokenNotFoundError from child during resolveWithContext", async () => {
+      @Injectable()
+      class ThrowingService {}
+
+      const child = new Container(noopLogger, {
+        exports: new Set([ThrowingService]),
+      });
+
+      child.register({
+        provide: ThrowingService,
+        useFactory: () => {
+          throw new Error("child factory error");
+        },
+      });
+
+      container.addChild(child);
+
+      await assertRejects(
+        () => container.resolveWithContext(ThrowingService, "ctx-1"),
+        Error,
+        "child factory error",
+      );
+    });
+
+    it("should resolve transient from global container within contextId", async () => {
+      const global = new Container(noopLogger);
+      global.register(TransientService);
+      container = new Container(noopLogger, { globalContainer: global });
+
+      const a = await container.resolveWithContext(TransientService, "ctx-1");
+      const b = await container.resolveWithContext(TransientService, "ctx-1");
+
+      assertEquals(a.id, b.id);
+    });
+
+    it("should handle default mode in resolveWithModeInContext", async () => {
+      container.register({
+        provide: "CUSTOM_MODE_CTX",
+        useFactory: () => ({ id: crypto.randomUUID() }),
+        mode: "custom" as InjectableMode,
+      });
+
+      const a = await container.resolveWithContext("CUSTOM_MODE_CTX", "ctx-1");
+      const b = await container.resolveWithContext("CUSTOM_MODE_CTX", "ctx-1");
+
+      assertEquals((a as { id: string }).id, (b as { id: string }).id);
+    });
+  });
+
+  describe("clearContext", () => {
+    it("should remove cached transient instances for the given contextId", async () => {
+      container.register(TransientService);
+
+      const a = await container.resolveWithContext(TransientService, "ctx-1");
+      container.clearContext("ctx-1");
+      const b = await container.resolveWithContext(TransientService, "ctx-1");
+
+      assert(a.id !== b.id);
+    });
+
+    it("should not affect other contextIds when clearing one", async () => {
+      container.register(TransientService);
+
+      const _a = await container.resolveWithContext(TransientService, "ctx-1");
+      const c = await container.resolveWithContext(TransientService, "ctx-2");
+
+      container.clearContext("ctx-1");
+
+      const d = await container.resolveWithContext(TransientService, "ctx-2");
+
+      assertEquals(c.id, d.id);
+    });
+
+    it("should be a no-op for unknown contextId", () => {
+      container.clearContext("nonexistent");
     });
   });
 

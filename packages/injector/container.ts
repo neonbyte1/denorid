@@ -103,6 +103,11 @@ export class Container {
   private tagToTokens = new Map<Tag, Set<InjectionToken>>();
 
   /**
+   * Per-context instance caches for context-scoped transient resolution.
+   */
+  private contexts = new Map<string, Map<InjectionToken, unknown>>();
+
+  /**
    * Creates a new container instance.
    *
    * @param options - Optional container configuration (see {@linkcode ContainerOptions})
@@ -365,14 +370,19 @@ export class Container {
    * }
    * ```
    */
-  public async getByTag<T = unknown>(tag: Tag): Promise<T[]> {
+  public async getByTag<T = unknown>(
+    tag: Tag,
+    contextId?: string,
+  ): Promise<T[]> {
     const instances: T[] = [];
     const ownTokens = this.tagToTokens.get(tag);
 
     if (ownTokens) {
       for (const token of ownTokens) {
         try {
-          const instance = await this.resolve(token);
+          const instance = contextId
+            ? await this.resolveWithContext(token, contextId)
+            : await this.resolve(token);
 
           instances.push(instance as T);
         } catch (e) {
@@ -393,7 +403,7 @@ export class Container {
     }
 
     for (const child of this.children) {
-      instances.push(...(await child.getExportedByTag<T>(tag)));
+      instances.push(...(await child.getExportedByTag<T>(tag, contextId)));
     }
 
     if (this.globalContainer && this.globalContainer !== this) {
@@ -583,6 +593,16 @@ export class Container {
     this.singletons.clear();
     this.instances = [];
     this.tagToTokens.clear();
+    this.contexts.clear();
+  }
+
+  /**
+   * Clears the instance cache for a specific context.
+   *
+   * @param {string} contextId - The context identifier to clear
+   */
+  public clearContext(contextId: string): void {
+    this.contexts.delete(contextId);
   }
 
   /**
@@ -737,6 +757,154 @@ export class Container {
   }
 
   /**
+   * Resolve a transient provider within a named context.
+   *
+   * Within the same `contextId` the same instance is returned. A different
+   * `contextId` yields a fresh instance.
+   *
+   * @async
+   * @param {InjectionToken} token - The injection token
+   * @param {NormalizedProvider} provider - The normalized provider definition
+   * @param {string} contextId - The context identifier
+   * @returns {Promise<unknown>} The function returns a `Promise` that resolves
+   *          into the instance when fulfilled.
+   *
+   * @internal
+   */
+  private async resolveTransientWithContext(
+    token: InjectionToken,
+    provider: NormalizedProvider,
+    contextId: string,
+  ): Promise<unknown> {
+    let contextCache = this.contexts.get(contextId);
+
+    if (!contextCache) {
+      contextCache = new Map();
+      this.contexts.set(contextId, contextCache);
+    }
+
+    if (contextCache.has(token)) {
+      return contextCache.get(token);
+    }
+
+    this.resolving.add(token);
+
+    try {
+      const instance = await provider.resolve(this);
+
+      contextCache.set(token, instance);
+      this.instances.push(instance);
+
+      return instance;
+    } finally {
+      this.resolving.delete(token);
+    }
+  }
+
+  /**
+   * Resolves a provider according to its configured mode within a context.
+   *
+   * Transient providers are cached per `contextId`. All other modes delegate
+   * to their standard resolution strategy.
+   *
+   * @async
+   * @param {InjectionToken} token - The injection token associated with the provider
+   * @param {NormalizedProvider} provider - The normalized provider definition
+   * @param {string} contextId - The context identifier
+   * @returns {Promise<unknown>} The function returns a `Promise` that resolves into
+   *          the instantiated value when fulfilled.
+   *
+   * @internal
+   */
+  private resolveWithModeInContext(
+    token: InjectionToken,
+    provider: NormalizedProvider,
+    contextId: string,
+  ): Promise<unknown> {
+    switch (provider.mode) {
+      case "singleton":
+        return this.resolveSingleton(token, provider);
+
+      case "transient":
+        return this.resolveTransientWithContext(token, provider, contextId);
+
+      case "request":
+        return this.resolveRequest(token, provider);
+
+      default:
+        return this.resolveTransientWithContext(token, provider, contextId);
+    }
+  }
+
+  /**
+   * Resolve a dependency by its token within a named context.
+   *
+   * Follows the same resolution order as {@linkcode resolve}:
+   * 1. Own providers
+   * 2. Exported providers from child containers (imported modules)
+   * 3. Global providers
+   *
+   * Transient providers are cached per `contextId` — the same `contextId`
+   * returns the same instance, while a different `contextId` produces a fresh one.
+   * All other modes use their standard caching strategy.
+   *
+   * @async
+   * @template T - The resolved return type
+   * @param {InjectionToken<T>} token - The provider token
+   * @param {string} contextId - The context identifier for transient caching
+   * @returns {Promise<T>} The function returns a `Promise` that resolves into
+   *          the instantiated value when fulfilled.
+   * @throws {CircularDependencyError}
+   * @throws {TokenNotFoundError}
+   * @throws {RequestContextError}
+   */
+  public async resolveWithContext<T>(
+    token: InjectionToken<T>,
+    contextId: string,
+  ): Promise<T> {
+    if (this.resolving.has(token)) {
+      throw new CircularDependencyError([...this.resolving, token]);
+    }
+
+    const provider = this.providers.get(token);
+
+    if (provider) {
+      return this.resolveWithModeInContext(
+        token,
+        provider,
+        contextId,
+      ) as Promise<T>;
+    }
+
+    for (const child of this.children) {
+      if (child.isExported(token)) {
+        try {
+          return await child.resolveWithContext(token, contextId);
+        } catch (e) {
+          if (!(e instanceof TokenNotFoundError)) {
+            const err = e as Error;
+
+            this.logger.error(
+              `Failed to resolve ${serializeToken(token)}: ${err.message}`,
+              err.stack,
+            );
+
+            throw err;
+          }
+        }
+      }
+    }
+
+    if (this.globalContainer && this.globalContainer !== this) {
+      if (this.globalContainer.has(token)) {
+        return this.globalContainer.resolveWithContext(token, contextId);
+      }
+    }
+
+    throw new TokenNotFoundError(token);
+  }
+
+  /**
    * Resolve a request-scoped provider. The lifetime of this provider
    * is **not** tied to the application lifecycle. They're created for
    * each request and garbage-collected after.
@@ -791,7 +959,10 @@ export class Container {
    *
    * @internal
    */
-  private async getExportedByTag<T = unknown>(tag: Tag): Promise<T[]> {
+  private async getExportedByTag<T = unknown>(
+    tag: Tag,
+    contextId?: string,
+  ): Promise<T[]> {
     const instances: T[] = [];
     const tokens = this.tagToTokens.get(tag);
 
@@ -799,7 +970,9 @@ export class Container {
       for (const token of tokens) {
         if (this.isExported(token)) {
           try {
-            const instance = await this.resolve(token);
+            const instance = contextId
+              ? await this.resolveWithContext(token, contextId)
+              : await this.resolve(token);
 
             instances.push(instance as T);
           } catch (e) {

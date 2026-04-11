@@ -25,7 +25,10 @@ export type InferIfZod<T> = T extends ZodType ? z.infer<T> : T;
  * @template Dto - The type or Zod schema describing the request body.
  */
 export abstract class RequestContext<Dto = unknown> {
-  public constructor(public dto: InferIfZod<Dto> | undefined) {}
+  public constructor(
+    public readonly contextId: string,
+    public dto: InferIfZod<Dto> | undefined,
+  ) {}
 
   /**
    * Returns the underlying request type. The return value depends on the

@@ -266,6 +266,53 @@ export class InjectorContext implements InjectorContextLifecycle {
   }
 
   /**
+   * Resolve a dependency within a named context.
+   *
+   * Applies the same export checks as {@linkcode resolve}. Transient providers
+   * are cached per `contextId` — the same `contextId` returns the same instance,
+   * while a different `contextId` produces a fresh one.
+   *
+   * Use {@linkcode clearContext} to release cached instances when a context ends.
+   *
+   * @async
+   * @template T - The resolved token type
+   * @param {InjectionToken<T>} token - The injection token to resolve
+   * @param {string} contextId - The context identifier for transient caching
+   * @returns {Promise<T>} The function returns a `Promise` that resolves into
+   *          the instantiated value as `T` when fulfilled.
+   * @throws {CircularDependencyError}
+   * @throws {TokenNotFoundError}
+   * @throws {RequestContextError}
+   */
+  public resolveWithinContext<T>(
+    token: InjectionToken<T>,
+    contextId: string,
+  ): Promise<T> {
+    if (token === this.rootModule.type) {
+      return this.container.resolveWithContext(token, contextId);
+    }
+
+    if (this.rootModule.exports.has(token)) {
+      return this.container.resolveWithContext(token, contextId);
+    }
+
+    if (this.rootModule.ownTokens.has(token)) {
+      throw new TokenNotFoundError(token);
+    }
+
+    return this.container.resolveWithContext(token, contextId);
+  }
+
+  /**
+   * Clear the instance cache for a specific context.
+   *
+   * @param {string} contextId - The context identifier to clear
+   */
+  public clearContext(contextId: string): void {
+    this.container.clearContext(contextId);
+  }
+
+  /**
    * Get the root module instance.
    *
    * @async
@@ -275,6 +322,15 @@ export class InjectorContext implements InjectorContextLifecycle {
    */
   public getRootModule<T = unknown>(): Promise<T> {
     return this.container.resolve(this.rootModule.type) as Promise<T>;
+  }
+
+  /**
+   * Get the {@linkcode ModuleRef} for the root (host) module.
+   *
+   * @returns {ModuleRef} The `ModuleRef` associated with the root module.
+   */
+  public getHostModuleRef(): ModuleRef {
+    return this.moduleRefs.get(this.rootModule.type)!;
   }
 
   /**

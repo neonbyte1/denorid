@@ -76,6 +76,9 @@ describe("ControllerMapping", () => {
     const ctx = {
       container,
       resolve: resolveFn,
+      getHostModuleRef: () => ({
+        get: resolveFn,
+      }),
     } as unknown as {
       container: MockContainer;
       resolve: <T>(token: Type<T>) => Promise<T>;
@@ -517,7 +520,11 @@ describe("ControllerMapping", () => {
   });
 
   describe("resolveGuard()", () => {
-    const mockExecCtx = {} as ExecutionContext;
+    const mockExecCtx = {
+      switchToHttp: () => ({
+        getRequest: () => ({ contextId: Symbol() }),
+      }),
+    } as unknown as ExecutionContext;
 
     it("should resolve a class-based guard and call canActivate", async () => {
       class MyGuard implements CanActivate {

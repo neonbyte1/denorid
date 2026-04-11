@@ -9,7 +9,7 @@ import { RequestContext } from "./request_context.ts";
 describe("abstract RequestContext class", () => {
   class TestRequestContext extends RequestContext {
     public constructor() {
-      super(undefined);
+      super("", undefined);
     }
 
     public override getUnderlying<T = unknown>(): T {

@@ -7,7 +7,12 @@ import type {
 import { BadRequestException, HttpMethod, StatusCode } from "@denorid/core";
 import type { InjectorContext, Type } from "@denorid/injector";
 import type { Context, Hono } from "@hono/hono";
-import { assertEquals, assertInstanceOf, assertMatch } from "@std/assert";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertMatch,
+  assertRejects,
+} from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
 import { z } from "zod";
@@ -82,17 +87,25 @@ describe("HonoControllerMapping", () => {
     const runInRequestScopeAsync = spy(
       (_id: string, fn: () => Promise<unknown>) => fn(),
     );
-    const resolveInternal = spy(() => Promise.resolve(opts.controller ?? {}));
+    const clearContext = spy((_id: string) => {});
+    const moduleRefGet = spy(() => Promise.resolve(opts.controller ?? {}));
 
     const injectorCtx = {
       container: {
         getTokensByTag: () => opts.tokens ?? [],
       },
       runInRequestScopeAsync,
-      resolveInternal,
+      clearContext,
+      getHostModuleRef: () => ({
+        get: moduleRefGet,
+      }),
     } as unknown as InjectorContext;
 
-    return { injectorCtx, runInRequestScopeAsync, resolveInternal };
+    return {
+      injectorCtx,
+      runInRequestScopeAsync,
+      resolveInternal: moduleRefGet,
+    };
   }
 
   function makeExceptionHandler(returnValue: unknown = undefined) {
@@ -741,6 +754,34 @@ describe("HonoControllerMapping", () => {
       assertSpyCalls(jsonSpy, 1);
       const [, status] = jsonSpy.calls[0].args as [unknown, number];
       assertEquals(status, StatusCode.InternalServerError);
+    });
+
+    it("still clears context via finally when handleError itself throws", async () => {
+      const handleSpy = spy(() => {
+        throw new Error("handler blew up");
+      });
+      const exHandler = {
+        handle: handleSpy,
+        register: spy(async () => {}),
+        canHandle: spy(() => false),
+      } as unknown as ExceptionHandler;
+
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "boom" },
+        controller: {
+          boom: () => {
+            throw new Error("original error");
+          },
+        },
+        exHandler,
+      });
+
+      const { ctx } = makeHonoContext();
+      await assertRejects(
+        () => capturedRoutes[0].handler(ctx),
+        Error,
+        "handler blew up",
+      );
     });
 
     it("passes the Hono context through HostArguments to the exception handler", async () => {

@@ -141,7 +141,12 @@ export abstract class ControllerMapping {
     guard: Type<CanActivate> | CanActivate | CanActivateFn,
   ): Promise<boolean> {
     if (isClass<CanActivate>(guard)) {
-      return await (await this.ctx.resolve(guard)).canActivate(
+      return await (await this.ctx.getHostModuleRef().get(guard, {
+        contextId: executionContext
+          .switchToHttp()
+          .getRequest()
+          .contextId,
+      })).canActivate(
         executionContext,
       );
     }

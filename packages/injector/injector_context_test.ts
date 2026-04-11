@@ -11,6 +11,7 @@ import {
   noopLogger,
   RequestScopedService,
   SimpleService,
+  TransientService,
 } from "./_test_fixtures.ts";
 import type { Type } from "./common.ts";
 import { Container } from "./container.ts";
@@ -28,6 +29,7 @@ import type {
   OnModuleInit,
 } from "./hooks.ts";
 import { InjectorContext } from "./injector_context.ts";
+import { ModuleRef } from "./module_ref.ts";
 import type { DynamicModule } from "./modules.ts";
 
 describe("InjectorContext", () => {
@@ -274,6 +276,82 @@ describe("InjectorContext", () => {
     });
   });
 
+  describe("resolveWithinContext", () => {
+    it("should throw TokenNotFoundError for non-exported own token", async () => {
+      @Module({ providers: [SimpleService] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      assertThrows(
+        () => ctx.resolveWithinContext(SimpleService, "ctx-1"),
+        TokenNotFoundError,
+      );
+    });
+
+    it("should resolve exported transient and cache per contextId", async () => {
+      @Module({ providers: [TransientService], exports: [TransientService] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      const a = await ctx.resolveWithinContext(TransientService, "ctx-1");
+      const b = await ctx.resolveWithinContext(TransientService, "ctx-1");
+
+      assertEquals(a.id, b.id);
+    });
+
+    it("should return different transient instance for different contextIds", async () => {
+      @Module({ providers: [TransientService], exports: [TransientService] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      const a = await ctx.resolveWithinContext(TransientService, "ctx-1");
+      const b = await ctx.resolveWithinContext(TransientService, "ctx-2");
+
+      assert(a.id !== b.id);
+    });
+
+    it("should resolve root module type", async () => {
+      @Module({})
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const mod = await ctx.resolveWithinContext(AppModule, "ctx-1");
+
+      assertInstanceOf(mod, AppModule);
+    });
+
+    it("should fall through for token not in root module", async () => {
+      @Module({ providers: [SimpleService], exports: [SimpleService] })
+      class FeatureModule {}
+
+      @Module({ imports: [FeatureModule] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolveWithinContext(SimpleService, "ctx-1");
+
+      assertInstanceOf(service, SimpleService);
+    });
+  });
+
+  describe("clearContext", () => {
+    it("should release context-cached transient instances", async () => {
+      @Module({ providers: [TransientService], exports: [TransientService] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      const a = await ctx.resolveWithinContext(TransientService, "ctx-1");
+      ctx.clearContext("ctx-1");
+      const b = await ctx.resolveWithinContext(TransientService, "ctx-1");
+
+      assert(a.id !== b.id);
+    });
+  });
+
   describe("getRootModule", () => {
     it("should return root module instance", async () => {
       @Module({})
@@ -284,6 +362,22 @@ describe("InjectorContext", () => {
       const ctx = await InjectorContext.create(AppModule);
       const root = await ctx.getRootModule<AppModule>();
       assertEquals(root.name, "root");
+    });
+  });
+
+  describe("getHostModuleRef", () => {
+    it("should return the ModuleRef for the root module", async () => {
+      @Injectable()
+      class HostService {}
+
+      @Module({ providers: [HostService] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const moduleRef = ctx.getHostModuleRef();
+
+      assertInstanceOf(moduleRef, ModuleRef);
+      assert(moduleRef.has(HostService));
     });
   });
 

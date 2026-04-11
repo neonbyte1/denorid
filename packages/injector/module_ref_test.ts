@@ -62,6 +62,26 @@ describe("ModuleRef", () => {
         "not available",
       );
     });
+
+    it("should resolve token with contextId using resolveWithContext", async () => {
+      @Module({
+        providers: [TransientService, ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const a = await service.moduleRef.get(TransientService, {
+        contextId: "ctx-1",
+      });
+      const b = await service.moduleRef.get(TransientService, {
+        contextId: "ctx-1",
+      });
+
+      assertInstanceOf(a, TransientService);
+      assertEquals(a.id, b.id);
+    });
   });
 
   describe("tryGet", () => {

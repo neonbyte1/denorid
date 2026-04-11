@@ -1,4 +1,8 @@
-import type { InjectionToken, Tag } from "@denorid/injector";
+import type {
+  InjectionToken,
+  ModuleRefContextOptions,
+  Tag,
+} from "@denorid/injector";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
 
 /**
@@ -21,7 +25,14 @@ export interface ApplicationContext {
    * @param {...Tag[]} tags - One or more tags to filter providers by.
    * @returns {Promise<T[]>} An array of resolved provider instances matching the tags.
    */
-  getByTag<T = unknown>(...tags: Tag[]): Promise<T[]>;
+  getByTag<T = unknown>(
+    tag: Tag,
+    options?: ModuleRefContextOptions,
+  ): Promise<T[]>;
+  getByTag<T = unknown>(
+    tags: Tag[],
+    options?: ModuleRefContextOptions,
+  ): Promise<T[]>;
 
   /**
    * Initializes the application context, bootstrapping all registered providers.

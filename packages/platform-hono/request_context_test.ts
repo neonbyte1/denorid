@@ -24,7 +24,7 @@ describe("HonoRequestContext", () => {
         param: () => ({}),
       });
 
-      const requestCtx = new HonoRequestContext(ctx, { id: 42 });
+      const requestCtx = new HonoRequestContext(ctx, "", { id: 42 });
 
       assertEquals(requestCtx.dto, { id: 42 });
     });
@@ -37,7 +37,7 @@ describe("HonoRequestContext", () => {
         param: () => ({}),
       });
 
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
 
       assertEquals(requestCtx.dto, undefined);
     });
@@ -57,7 +57,7 @@ describe("HonoRequestContext", () => {
         param: () => ({}),
       });
 
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const result = requestCtx.headers();
 
       assertSpyCall(headerSpy, 0, { args: [] });
@@ -75,7 +75,7 @@ describe("HonoRequestContext", () => {
         param: () => ({}),
       });
 
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const result = requestCtx.header("authorization");
 
       assertSpyCall(headerSpy, 0, { args: ["authorization"] });
@@ -90,7 +90,7 @@ describe("HonoRequestContext", () => {
         param: () => ({}),
       });
 
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
 
       assertEquals(requestCtx.header("x-missing"), undefined);
     });
@@ -110,7 +110,7 @@ describe("HonoRequestContext", () => {
         param: () => ({}),
       });
 
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const result = requestCtx.queries();
 
       assertSpyCall(queriesSpy, 0, { args: [] });
@@ -127,7 +127,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: () => ({}),
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const result = requestCtx.queries("tag");
 
       assertSpyCall(queriesSpy, 0, { args: ["tag"] });
@@ -141,7 +141,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: () => ({}),
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
 
       assertEquals(requestCtx.queries("missing"), []);
     });
@@ -155,7 +155,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: () => ({}),
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const transformSpy = spy((v: string) => parseInt(v, 10));
       const result = requestCtx.queries("page", transformSpy);
 
@@ -178,7 +178,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: () => ({}),
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const transformer = { transform: spy((v: string) => parseInt(v, 10)) };
       const result = requestCtx.queries("amount", transformer);
 
@@ -198,7 +198,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: () => ({}),
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const transformSpy = spy((v: string) => parseInt(v, 10));
       const result = requestCtx.queries("missing", transformSpy);
 
@@ -216,7 +216,7 @@ describe("HonoRequestContext", () => {
         query: querySpy,
         param: () => ({}),
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const result = requestCtx.query("q");
 
       assertSpyCall(querySpy, 0, { args: ["q"] });
@@ -230,7 +230,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: () => ({}),
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
 
       assertEquals(requestCtx.query("missing"), undefined);
     });
@@ -244,7 +244,7 @@ describe("HonoRequestContext", () => {
         query: () => "42",
         param: () => ({}),
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const transformSpy = spy((v: string) => parseInt(v, 10));
       const result = requestCtx.query("page", transformSpy);
 
@@ -261,7 +261,7 @@ describe("HonoRequestContext", () => {
         query: () => "7",
         param: () => ({}),
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const transformer = { transform: spy((v: string) => parseInt(v, 10)) };
       const result = requestCtx.query("count", transformer);
 
@@ -285,7 +285,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: paramSpy,
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const result = requestCtx.params();
 
       assertSpyCall(paramSpy, 0, { args: [] });
@@ -302,7 +302,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: paramSpy,
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const result = requestCtx.param("id");
 
       assertSpyCall(paramSpy, 0, { args: ["id"] });
@@ -316,7 +316,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: () => undefined,
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
 
       assertEquals(requestCtx.param("missing"), undefined);
     });
@@ -330,7 +330,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: () => "5",
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const transformSpy = spy((v: string) => parseInt(v, 10));
       const result = requestCtx.param("id", transformSpy);
 
@@ -347,7 +347,7 @@ describe("HonoRequestContext", () => {
         query: () => undefined,
         param: () => "3",
       });
-      const requestCtx = new HonoRequestContext(ctx, undefined);
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
       const transformer = { transform: spy((v: string) => parseInt(v, 10)) };
       const result = requestCtx.param("id", transformer);
 

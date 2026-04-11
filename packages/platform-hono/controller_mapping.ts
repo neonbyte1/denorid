@@ -60,19 +60,19 @@ export class HonoControllerMapping extends ControllerMapping {
       const requestId = c.req.header("x-request-id") ?? crypto.randomUUID();
 
       return await this.ctx.runInRequestScopeAsync(requestId, async () => {
-        const controller = await this.ctx.resolveInternal<HttpController>(
-          controllerClass,
-        );
-
-        const context = new HonoRequestContext<unknown>(c, null);
+        const context = new HonoRequestContext<unknown>(c, requestId, null);
         const hostArguments = this.createHostArguments(c, context);
-        const executionContext: ExecutionContext = {
-          ...hostArguments,
-          getClass: <T = HttpController>() => controllerClass as Type<T>,
-          getHandler: () => controller[route.name],
-        };
 
         try {
+          const controller = await this.ctx.getHostModuleRef().get<
+            HttpController
+          >(controllerClass, { contextId: requestId, strict: false });
+
+          const executionContext: ExecutionContext = {
+            ...hostArguments,
+            getClass: <T = HttpController>() => controllerClass as Type<T>,
+            getHandler: () => controller[route.name],
+          };
           if (!await this.resolveGuards(executionContext, ...guards)) {
             throw new ForbiddenException();
           }
@@ -84,7 +84,12 @@ export class HonoControllerMapping extends ControllerMapping {
           return this.resolveResponse(c, res, route.statusCode);
         } catch (err) {
           return await this.handleError(c, hostArguments, err);
+          // I haven't found a solution to catch the finally :(
+          // deno-coverage-ignore-start
+        } finally {
+          this.ctx.clearContext(requestId);
         }
+        // deno-coverage-ignore-stop
       });
     });
 
