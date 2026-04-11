@@ -105,8 +105,12 @@ export class Application<
    */
 
   public async close(): Promise<void> {
-    await this.ctx.onBeforeApplicationShutdown();
-    await this.ctx.onApplicationShutdown();
+    if (this.initialized) {
+      this.initialized = false;
+
+      await this.ctx.onBeforeApplicationShutdown();
+      await this.ctx.onApplicationShutdown();
+    }
   }
 
   // deno-coverage-ignore-stop
