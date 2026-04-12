@@ -5,7 +5,8 @@
     "./packages/drizzle",
     "./packages/injector",
     "./packages/logger",
-    "./packages/platform-hono"
+    "./packages/platform-hono",
+    "./packages/jwt"
   ],
   "imports": {
     "@std/assert": "jsr:@std/assert@^1.0.18",
