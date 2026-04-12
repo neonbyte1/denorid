@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@hono/hono@^4.12.12": "4.12.12",
+    "jsr:@panva/jose@^6.2.2": "6.2.2",
     "jsr:@std/assert@^1.0.17": "1.0.19",
     "jsr:@std/assert@^1.0.18": "1.0.19",
     "jsr:@std/async@^1.1.0": "1.2.0",
@@ -28,6 +29,9 @@
   "jsr": {
     "@hono/hono@4.12.12": {
       "integrity": "dc765178d38b5c4619b358062f6aa5514f7205bb0530b2823ff6265bec69c535"
+    },
+    "@panva/jose@6.2.2": {
+      "integrity": "bfe1178a9d2f53effa5ee6c1786b6534a39690b03969472b3ad690600d8898ec"
     },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
@@ -789,6 +793,11 @@
       "packages/injector": {
         "dependencies": [
           "jsr:@denorid/logger@0.3"
+        ]
+      },
+      "packages/jwt": {
+        "dependencies": [
+          "jsr:@panva/jose@^6.2.2"
         ]
       },
       "packages/logger": {
