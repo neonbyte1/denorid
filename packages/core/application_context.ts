@@ -91,6 +91,8 @@ export interface HttpApplicationContext
   extends ApplicationContext, GlobalGuardContext {
   /**
    * Starts the HTTP server and begins accepting incoming requests.
+   *
+   * @todo: return a promise instead
    */
   listen(): void;
 }
