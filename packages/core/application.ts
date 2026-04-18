@@ -2,6 +2,7 @@ import type {
   InjectionToken,
   InjectorContext,
   ModuleRefContextOptions,
+  ModuleRefOptions,
   Tag,
   Type,
 } from "@denorid/injector";
@@ -67,17 +68,42 @@ export class Application<
    */
   public get<T>(
     token: InjectionToken<T>,
-    options?: ModuleRefContextOptions,
+    options?: ModuleRefOptions,
+  ): Promise<T>;
+  /**
+   * @inheritdoc
+   */
+  public get<T>(
+    token: InjectionToken<T>,
+    options: ModuleRefContextOptions,
+  ): Promise<T>;
+  public get<T>(
+    token: InjectionToken<T>,
+    options?: ModuleRefOptions | ModuleRefContextOptions,
   ): Promise<T> {
-    return this.ctx.getHostModuleRef().get<T>(token, options);
+    return this.ctx.getHostModuleRef().get<T>(
+      token,
+      options as ModuleRefContextOptions,
+    );
   }
 
   /**
    * @inheritdoc
    */
+  public getByTag<T = unknown>(
+    tag: Tag,
+    options?: ModuleRefOptions,
+  ): Promise<T[]>;
+  /**
+   * @inheritdoc
+   */
+  public getByTag<T = unknown>(
+    tags: Tag[],
+    options: ModuleRefContextOptions,
+  ): Promise<T[]>;
   public async getByTag<T>(
     arg0: Tag | Tag[],
-    options?: ModuleRefContextOptions,
+    options?: ModuleRefOptions | ModuleRefContextOptions,
   ): Promise<T[]> {
     if (Array.isArray(arg0)) {
       return (await Promise.all(
