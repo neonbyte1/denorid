@@ -5,6 +5,7 @@
     "./packages/drizzle",
     "./packages/injector",
     "./packages/jwt",
+    "./packages/kv",
     "./packages/logger",
     "./packages/microservices/",
     "./packages/platform-hono"

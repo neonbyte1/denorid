@@ -1,0 +1,10 @@
+{
+  "name": "@denorid/kv",
+  "version": "1.0.0-beta1",
+  "license": "MIT",
+  "exports": "./mod.ts",
+  "unstable": ["kv"],
+  "imports": {
+    "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta1"
+  }
+}
