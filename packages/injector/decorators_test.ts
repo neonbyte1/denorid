@@ -1,11 +1,12 @@
-import { assertEquals, assertExists, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import type { InjectableMetadata } from "./_metadata.ts";
+import type { InjectableMetadata, InjectionDependency } from "./_metadata.ts";
 import { SimpleService, TAG_A } from "./_test_fixtures.ts";
 import type { Tag } from "./common.ts";
 import {
   GLOBAL_MODULE_METADATA,
   INJECTABLE_METADATA,
+  INJECTION_METADATA,
   TAG_METADATA,
 } from "./constants.ts";
 import { Global, Inject, Injectable, Module, Tags } from "./decorators.ts";
@@ -90,6 +91,42 @@ describe("decorators.ts", () => {
         Error,
         "Cannot inject multiple",
       );
+    });
+
+    it("should store expression in metadata", () => {
+      const expr = (svc: SimpleService): string => svc.value.toUpperCase();
+
+      @Injectable()
+      class TestService {
+        @Inject(SimpleService, expr)
+        field!: string;
+      }
+
+      const deps = TestService[Symbol.metadata]
+        ?.[INJECTION_METADATA] as InjectionDependency[];
+
+      assertExists(deps);
+      assertEquals(deps.length, 1);
+      assert(deps[0].expression === expr);
+      assertEquals(deps[0].options, undefined);
+    });
+
+    it("should store expression and options in metadata", () => {
+      const expr = (svc: SimpleService): string => svc.value;
+
+      @Injectable()
+      class TestService {
+        @Inject(SimpleService, expr, { optional: true })
+        field?: string;
+      }
+
+      const deps = TestService[Symbol.metadata]
+        ?.[INJECTION_METADATA] as InjectionDependency[];
+
+      assertExists(deps);
+      assertEquals(deps.length, 1);
+      assert(deps[0].expression === expr);
+      assertEquals(deps[0].options?.optional, true);
     });
   });
 

@@ -2,6 +2,7 @@ import type { InjectableMetadata, InjectionDependency } from "./_metadata.ts";
 import type {
   Decorator,
   InjectableOptions,
+  InjectionExpression,
   InjectionToken,
   InjectOptions,
   Tag,
@@ -19,8 +20,8 @@ import type { ModuleMetadata } from "./modules.ts";
 /**
  * Marks a class field for dependency injection.
  *
- * @param {InjectionToken} token The token that will be resolved and injected into the field.
- * @param {string|undefined} options Foo
+ * @param {InjectionToken} token - The token to resolve and inject.
+ * @param {InjectOptions} [options] - Optional injection configuration.
  *
  * @example Usage
  * ```ts
@@ -36,6 +37,51 @@ import type { ModuleMetadata } from "./modules.ts";
  */
 export function Inject(
   token: InjectionToken,
+  options?: InjectOptions,
+): Decorator<ClassFieldDecoratorContext>;
+
+/**
+ * Marks a class field for dependency injection with an expression callback.
+ *
+ * The resolved instance is passed to `expression`; its return value
+ * (which may be a `Promise`) is awaited and becomes the field value.
+ *
+ * @param {InjectionToken<T>} token - The token to resolve.
+ * @param {InjectionExpression<T>} expression - Receives the resolved instance; return value becomes the field value.
+ *
+ * @example Sync expression
+ * ```ts
+ * \@Inject(ConfigService, (cfg) => cfg.dbUrl)
+ * private dbUrl!: string;
+ * ```
+ *
+ * @example Async expression
+ * ```ts
+ * \@Inject(FeatureFlagService, async (svc) => await svc.isEnabled("myFlag"))
+ * private myFlagEnabled!: boolean;
+ * ```
+ */
+export function Inject<T>(
+  token: InjectionToken<T>,
+  expression: InjectionExpression<T>,
+): Decorator<ClassFieldDecoratorContext>;
+
+/**
+ * Marks a class field for dependency injection with an expression callback and options.
+ *
+ * @param {InjectionToken<T>} token - The token to resolve.
+ * @param {InjectionExpression<T>} expression - Receives the resolved instance; return value becomes the field value.
+ * @param {InjectOptions} options - Optional injection configuration.
+ */
+export function Inject<T>(
+  token: InjectionToken<T>,
+  expression: InjectionExpression<T>,
+  options: InjectOptions,
+): Decorator<ClassFieldDecoratorContext>;
+
+export function Inject<T>(
+  token: InjectionToken<T>,
+  expressionOrOptions?: InjectionExpression<T> | InjectOptions,
   options?: InjectOptions,
 ): Decorator<ClassFieldDecoratorContext> {
   return (_: unknown, ctx: ClassFieldDecoratorContext): void => {
@@ -58,7 +104,20 @@ export function Inject(
       );
     }
 
-    dependencies.push({ field: ctx.name, token, options });
+    const expression = typeof expressionOrOptions === "function"
+      ? (expressionOrOptions as InjectionExpression<T>)
+      : undefined;
+
+    const resolvedOptions = typeof expressionOrOptions === "function"
+      ? options
+      : (expressionOrOptions as InjectOptions | undefined);
+
+    dependencies.push({
+      field: ctx.name,
+      token: token as InjectionToken,
+      options: resolvedOptions,
+      expression: expression as InjectionExpression | undefined,
+    });
   };
 }
 

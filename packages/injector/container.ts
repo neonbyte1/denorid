@@ -522,8 +522,11 @@ export class Container {
     for (const dep of dependencies) {
       try {
         const resolved = await this.resolve(dep.token);
+        const value: unknown = dep.expression
+          ? await dep.expression(resolved)
+          : resolved;
 
-        (instance as Record<Tag, unknown>)[dep.field] = resolved;
+        (instance as Record<Tag, unknown>)[dep.field] = value;
       } catch (e) {
         const err = e as Error;
 

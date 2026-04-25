@@ -158,6 +158,58 @@ describe("Container", () => {
       assertEquals(instance.optional, undefined);
     });
 
+    it("should apply sync expression to resolved dependency", async () => {
+      @Injectable()
+      class Consumer {
+        @Inject(SimpleService, (svc: SimpleService) => svc.value.toUpperCase())
+        value!: string;
+      }
+
+      container.register(SimpleService, Consumer);
+
+      const instance = await container.resolve(Consumer);
+
+      assertEquals(instance.value, "SIMPLE");
+    });
+
+    it("should apply async expression to resolved dependency", async () => {
+      @Injectable()
+      class Consumer {
+        @Inject(
+          SimpleService,
+          async (svc: SimpleService) =>
+            await Promise.resolve(svc.value + "_async"),
+        )
+        value!: string;
+      }
+
+      container.register(SimpleService, Consumer);
+
+      const instance = await container.resolve(Consumer);
+
+      assertEquals(instance.value, "simple_async");
+    });
+
+    it("should skip expression when optional token is not registered", async () => {
+      let called = false;
+
+      @Injectable()
+      class Consumer {
+        @Inject("MISSING_TOKEN", (_: unknown) => {
+          called = true;
+          return "should_not_run";
+        }, { optional: true })
+        value?: string;
+      }
+
+      container.register(Consumer);
+
+      const instance = await container.resolve(Consumer);
+
+      assertEquals(instance.value, undefined);
+      assertEquals(called, false);
+    });
+
     it("should throw CircularDependencyError", async () => {
       @Injectable()
       class A {

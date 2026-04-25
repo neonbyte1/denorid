@@ -1,5 +1,6 @@
 import type {
   InjectableOptions,
+  InjectionExpression,
   InjectionToken,
   InjectOptions,
 } from "./common.ts";
@@ -15,4 +16,5 @@ export interface InjectionDependency {
   field: string | symbol;
   token: InjectionToken;
   options?: InjectOptions;
+  expression?: InjectionExpression;
 }

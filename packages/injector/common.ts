@@ -93,6 +93,17 @@ export interface InjectOptions {
 }
 
 /**
+ * A callback applied to a resolved dependency before it is assigned to the field.
+ *
+ * The return value (sync or async) becomes the actual value stored on the field.
+ *
+ * @template T - The type of the resolved dependency instance
+ */
+export type InjectionExpression<T = unknown> = (
+  instance: T,
+) => unknown | Promise<unknown>;
+
+/**
  * Allowed types for tags.
  *
  * @note Symbols are recommended for library-level tokens to avoid naming collisions.
