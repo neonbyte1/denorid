@@ -1,16 +1,16 @@
-import type { InjectorContext, Type } from "@denorid/injector";
+import type { Type } from "@denorid/injector";
 import { Logger, type LoggerService } from "@denorid/logger";
 import {
   CONTROLLER_METADATA,
   CONTROLLER_REQUEST_MAPPING,
   HTTP_CONTROLLER_METADATA,
 } from "../_constants.ts";
-import type { ExceptionHandler } from "../exceptions/handler.ts";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
 import { GUARDS_METADATA } from "../guards/decorator.ts";
 import type { ExecutionContext } from "../guards/execution_context.ts";
 import { isClass, isFunction } from "../type_guards.ts";
 import type { RequestMappingMetadata } from "./_request_mapping.ts";
+import type { ControllerMappingOptions } from "./adapter.ts";
 import type { ControllerOptions } from "./controller_options.ts";
 import type { RequestContext } from "./request_context.ts";
 
@@ -36,14 +36,11 @@ export abstract class ControllerMapping {
   );
 
   /**
-   * @param {InjectorContext} ctx - The injector context used to resolve controllers.
-   * @param {ExceptionHandler} exceptionHandler - Handler invoked when a route throws.
-   * @param {CanActivate|CanActivateFn} globalGuards - Array of global guard instances or function.
+   * @param {ControllerMappingOptions} options - Configuration for the controller mapping,
+   *   including the injector context, exception handler, CORS settings, and global guards.
    */
   public constructor(
-    protected readonly ctx: InjectorContext,
-    protected readonly exceptionHandler: ExceptionHandler,
-    protected readonly globalGuards: (CanActivate | CanActivateFn)[],
+    protected readonly options: ControllerMappingOptions,
   ) {}
 
   /**
@@ -56,7 +53,7 @@ export abstract class ControllerMapping {
     basePath ??= "";
 
     for (
-      const token of this.ctx.container
+      const token of this.options.ctx.container
         .getTokensByTag(HTTP_CONTROLLER_METADATA, true)
     ) {
       await this.registerController(token as Type<HttpController>, basePath);
@@ -141,7 +138,7 @@ export abstract class ControllerMapping {
     guard: Type<CanActivate> | CanActivate | CanActivateFn,
   ): Promise<boolean> {
     if (isClass<CanActivate>(guard)) {
-      return await (await this.ctx.getHostModuleRef().get(guard, {
+      return await (await this.options.ctx.getHostModuleRef().get(guard, {
         contextId: executionContext
           .switchToHttp()
           .getRequest()

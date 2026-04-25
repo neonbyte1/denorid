@@ -1,12 +1,6 @@
-import type {
-  CanActivate,
-  CanActivateFn,
-  ControllerMapping,
-  ExceptionHandler,
-  HttpAdapter,
-} from "@denorid/core";
-import type { InjectorContext } from "@denorid/injector";
+import type { ControllerMapping, HttpAdapter } from "@denorid/core";
 import { Hono } from "@hono/hono";
+import type { ControllerMappingOptions } from "../core/http/adapter.ts";
 import { HonoControllerMapping } from "./controller_mapping.ts";
 
 export class HonoAdapter implements HttpAdapter {
@@ -33,15 +27,8 @@ export class HonoAdapter implements HttpAdapter {
    * @inheritdoc
    */
   public createControllerMapping(
-    ctx: InjectorContext,
-    exceptionHandler: ExceptionHandler,
-    globalGuards: (CanActivate | CanActivateFn)[],
-  ): ControllerMapping {
-    return new HonoControllerMapping(
-      this.app,
-      ctx,
-      exceptionHandler,
-      globalGuards,
-    );
+    opts: ControllerMappingOptions,
+  ): ControllerMapping | Promise<ControllerMapping> {
+    return new HonoControllerMapping(this.app, opts);
   }
 }

@@ -4,6 +4,7 @@ import type { HttpApplicationContext } from "./application_context.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
+import type { CorsOptions } from "./http/cors.ts";
 
 export interface HttpCoreApplicationOptions {
   /**
@@ -19,6 +20,7 @@ export interface HttpCoreApplicationOptions {
    * @default ""
    */
   basePath?: string;
+  cors?: boolean | CorsOptions;
 }
 
 /**
@@ -76,11 +78,12 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
     if (!this.initialized) {
       this.initialized = true;
 
-      this.controller = await this.adapter.createControllerMapping(
-        this.ctx,
-        this.exceptionHandler,
-        [...this.globalGuards],
-      );
+      this.controller = await this.adapter.createControllerMapping({
+        ctx: this.ctx,
+        exceptionHandler: this.exceptionHandler,
+        cors: this.options.cors,
+        globalGuards: [...this.globalGuards],
+      });
 
       await this.ctx.onApplicationBootstrap();
 

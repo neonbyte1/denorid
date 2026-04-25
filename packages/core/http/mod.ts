@@ -21,6 +21,7 @@
  */
 
 export * from "./adapter.ts";
+export type { CorsOptions } from "./cors.ts";
 export * from "./controller.ts";
 export * from "./controller_mapping.ts";
 export * from "./controller_options.ts";

@@ -2,6 +2,19 @@ import type { InjectorContext } from "@denorid/injector";
 import type { ExceptionHandler } from "../exceptions/handler.ts";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
 import type { ControllerMapping } from "./controller_mapping.ts";
+import type { CorsOptions } from "./cors.ts";
+
+/** Options passed to {@link HttpAdapter.createControllerMapping} to configure route registration. */
+export interface ControllerMappingOptions {
+  /** The injector context providing controller instances. */
+  ctx: InjectorContext;
+  /** Handler invoked when a route throws. */
+  exceptionHandler: ExceptionHandler;
+  /** CORS policy applied to every registered route. Pass `false` or `undefined` to disable. */
+  cors: boolean | CorsOptions | undefined;
+  /** Global guards evaluated before every route handler. */
+  globalGuards: (CanActivate | CanActivateFn)[];
+}
 
 /**
  * Defines the contract for an HTTP adapter used by the Denorid framework.
@@ -25,16 +38,13 @@ export interface HttpAdapter {
   close(): Promise<void>;
 
   /**
-   * Registers all controllers from the given injector context and returns
+   * Registers all controllers from the given options and returns
    * the resulting route mapping for the adapter.
    *
-   * @param {InjectorContext} ctx - The injector context providing controller instances.
-   * @param {ExceptionHandler} exceptionHandler - Handler invoked when a route throws.
+   * @param {ControllerMappingOptions} opts - Options used to configure the controller mapping.
    * @return {ControllerMapping | Promise<ControllerMapping>} The constructed mapping.
    */
   createControllerMapping(
-    ctx: InjectorContext,
-    exceptionHandler: ExceptionHandler,
-    globalGuards: (CanActivate | CanActivateFn)[],
+    opts: ControllerMappingOptions,
   ): ControllerMapping | Promise<ControllerMapping>;
 }

@@ -14,7 +14,7 @@ import type {
 import { DenoridFactory } from "./denorid_factory.ts";
 import type { ExceptionHandler } from "./exceptions/handler.ts";
 import type { ExecutionContext } from "./guards/execution_context.ts";
-import type { HttpAdapter } from "./http/adapter.ts";
+import type { ControllerMappingOptions, HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
 import { MicroserviceApplication } from "./microservice_application.ts";
 import { MicroserviceServer } from "./microservices/server.ts";
@@ -48,8 +48,7 @@ describe("DenoridFactory", () => {
       listen: () => {},
       close: () => Promise.resolve(),
       createControllerMapping: (
-        _ctx: InjectorContext,
-        _handler: ExceptionHandler,
+        _opts: ControllerMappingOptions,
       ) => Promise.resolve(mapping ?? makeControllerMapping()),
     };
   }

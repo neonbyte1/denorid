@@ -112,11 +112,12 @@ describe("ControllerMapping", () => {
 
     beforeEach(() => {
       const { ctx } = createMockContext([]);
-      mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
     });
 
     it("should return an empty array when path is undefined", () => {
@@ -141,11 +142,12 @@ describe("ControllerMapping", () => {
 
     beforeEach(() => {
       const { ctx } = createMockContext([]);
-      mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
     });
 
     it("should return '/' when called with no parts", () => {
@@ -195,11 +197,12 @@ describe("ControllerMapping", () => {
   describe("register()", () => {
     it("should query the container with HTTP_CONTROLLER_METADATA tag", async () => {
       const { ctx, getTokensByTagSpy } = createMockContext([]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -215,11 +218,12 @@ describe("ControllerMapping", () => {
       setControllerMetadata(FakeController, { path: "api" }, []);
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -232,11 +236,12 @@ describe("ControllerMapping", () => {
       setControllerMetadata(FakeController, { path: "/products" }, [route]);
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register("v1");
 
@@ -255,11 +260,12 @@ describe("ControllerMapping", () => {
       setControllerMetadata(Controller2, { path: "/c2" }, [route2]);
 
       const { ctx } = createMockContext([Controller1, Controller2]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -268,11 +274,12 @@ describe("ControllerMapping", () => {
 
     it("should handle an empty token list without errors", async () => {
       const { ctx } = createMockContext([]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -292,11 +299,12 @@ describe("ControllerMapping", () => {
       ]);
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -312,11 +320,12 @@ describe("ControllerMapping", () => {
       setControllerMetadata(FakeController, { path: "/test" }, [route]);
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -328,11 +337,12 @@ describe("ControllerMapping", () => {
       setControllerMetadata(FakeController, { path: "/items" });
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -346,11 +356,12 @@ describe("ControllerMapping", () => {
       setControllerMetadata(FakeController, { path: ["api", "v1"] }, [route]);
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -365,11 +376,12 @@ describe("ControllerMapping", () => {
       setControllerMetadata(FakeController, { path: undefined }, [route]);
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -386,11 +398,12 @@ describe("ControllerMapping", () => {
       ]);
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register("v2");
 
@@ -408,11 +421,12 @@ describe("ControllerMapping", () => {
       setControllerMetadata(FakeController, { path: "/api/" }, [route]);
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register("/v1/");
 
@@ -432,11 +446,12 @@ describe("ControllerMapping", () => {
       );
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -451,11 +466,12 @@ describe("ControllerMapping", () => {
       setControllerMetadata(FakeController, { path: "/open" }, [route]);
 
       const { ctx } = createMockContext([FakeController]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       await mapping.register();
 
@@ -469,11 +485,12 @@ describe("ControllerMapping", () => {
 
     it("should return true when no guards are provided", async () => {
       const { ctx } = createMockContext([]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       const result = await mapping["resolveGuards"](mockExecCtx);
       assertEquals(result, true);
@@ -481,11 +498,12 @@ describe("ControllerMapping", () => {
 
     it("should return true when all guards allow the request", async () => {
       const { ctx } = createMockContext([]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       const guardA: CanActivateFn = (_ctx) => true;
       const guardB: CanActivateFn = (_ctx) => true;
@@ -500,11 +518,12 @@ describe("ControllerMapping", () => {
 
     it("should return false and stop early when a guard denies the request", async () => {
       const { ctx } = createMockContext([]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       const denySpy = spy((_ctx: ExecutionContext) => false);
       const neverCalled = spy((_ctx: ExecutionContext) => true);
@@ -535,11 +554,12 @@ describe("ControllerMapping", () => {
 
       const instance = new MyGuard();
       const { ctx } = createMockContext([], instance);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       const result = await mapping["resolveGuard"](mockExecCtx, MyGuard);
       assertEquals(result, true);
@@ -547,11 +567,12 @@ describe("ControllerMapping", () => {
 
     it("should invoke a function-based guard directly", async () => {
       const { ctx } = createMockContext([]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       const guardFn: CanActivateFn = (_ctx) => false;
       const result = await mapping["resolveGuard"](mockExecCtx, guardFn);
@@ -560,11 +581,12 @@ describe("ControllerMapping", () => {
 
     it("should call canActivate on a guard instance", async () => {
       const { ctx } = createMockContext([]);
-      const mapping = new TestControllerMapping(
-        ctx as never,
-        {} as ExceptionHandler,
-        [],
-      );
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
 
       const instance: CanActivate = {
         canActivate: (_ctx) => true,

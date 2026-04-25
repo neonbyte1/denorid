@@ -2,8 +2,7 @@ import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { assertSpyCalls, spy, stub } from "@std/testing/mock";
-import type { ExceptionHandler } from "./exceptions/handler.ts";
-import type { HttpAdapter } from "./http/adapter.ts";
+import type { ControllerMappingOptions, HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
 import { HttpApplication } from "./http_application.ts";
 
@@ -34,8 +33,7 @@ function makeHttpAdapter(mapping?: ControllerMapping): HttpAdapter {
     listen: () => {},
     close: () => Promise.resolve(),
     createControllerMapping: (
-      _ctx: InjectorContext,
-      _handler: ExceptionHandler,
+      _opts: ControllerMappingOptions,
     ) => Promise.resolve(mapping ?? makeControllerMapping()),
   };
 }

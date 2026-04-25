@@ -1,5 +1,6 @@
 import type {
   CanActivateFn,
+  CorsOptions,
   ExceptionHandler,
   HttpController,
   RequestMappingMetadata,
@@ -28,14 +29,24 @@ describe(HonoControllerMapping.name, () => {
   interface CapturedRoute {
     method: string;
     path: string;
+    corsMiddleware?: RouteHandler;
     handler: RouteHandler;
   }
 
   function makeHonoApp(): { app: Hono; routes: CapturedRoute[] } {
     const routes: CapturedRoute[] = [];
     const app = {
-      on: (method: string, path: string, handler: RouteHandler) => {
-        routes.push({ method, path, handler });
+      on: (method: string, path: string, ...handlers: RouteHandler[]) => {
+        if (handlers.length === 2) {
+          routes.push({
+            method,
+            path,
+            corsMiddleware: handlers[0],
+            handler: handlers[1],
+          });
+        } else {
+          routes.push({ method, path, handler: handlers[0] });
+        }
       },
     } as unknown as Hono;
     return { app, routes };
@@ -142,6 +153,7 @@ describe(HonoControllerMapping.name, () => {
     basePath?: string;
     controllerPath?: string;
     globalGuards?: CanActivateFn[];
+    cors?: boolean | CorsOptions;
   }) {
     class FakeController {}
     setControllerMetadata(FakeController, {
@@ -157,9 +169,12 @@ describe(HonoControllerMapping.name, () => {
 
     const mapping = new HonoControllerMapping(
       app,
-      injectorCtx,
-      opts.exHandler ?? makeExceptionHandler().exHandler,
-      opts.globalGuards ?? [],
+      {
+        ctx: injectorCtx,
+        exceptionHandler: opts.exHandler ?? makeExceptionHandler().exHandler,
+        globalGuards: opts.globalGuards ?? [],
+        cors: opts.cors,
+      },
     );
 
     await mapping.register(opts.basePath);
@@ -208,9 +223,12 @@ describe(HonoControllerMapping.name, () => {
       });
       const mapping = new HonoControllerMapping(
         app,
-        injectorCtx,
-        makeExceptionHandler().exHandler,
-        [],
+        {
+          ctx: injectorCtx,
+          exceptionHandler: makeExceptionHandler().exHandler,
+          globalGuards: [],
+          cors: undefined,
+        },
       );
 
       await mapping.register("v1");
@@ -243,9 +261,12 @@ describe(HonoControllerMapping.name, () => {
       });
       const mapping = new HonoControllerMapping(
         app,
-        injectorCtx,
-        makeExceptionHandler().exHandler,
-        [],
+        {
+          ctx: injectorCtx,
+          exceptionHandler: makeExceptionHandler().exHandler,
+          globalGuards: [],
+          cors: undefined,
+        },
       );
 
       await mapping.register();
@@ -822,6 +843,87 @@ describe(HonoControllerMapping.name, () => {
         ctx.req,
       );
       assertEquals(capturedHost!.switchToHttp().getResponse(), ctx);
+    });
+  });
+
+  describe("cors", () => {
+    it("does not attach a cors middleware when cors is undefined", async () => {
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "index" },
+        controller: { index: () => null },
+        cors: undefined,
+      });
+
+      assertEquals(capturedRoutes[0].corsMiddleware, undefined);
+    });
+
+    it("does not attach a cors middleware when cors is false", async () => {
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "index" },
+        controller: { index: () => null },
+        cors: false,
+      });
+
+      assertEquals(capturedRoutes[0].corsMiddleware, undefined);
+    });
+
+    it("attaches cors() middleware when cors is true", async () => {
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "index" },
+        controller: { index: () => null },
+        cors: true,
+      });
+
+      assertEquals(typeof capturedRoutes[0].corsMiddleware, "function");
+    });
+
+    it("attaches cors(options) middleware when cors is a CorsOptions object", async () => {
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "index" },
+        controller: { index: () => null },
+        cors: { origin: "https://example.com" },
+      });
+
+      assertEquals(typeof capturedRoutes[0].corsMiddleware, "function");
+    });
+
+    it("maps HttpMethod enum values to strings in allowMethods", async () => {
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "index" },
+        controller: { index: () => null },
+        cors: {
+          origin: "*",
+          allowMethods: [HttpMethod.GET, HttpMethod.POST],
+        },
+      });
+
+      assertEquals(typeof capturedRoutes[0].corsMiddleware, "function");
+    });
+
+    it("passes string allowMethods values through unchanged", async () => {
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "index" },
+        controller: { index: () => null },
+        cors: { origin: "*", allowMethods: ["GET", "POST"] },
+      });
+
+      assertEquals(typeof capturedRoutes[0].corsMiddleware, "function");
+    });
+
+    it("passes all CorsOptions fields to the cors middleware", async () => {
+      const { capturedRoutes } = await registerAndCapture({
+        route: { name: "index" },
+        controller: { index: () => null },
+        cors: {
+          origin: ["https://a.com", "https://b.com"],
+          allowHeaders: ["X-Custom"],
+          maxAge: 3600,
+          credentials: true,
+          exposeHeaders: ["X-Exposed"],
+        },
+      });
+
+      assertEquals(typeof capturedRoutes[0].corsMiddleware, "function");
     });
   });
 

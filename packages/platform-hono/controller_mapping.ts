@@ -3,7 +3,7 @@ import {
   type CanActivate,
   type CanActivateFn,
   ControllerMapping,
-  type ExceptionHandler,
+  type ControllerMappingOptions,
   ForbiddenException,
   type HostArguments,
   type HttpController,
@@ -15,21 +15,22 @@ import {
   UnprocessableContentException,
   ZodValidationException,
 } from "@denorid/core";
-import type { InjectorContext, Type } from "@denorid/injector";
-import type { Context, Hono } from "@hono/hono";
+import type { Type } from "@denorid/injector";
+import type { Context, Hono, MiddlewareHandler } from "@hono/hono";
+import { cors } from "@hono/hono/cors";
 import type { ZodType } from "zod";
 import { HonoExecutionContext } from "./execution_context.ts";
 import { HonoHostArguments } from "./host_arguments.ts";
 import { HonoRequestContext } from "./request_context.ts";
 
+cors();
+
 export class HonoControllerMapping extends ControllerMapping {
   public constructor(
     private readonly app: Hono,
-    ctx: InjectorContext,
-    exceptionHandler: ExceptionHandler,
-    globalGuards: (CanActivate | CanActivateFn)[],
+    options: ControllerMappingOptions,
   ) {
-    super(ctx, exceptionHandler, globalGuards);
+    super(options);
   }
 
   /**
@@ -50,50 +51,73 @@ export class HonoControllerMapping extends ControllerMapping {
     const methodName = HttpMethod[route.method ?? HttpMethod.GET];
     const guards = [
       ...new Set([
-        ...this.globalGuards,
+        ...this.options.globalGuards,
         ...controllerGuards,
         ...(route.guards ?? []),
       ]),
     ];
 
-    this.app.on(methodName, fullPath, async (c) => {
+    const middleware: MiddlewareHandler = async (c) => {
       const requestId = c.req.header("x-request-id") ?? crypto.randomUUID();
 
-      return await this.ctx.runInRequestScopeAsync(requestId, async () => {
-        const context = new HonoRequestContext<unknown>(c, requestId, null);
-        const hostArguments = new HonoHostArguments(c, context);
+      return await this.options.ctx.runInRequestScopeAsync(
+        requestId,
+        async () => {
+          const context = new HonoRequestContext<unknown>(c, requestId, null);
+          const hostArguments = new HonoHostArguments(c, context);
 
-        try {
-          const controller = await this.ctx.getHostModuleRef().get<
-            HttpController
-          >(controllerClass, { contextId: requestId, strict: false });
+          try {
+            const controller = await this.options.ctx.getHostModuleRef().get<
+              HttpController
+            >(controllerClass, { contextId: requestId, strict: false });
 
-          const executionContext = new HonoExecutionContext(
-            c,
-            context,
-            controllerClass,
-            controller[route.name],
-          );
+            const executionContext = new HonoExecutionContext(
+              c,
+              context,
+              controllerClass,
+              controller[route.name],
+            );
 
-          if (!await this.resolveGuards(executionContext, ...guards)) {
-            throw new ForbiddenException();
+            if (!await this.resolveGuards(executionContext, ...guards)) {
+              throw new ForbiddenException();
+            }
+
+            context.dto = await this.validateRequest(c, route);
+
+            const res = await controller[route.name](context);
+
+            return this.resolveResponse(c, res, route.statusCode);
+          } catch (err) {
+            return await this.handleError(c, hostArguments, err);
+            // I haven't found a solution to catch the finally :(
+            // deno-coverage-ignore-start
+          } finally {
+            this.options.ctx.clearContext(requestId);
           }
+          // deno-coverage-ignore-stop
+        },
+      );
+    };
 
-          context.dto = await this.validateRequest(c, route);
-
-          const res = await controller[route.name](context);
-
-          return this.resolveResponse(c, res, route.statusCode);
-        } catch (err) {
-          return await this.handleError(c, hostArguments, err);
-          // I haven't found a solution to catch the finally :(
-          // deno-coverage-ignore-start
-        } finally {
-          this.ctx.clearContext(requestId);
-        }
-        // deno-coverage-ignore-stop
-      });
-    });
+    if (this.options.cors === true || typeof this.options.cors === "object") {
+      this.app.on(
+        methodName,
+        fullPath,
+        this.options.cors === true ? cors() : cors({
+          origin: this.options.cors.origin,
+          allowMethods: this.options.cors.allowMethods?.map((method) =>
+            typeof method === "string" ? method : HttpMethod[method]
+          ),
+          allowHeaders: this.options.cors.allowHeaders,
+          maxAge: this.options.cors.maxAge,
+          credentials: this.options.cors.credentials,
+          exposeHeaders: this.options.cors.exposeHeaders,
+        }),
+        middleware,
+      );
+    } else {
+      this.app.on(methodName, fullPath, middleware);
+    }
 
     this.logger.log(`Mapped {${fullPath}, ${methodName}} route`);
   }
@@ -160,7 +184,7 @@ export class HonoControllerMapping extends ControllerMapping {
     hostArguments: HostArguments,
     err: unknown,
   ): Promise<Response> {
-    const responsePayload = (await this.exceptionHandler.handle(
+    const responsePayload = (await this.options.exceptionHandler.handle(
       err,
       hostArguments,
     )) ??
