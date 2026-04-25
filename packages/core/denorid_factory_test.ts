@@ -12,6 +12,7 @@ import type {
   MicroserviceApplicationContext,
 } from "./application_context.ts";
 import { DenoridFactory } from "./denorid_factory.ts";
+import { ExceptionHandler } from "./exceptions/handler.ts";
 import type { ExecutionContext } from "./guards/execution_context.ts";
 import type { ControllerMappingOptions, HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
@@ -75,9 +76,48 @@ describe("DenoridFactory", () => {
       try {
         await DenoridFactory.create(RootModule as Type);
 
+        const opts = createStub.calls[0].args[1] as {
+          useGlobals: boolean;
+          beforeInit: unknown;
+        };
+
         assertSpyCalls(createStub, 1);
         assertEquals(createStub.calls[0].args[0], RootModule);
-        assertEquals(createStub.calls[0].args[1], { useGlobals: true });
+        assertEquals(opts.useGlobals, true);
+        assertInstanceOf(opts.beforeInit, Function);
+      } finally {
+        createStub.restore();
+      }
+    });
+
+    it("beforeInit registers ExceptionHandler globally with the context as argument", async () => {
+      const createStub = stub(
+        InjectorContextImpl,
+        "create",
+        () => Promise.resolve(makeInjectorContext()),
+      );
+
+      try {
+        await DenoridFactory.create(RootModule as Type);
+
+        const opts = createStub.calls[0].args[1] as {
+          beforeInit: (ctx: InjectorContext) => void;
+        };
+
+        const registered: { provide: unknown; useValue: unknown }[] = [];
+        const mockCtx = {
+          registerGlobal: (
+            provider: { provide: unknown; useValue: unknown },
+          ) => {
+            registered.push(provider);
+          },
+        } as unknown as InjectorContext;
+
+        opts.beforeInit(mockCtx);
+
+        assertEquals(registered.length, 1);
+        assertEquals(registered[0].provide, ExceptionHandler);
+        assertInstanceOf(registered[0].useValue, ExceptionHandler);
       } finally {
         createStub.restore();
       }

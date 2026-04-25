@@ -1,7 +1,8 @@
 import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals, assertStrictEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { spy } from "@std/testing/mock";
+import { spy, stub } from "@std/testing/mock";
+import { ExceptionHandler } from "./exceptions/handler.ts";
 import { MicroserviceApplication } from "./microservice_application.ts";
 import {
   MessageController,
@@ -16,8 +17,15 @@ function makeInjectorContext(
     container: {
       getTokensByTag: () => taggedTokens,
     },
-    resolveInternal: (token: Type) =>
-      Promise.resolve(new (token as new () => unknown)()),
+    resolveInternal: (token: Type) => {
+      if ((token as unknown) === ExceptionHandler) {
+        const mockCtx = {
+          container: { getTokensByTag: () => [] },
+        } as unknown as InjectorContext;
+        return Promise.resolve(new ExceptionHandler(mockCtx));
+      }
+      return Promise.resolve(new (token as new () => unknown)());
+    },
     onApplicationBootstrap: () => Promise.resolve(),
     onBeforeApplicationShutdown: () => Promise.resolve(),
     onApplicationShutdown: () => Promise.resolve(),
@@ -76,16 +84,19 @@ describe("MicroserviceApplication", () => {
         server,
       );
 
-      const exHandler =
-        (app as unknown as Record<string, { register(): Promise<void> }>)[
-          "exceptionHandler"
-        ];
-      const registerSpy = spy(exHandler, "register");
+      using registerStub = stub(
+        ExceptionHandler.prototype,
+        "register",
+        () => Promise.resolve(),
+      );
 
       await app.listen();
 
+      const exHandler =
+        (app as unknown as Record<string, unknown>)["exceptionHandler"];
+
       assertEquals(bootstrapSpy.calls.length, 1);
-      assertEquals(registerSpy.calls.length, 1);
+      assertEquals(registerStub.calls.length, 1);
       assertEquals(calls["setExceptionHandler"].length, 1);
       assertStrictEquals(calls["setExceptionHandler"][0], exHandler);
       assertEquals(calls["setGlobalGuards"].length, 1);

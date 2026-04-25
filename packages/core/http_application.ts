@@ -1,11 +1,15 @@
 import type { InjectorContext, Type } from "@denorid/injector";
 import { Application, type ApplicationOptions } from "./application.ts";
 import type { HttpApplicationContext } from "./application_context.ts";
+import { ExceptionHandler } from "./exceptions/handler.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
 import type { CorsOptions } from "./http/cors.ts";
 
+/**
+ * Core HTTP-specific configuration options for an HTTP application.
+ */
 export interface HttpCoreApplicationOptions {
   /**
    * Port number for the HTTP server to listen on.
@@ -20,6 +24,15 @@ export interface HttpCoreApplicationOptions {
    * @default ""
    */
   basePath?: string;
+  /**
+   * CORS configuration for the HTTP server.
+   *
+   * Set to `true` to enable CORS with default options, `false` or omit to
+   * disable it, or provide a {@link CorsOptions} object for fine-grained
+   * control over allowed origins, methods, and headers.
+   *
+   * @default false
+   */
   cors?: boolean | CorsOptions;
 }
 
@@ -77,6 +90,8 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   public override async init(): Promise<void> {
     if (!this.initialized) {
       this.initialized = true;
+
+      this.exceptionHandler = await this.ctx.resolveInternal(ExceptionHandler);
 
       this.controller = await this.adapter.createControllerMapping({
         ctx: this.ctx,

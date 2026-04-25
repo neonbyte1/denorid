@@ -42,7 +42,7 @@ export class Application<
   protected readonly logger: LoggerService;
 
   /** Exception handler used to process unhandled errors. */
-  protected readonly exceptionHandler: ExceptionHandler;
+  protected exceptionHandler!: ExceptionHandler;
 
   /**
    * @param {Type} metaType - The root module class used to derive the logger name.
@@ -56,8 +56,6 @@ export class Application<
   ) {
     this.logger = options?.logger ??
       new Logger(metaType.name, { levels: options?.logLevel, timestamp: true });
-
-    this.exceptionHandler = new ExceptionHandler(ctx);
   }
 
   // We don't need to test the injector twice, so ignore the coverage here.
@@ -120,6 +118,8 @@ export class Application<
    */
   public async init(): Promise<void> {
     if (!this.initialized) {
+      this.exceptionHandler = await this.ctx.resolveInternal(ExceptionHandler);
+
       await this.ctx.onApplicationBootstrap();
 
       this.initialized = true;

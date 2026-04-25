@@ -6,6 +6,7 @@ import type {
   HttpApplicationContext,
   MicroserviceApplicationContext,
 } from "./application_context.ts";
+import { ExceptionHandler } from "./exceptions/handler.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
 import {
   HttpApplication,
@@ -73,7 +74,15 @@ export class DenoridFactory {
   ): Promise<ApplicationContext | HttpApplicationContext> {
     Logger.log("Bootstrapping application...", DenoridFactory.name);
 
-    const ctx = await InjectorContext.create(appClass, { useGlobals: true });
+    const ctx = await InjectorContext.create(appClass, {
+      useGlobals: true,
+      beforeInit: (ctx) => {
+        ctx.registerGlobal({
+          provide: ExceptionHandler,
+          useValue: new ExceptionHandler(ctx),
+        });
+      },
+    });
     const app = this.instantiateApplication(
       appClass,
       ctx,
