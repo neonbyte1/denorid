@@ -7,8 +7,8 @@
 </p>
 
 <p align="center">
-  <a href="https://jsr.io/@denorid/drizzle">
-    <img src="https://jsr.io/badges/@denorid/logger" alt="Denorid Logger version" />
+  <a href="https://jsr.io/@denorid/logger">
+    <img src="https://jsr.io/badges/@denorid/logger" alt="Denorid logger version" />
   </a>
 </p>
 
