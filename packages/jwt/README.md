@@ -66,7 +66,7 @@ function pemToBinary(pem: string): Uint8Array {
           ["verify"],
         );
 
-        // ES256 — swap algorithm: { name: "ECDSA", namedCurve: "P-256" }
+        // ES256 - swap algorithm: { name: "ECDSA", namedCurve: "P-256" }
 
         return { privateKey, publicKey, signOptions: { exp: "1h" } };
       },
@@ -102,19 +102,19 @@ export class AuthService {
   constructor(private readonly jwt: JwtService) {}
 
   async login(userId: string): Promise<string> {
-    // Sign — uses module defaults; override per-call via options
+    // Sign - uses module defaults; override per-call via options
     return this.jwt.sign({ sub: userId });
   }
 
   async validate(token: string): Promise<JWTPayload> {
-    // Verify — throws if invalid or expired
+    // Verify - throws if invalid or expired
     const { payload } = await this.jwt.verify(token);
 
     return payload;
   }
 
   async inspect(token: string): Promise<JWTPayload> {
-    // Decode without verifying signature — only for already-trusted input
+    // Decode without verifying signature - only for already-trusted input
     return this.jwt.decode(token);
   }
 }
@@ -124,7 +124,10 @@ Per-call key material overrides the module default:
 
 ```ts
 // Override secret for a single sign
-const token = await this.jwt.sign({ sub: "123" }, { secret: "other-secret", exp: "15m" });
+const token = await this.jwt.sign({ sub: "123" }, {
+  secret: "other-secret",
+  exp: "15m",
+});
 
 // Override public key for a single verify
 const { payload } = await this.jwt.verify(token, { publicKey: externalKey });
@@ -132,4 +135,5 @@ const { payload } = await this.jwt.verify(token, { publicKey: externalKey });
 
 ## License
 
-The [@denorid/jwt](https://github.com/neonbyte1/denorid) package is [MIT licensed](../../LICENSE.md).
+The [@denorid/jwt](https://github.com/neonbyte1/denorid) package is
+[MIT licensed](../../LICENSE.md).

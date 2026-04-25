@@ -1,5 +1,5 @@
 /**
- * Guards — request authorization primitives for Denorid.
+ * Guards - request authorization primitives for Denorid.
  *
  * A guard is evaluated before a route handler is invoked and decides whether
  * the current request should be allowed to proceed. Guards can be applied to

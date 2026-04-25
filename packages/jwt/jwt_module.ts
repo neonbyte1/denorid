@@ -16,7 +16,7 @@ import { JwtService } from "./jwt_service.ts";
  * Async configuration options for {@link JwtModule}.
  *
  * Use this interface with {@link JwtModule.forRootAsync} when module options must be resolved
- * asynchronously — e.g. fetched from a config service or environment at startup.
+ * asynchronously - e.g. fetched from a config service or environment at startup.
  */
 export interface JwtModuleAsyncOptions extends Pick<ModuleMetadata, "imports"> {
   /** When `true`, registers the JWT module as a global provider. */

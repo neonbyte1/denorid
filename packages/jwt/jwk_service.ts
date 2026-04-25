@@ -18,7 +18,7 @@ export interface JwkMetadata {
 /**
  * Safe-to-expose public JWK representation with enforced `kid`, `use`, and `alg` fields.
  *
- * Intended for publishing via a JWKS endpoint — the private key fields are never included.
+ * Intended for publishing via a JWKS endpoint - the private key fields are never included.
  */
 export type PublicJwkMetadata =
   & Omit<JWK, "kid" | "use" | "alg">

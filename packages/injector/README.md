@@ -22,10 +22,10 @@ deno add jsr:@denorid/injector
 
 ```ts
 import {
-  Injectable,
   Inject,
-  Module,
+  Injectable,
   InjectorContext,
+  Module,
 } from "jsr:@denorid/injector";
 
 // Define a service
@@ -69,4 +69,5 @@ await ctx.close();
 
 ## License
 
-The [@denorid/injector](https://github.com/neonbyte1/denorid) package is [MIT licensed](../../LICENSE.md).
+The [@denorid/injector](https://github.com/neonbyte1/denorid) package is
+[MIT licensed](../../LICENSE.md).

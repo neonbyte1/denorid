@@ -850,7 +850,7 @@ export class Container {
    * 2. Exported providers from child containers (imported modules)
    * 3. Global providers
    *
-   * Transient providers are cached per `contextId` — the same `contextId`
+   * Transient providers are cached per `contextId` - the same `contextId`
    * returns the same instance, while a different `contextId` produces a fresh one.
    * All other modes use their standard caching strategy.
    *

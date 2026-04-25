@@ -58,7 +58,7 @@ export class ExceptionHandler {
    * Discovers and registers all exception filters found in the DI container.
    *
    * Iterates over every token tagged with `EXCEPTION_FILTER`, reads its
-   * decorator metadata and—when valid—resolves the instance and inserts it
+   * decorator metadata and-when valid-resolves the instance and inserts it
    * into the internal priority-sorted cache.
    *
    * @returns {Promise<void>} Resolves once all filters are registered.

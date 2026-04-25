@@ -1,5 +1,5 @@
 /**
- * HTTP primitives for the Denorid framework — controllers, route decorators,
+ * HTTP primitives for the Denorid framework - controllers, route decorators,
  * status codes, and the request-context abstraction.
  *
  * @example

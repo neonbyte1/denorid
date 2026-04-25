@@ -8,7 +8,7 @@ const INTEGER_PATTERN = /^-?\d+$/;
  * Pipe that coerces a route argument to an integer `number`.
  *
  * Extends {@linkcode ParseFloatPipe} but restricts string inputs to whole
- * integers — fractional strings such as `"1.5"` are rejected. Numeric values
+ * integers - fractional strings such as `"1.5"` are rejected. Numeric values
  * that are not finite are also rejected.
  * When `options.optional` is `true`, `null` and `undefined` are passed
  * through unchanged.

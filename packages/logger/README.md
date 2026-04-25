@@ -32,4 +32,5 @@ logger.error("Something went wrong");
 
 ## License
 
-The [@denorid/logger](https://github.com/neonbyte1/denorid) package is [MIT licensed](../../LICENSE.md).
+The [@denorid/logger](https://github.com/neonbyte1/denorid) package is
+[MIT licensed](../../LICENSE.md).

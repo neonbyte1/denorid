@@ -1,7 +1,7 @@
 /**
  * @module
  *
- * JWT package for Denorid — provides JSON Web Token signing, verification, and decoding
+ * JWT package for Denorid - provides JSON Web Token signing, verification, and decoding
  * together with JWK key-pair lifecycle management, wired up via the Denorid injector.
  *
  * ### Quick start
@@ -22,7 +22,7 @@
  *
  * | Symbol | Description |
  * |---|---|
- * | {@link JwtModule} | Denorid module — register with `forRoot` or `forRootAsync` |
+ * | {@link JwtModule} | Denorid module - register with `forRoot` or `forRootAsync` |
  * | {@link JwtService} | Sign, verify, and decode JWTs |
  * | {@link JwkService} | Generate and load RS256 JWK key pairs |
  * | {@link JwtModuleOptions} | Module-level configuration interface |

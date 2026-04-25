@@ -9,7 +9,7 @@ import type {
 /** Supported cryptographic key representations for signing and verification. */
 export type KeyType = CryptoKey | KeyObject | JWK | Uint8Array<ArrayBuffer>;
 
-/** Accepted secret formats — either a raw string or a structured {@link KeyType}. */
+/** Accepted secret formats - either a raw string or a structured {@link KeyType}. */
 export type SecretType = string | KeyType;
 
 /** Discriminates between the public and private halves of an asymmetric key pair. */
@@ -19,7 +19,7 @@ export type KeyScope = "publicKey" | "privateKey";
  * Options controlling JWT payload claims and signing behaviour for a single sign operation.
  *
  * All standard JWT registered claims are optional; omitted claims are not included in the token.
- * `secret` and `privateKey` are mutually exclusive — use `secret` for HMAC algorithms and
+ * `secret` and `privateKey` are mutually exclusive - use `secret` for HMAC algorithms and
  * `privateKey` for asymmetric algorithms.
  */
 export interface JwtSignOptions {

@@ -49,4 +49,5 @@ const users = await drizzle
 
 ## License
 
-The [@denorid/drizzle](https://github.com/neonbyte1/denorid) package is [MIT licensed](../../LICENSE.md).
+The [@denorid/drizzle](https://github.com/neonbyte1/denorid) package is
+[MIT licensed](../../LICENSE.md).

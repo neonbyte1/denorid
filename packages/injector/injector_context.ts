@@ -269,7 +269,7 @@ export class InjectorContext implements InjectorContextLifecycle {
    * Resolve a dependency within a named context.
    *
    * Applies the same export checks as {@linkcode resolve}. Transient providers
-   * are cached per `contextId` — the same `contextId` returns the same instance,
+   * are cached per `contextId` - the same `contextId` returns the same instance,
    * while a different `contextId` produces a fresh one.
    *
    * Use {@linkcode clearContext} to release cached instances when a context ends.

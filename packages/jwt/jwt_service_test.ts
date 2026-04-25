@@ -75,7 +75,7 @@ describe("JwtService", () => {
     });
   });
 
-  describe("sign — optional JWT claims", () => {
+  describe("sign - optional JWT claims", () => {
     it("sets all optional claims when provided", async () => {
       const svc = createService();
       const nbfDate = new Date(Date.now() - 5000);
@@ -148,7 +148,7 @@ describe("JwtService", () => {
     });
   });
 
-  describe("getSecretKey — error paths", () => {
+  describe("getSecretKey - error paths", () => {
     it("throws WrongKeyError (privateKey scope) when no secret or key on sign", () => {
       const svc = createService(undefined);
       assertThrows(() => svc.sign({}), WrongKeyError);
