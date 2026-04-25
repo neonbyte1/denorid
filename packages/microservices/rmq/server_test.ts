@@ -424,6 +424,29 @@ describe(RmqServer.name, () => {
       await server.close();
     });
 
+    it("falls back to empty string pattern when headers has no pattern key", async () => {
+      const ch = makeChannel();
+      const conn = makeConnection(ch);
+      using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
+
+      const server = new RmqServer({ noAck: true });
+      const stop = await runServer(server, conn);
+
+      const msg = {
+        properties: {
+          headers: {},
+          correlationId: undefined,
+          replyTo: undefined,
+        },
+        content: makeBody(null),
+      };
+      await ch._msgHandler?.(msg);
+      await new Promise<void>((r) => setTimeout(r, 10));
+
+      stop();
+      await server.close();
+    });
+
     it("ignores null messages from consumer", async () => {
       const ch = makeChannel();
       const conn = makeConnection(ch);
@@ -442,6 +465,24 @@ describe(RmqServer.name, () => {
   });
 
   describe("listen() - configuration branches", () => {
+    it("passes explicit queueOptions.durable to assertQueue", async () => {
+      let capturedOpts: unknown;
+      const ch = makeChannel();
+      ch.assertQueue = (_name, opts) => {
+        capturedOpts = opts;
+        return Promise.resolve({ queue: "q" });
+      };
+      const conn = makeConnection(ch);
+      using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
+
+      const server = new RmqServer({ queueOptions: { durable: false } });
+      const stop = await runServer(server, conn);
+
+      assertEquals((capturedOpts as { durable: boolean }).durable, false);
+      stop();
+      await server.close();
+    });
+
     it("skips assertQueue when noAssert is true", async () => {
       let assertQueueCalled = false;
       const ch = makeChannel();
