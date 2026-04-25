@@ -5,6 +5,7 @@ import {
   RequestContext,
 } from "@denorid/core";
 import type { Context, HonoRequest } from "@hono/hono";
+import { getConnInfo } from "@hono/hono/deno";
 
 export class HonoRequestContext<Dto = unknown> extends RequestContext<Dto> {
   public constructor(
@@ -13,6 +14,35 @@ export class HonoRequestContext<Dto = unknown> extends RequestContext<Dto> {
     dto: Dto,
   ) {
     super(contextId, dto as InferIfZod<Dto>);
+  }
+
+  /**
+   * @inheritdoc
+   */
+  public override get ip(): string {
+    const cfIp = this.header("cf-connecting-ip");
+    if (cfIp) {
+      return cfIp;
+    }
+
+    const xff = this.header("x-forwarded-for");
+    if (xff) {
+      const ips = xff.split(",").map((ip) => ip.trim());
+
+      if (ips.length > 0) {
+        return ips[0];
+      }
+    }
+
+    const realIp = this.header("x-real-ip");
+
+    if (realIp) {
+      return realIp;
+    }
+
+    const conn = getConnInfo(this.ctx);
+
+    return conn?.remote?.address ?? "0.0.0.0";
   }
 
   /**

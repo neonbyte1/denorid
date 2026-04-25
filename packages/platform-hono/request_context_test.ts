@@ -8,12 +8,14 @@ describe("HonoRequestContext", () => {
   // deno-lint-ignore no-explicit-any
   type AnyFn = (...args: any[]) => any;
 
-  const makeCtx = (req: {
-    header: AnyFn;
-    queries: AnyFn;
-    query: AnyFn;
-    param: AnyFn;
-  }): Context => ({ req } as unknown as Context);
+  const makeCtx = (
+    req: { header: AnyFn; queries: AnyFn; query: AnyFn; param: AnyFn },
+    env?: unknown,
+  ): Context => ({ req, env } as unknown as Context);
+
+  const makeHeaderFn =
+    (values: Record<string, string | undefined>): AnyFn => (key?: string) =>
+      key !== undefined ? values[key] : ({} as Record<string, string>);
 
   describe("constructor", () => {
     it("exposes the dto on the base class", () => {
@@ -93,6 +95,93 @@ describe("HonoRequestContext", () => {
       const requestCtx = new HonoRequestContext(ctx, "", undefined);
 
       assertEquals(requestCtx.header("x-missing"), undefined);
+    });
+  });
+
+  describe("ip", () => {
+    const noopReq = {
+      queries: () => ({}),
+      query: () => undefined,
+      param: () => ({}),
+    };
+
+    it("returns the cf-connecting-ip header when present", () => {
+      const ctx = makeCtx(
+        {
+          ...noopReq,
+          header: makeHeaderFn({ "cf-connecting-ip": "203.0.113.1" }),
+        },
+        { remoteAddr: { hostname: "10.0.0.1", port: 80, transport: "tcp" } },
+      );
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
+
+      assertEquals(requestCtx.ip, "203.0.113.1");
+    });
+
+    it("returns the first IP from x-forwarded-for when cf-connecting-ip is absent", () => {
+      const ctx = makeCtx(
+        {
+          ...noopReq,
+          header: makeHeaderFn({ "x-forwarded-for": "10.0.0.2, 10.0.0.3" }),
+        },
+        { remoteAddr: { hostname: "10.0.0.1", port: 80, transport: "tcp" } },
+      );
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
+
+      assertEquals(requestCtx.ip, "10.0.0.2");
+    });
+
+    it("trims whitespace from each IP in x-forwarded-for", () => {
+      const ctx = makeCtx(
+        {
+          ...noopReq,
+          header: makeHeaderFn({
+            "x-forwarded-for": "  172.16.0.5  ,  172.16.0.6  ",
+          }),
+        },
+        { remoteAddr: { hostname: "10.0.0.1", port: 80, transport: "tcp" } },
+      );
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
+
+      assertEquals(requestCtx.ip, "172.16.0.5");
+    });
+
+    it("returns x-real-ip when cf-connecting-ip and x-forwarded-for are both absent", () => {
+      const ctx = makeCtx(
+        { ...noopReq, header: makeHeaderFn({ "x-real-ip": "192.168.0.99" }) },
+        { remoteAddr: { hostname: "10.0.0.1", port: 80, transport: "tcp" } },
+      );
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
+
+      assertEquals(requestCtx.ip, "192.168.0.99");
+    });
+
+    it("returns the remote address from getConnInfo when all proxy headers are absent", () => {
+      const ctx = makeCtx(
+        { ...noopReq, header: () => undefined },
+        {
+          remoteAddr: { hostname: "192.168.1.42", port: 443, transport: "tcp" },
+        },
+      );
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
+
+      assertEquals(requestCtx.ip, "192.168.1.42");
+    });
+
+    it("returns '0.0.0.0' when all proxy headers are absent and the remote address is undefined", () => {
+      const ctx = makeCtx(
+        { ...noopReq, header: () => undefined },
+        {
+          remoteAddr: {
+            hostname: undefined,
+            port: undefined,
+            transport: "tcp",
+          },
+        },
+      );
+      const requestCtx = new HonoRequestContext(ctx, "", undefined);
+
+      assertEquals(requestCtx.ip, "0.0.0.0");
     });
   });
 

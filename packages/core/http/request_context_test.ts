@@ -12,6 +12,10 @@ describe("abstract RequestContext class", () => {
       super("", undefined);
     }
 
+    public override get ip(): string {
+      throw new Error("Method not implemented");
+    }
+
     public override getUnderlying<T = unknown>(): T {
       throw new Error("Method not implemented");
     }

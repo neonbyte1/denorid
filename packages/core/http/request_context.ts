@@ -31,6 +31,17 @@ export abstract class RequestContext<Dto = unknown> {
   ) {}
 
   /**
+   * Returns the IP address of the remote client that sent the request.
+   *
+   * The concrete value depends on the adapter implementation and may reflect a
+   * proxy-forwarded address (e.g. from `X-Forwarded-For`) rather than the
+   * direct socket address.
+   *
+   * @return {string} The client IP address.
+   */
+  public abstract get ip(): string;
+
+  /**
    * Returns the underlying request type. The return value depends on the
    * implementation, for Hono it's `HonoRequest` from '@hono/hono'.
    *
