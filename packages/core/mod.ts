@@ -35,5 +35,6 @@ export {
   type HttpCoreApplicationOptions,
   type InternalHttpApplicationOptions,
 } from "./http_application.ts";
+export * from "./microservices/mod.ts";
 export * from "./pipes/mod.ts";
 export * from "./type_guards.ts";

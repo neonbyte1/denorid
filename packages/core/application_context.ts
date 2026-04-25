@@ -72,11 +72,7 @@ export interface ApplicationContext {
   close(): Promise<void>;
 }
 
-/**
- * Interface defining the `useGlobalGuards` function that must be implemented by
- * an application.
- */
-export interface GlobalGuardContext {
+interface GlobalUsageContext {
   /**
    * Registers one or more guards to be applied globally across all routes.
    *
@@ -88,11 +84,19 @@ export interface GlobalGuardContext {
 }
 
 export interface HttpApplicationContext
-  extends ApplicationContext, GlobalGuardContext {
+  extends ApplicationContext, GlobalUsageContext {
   /**
    * Starts the HTTP server and begins accepting incoming requests.
    *
    * @todo: return a promise instead
    */
   listen(): void;
+}
+
+export interface MicroserviceApplicationContext
+  extends ApplicationContext, GlobalUsageContext {
+  /**
+   * Starts the microservice.
+   */
+  listen(): Promise<void>;
 }

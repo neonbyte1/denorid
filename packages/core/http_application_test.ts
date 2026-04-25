@@ -60,7 +60,7 @@ describe("HttpApplication", () => {
       assertEquals(app["initialized"], true);
     });
 
-    it("is idempotent — second call skips all work", async () => {
+    it("is idempotent - second call skips all work", async () => {
       const adapter = makeHttpAdapter();
       const createMappingSpy = spy(adapter, "createControllerMapping");
       const app = makeApp({ adapter });

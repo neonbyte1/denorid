@@ -7,12 +7,17 @@ import { assertEquals, assertInstanceOf } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { assertSpyCalls, spy, stub } from "@std/testing/mock";
 import { Application } from "./application.ts";
-import type { HttpApplicationContext } from "./application_context.ts";
+import type {
+  HttpApplicationContext,
+  MicroserviceApplicationContext,
+} from "./application_context.ts";
 import { DenoridFactory } from "./denorid_factory.ts";
 import type { ExceptionHandler } from "./exceptions/handler.ts";
 import type { ExecutionContext } from "./guards/execution_context.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
+import { MicroserviceApplication } from "./microservice_application.ts";
+import { MicroserviceServer } from "./microservices/server.ts";
 import { HttpApplication } from "./http_application.ts";
 
 describe("DenoridFactory", () => {
@@ -252,6 +257,53 @@ describe("DenoridFactory", () => {
 
       assertSpyCalls(registerSpy, 1);
       assertEquals(registerSpy.calls[0].args[0], "/v1");
+    });
+  });
+
+  describe("create (microservice application)", () => {
+    class StubMicroserviceServer extends MicroserviceServer {
+      public override listen(): Promise<void> {
+        return Promise.resolve();
+      }
+      public override close(): Promise<void> {
+        return Promise.resolve();
+      }
+      public override setExceptionHandler(): void {}
+      public override registerHandlers(): void {}
+      public override setGlobalGuards(): void {}
+    }
+
+    it("returns a MicroserviceApplication when passed a MicroserviceServer", async () => {
+      using _s = stub(
+        InjectorContextImpl,
+        "create",
+        () => Promise.resolve(makeInjectorContext()),
+      );
+
+      const app = await DenoridFactory.create(
+        RootModule as Type,
+        new StubMicroserviceServer({}),
+      );
+
+      assertInstanceOf(app, MicroserviceApplication);
+    });
+
+    it("exposes a listen() method on the returned context", async () => {
+      using _s = stub(
+        InjectorContextImpl,
+        "create",
+        () => Promise.resolve(makeInjectorContext()),
+      );
+
+      const app = await DenoridFactory.create(
+        RootModule as Type,
+        new StubMicroserviceServer({}),
+      );
+
+      assertEquals(
+        typeof (app as MicroserviceApplicationContext).listen,
+        "function",
+      );
     });
   });
 });

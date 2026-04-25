@@ -6,3 +6,11 @@ export const EXCEPTION_FILTER = Symbol.for("denorid.exception_filter");
 export const EXCEPTION_FILTER_METADATA = Symbol.for(
   "denorid.exception_filter.metadata",
 );
+
+export const MESSAGE_PATTERN_METADATA: unique symbol = Symbol.for(
+  "denorid.message_pattern",
+);
+
+export const MESSAGE_CONTROLLER_METADATA: unique symbol = Symbol.for(
+  "denorid.message_controller",
+);

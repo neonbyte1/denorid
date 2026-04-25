@@ -4,6 +4,7 @@ import { Application, type ApplicationOptions } from "./application.ts";
 import type {
   ApplicationContext,
   HttpApplicationContext,
+  MicroserviceApplicationContext,
 } from "./application_context.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
 import {
@@ -11,6 +12,8 @@ import {
   type HttpApplicationOptions,
   type InternalHttpApplicationOptions,
 } from "./http_application.ts";
+import { MicroserviceApplication } from "./microservice_application.ts";
+import { MicroserviceServer } from "./microservices/server.ts";
 
 /**
  * Factory for creating and bootstrapping Denorid application instances.
@@ -54,12 +57,18 @@ export class DenoridFactory {
     options: InternalHttpApplicationOptions,
   ): Promise<HttpApplicationContext>;
 
+  public static create<T extends object>(
+    appClass: Type,
+    server: MicroserviceServer<T>,
+  ): Promise<MicroserviceApplicationContext>;
+
   public static async create(
     appClass: Type,
-    optionsOrAdapter?:
+    arg1?:
       | ApplicationOptions
       | HttpAdapter
-      | InternalHttpApplicationOptions,
+      | InternalHttpApplicationOptions
+      | MicroserviceServer,
     options?: HttpApplicationOptions,
   ): Promise<ApplicationContext | HttpApplicationContext> {
     Logger.log("Bootstrapping application...", DenoridFactory.name);
@@ -68,7 +77,7 @@ export class DenoridFactory {
     const app = this.instantiateApplication(
       appClass,
       ctx,
-      optionsOrAdapter,
+      arg1,
       options,
     );
 
@@ -81,11 +90,17 @@ export class DenoridFactory {
     optionsOrAdapter?:
       | ApplicationOptions
       | HttpAdapter
-      | InternalHttpApplicationOptions,
+      | InternalHttpApplicationOptions
+      | MicroserviceServer,
     options?: HttpApplicationOptions,
-  ): ApplicationContext | HttpApplicationContext {
+  ):
+    | ApplicationContext
+    | HttpApplicationContext
+    | MicroserviceApplicationContext {
     if (optionsOrAdapter) {
-      if ("adapter" in optionsOrAdapter) {
+      if (optionsOrAdapter instanceof MicroserviceServer) {
+        return new MicroserviceApplication(appClass, ctx, {}, optionsOrAdapter);
+      } else if ("adapter" in optionsOrAdapter) {
         return new HttpApplication(appClass, ctx, optionsOrAdapter);
       } else if ("createControllerMapping" in optionsOrAdapter) {
         return new HttpApplication(appClass, ctx, {
