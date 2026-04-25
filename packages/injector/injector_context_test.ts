@@ -679,6 +679,135 @@ describe("InjectorContext", () => {
     });
   });
 
+  describe("beforeInit", () => {
+    it("should call sync beforeInit before onModuleInit hooks", async () => {
+      const order: string[] = [];
+
+      @Module({})
+      class AppModule implements OnModuleInit {
+        onModuleInit(): void {
+          order.push("onModuleInit");
+        }
+      }
+
+      await InjectorContext.create(AppModule, {
+        beforeInit: () => {
+          order.push("beforeInit");
+        },
+      });
+
+      assertEquals(order, ["beforeInit", "onModuleInit"]);
+    });
+
+    it("should await async beforeInit before onModuleInit hooks", async () => {
+      const order: string[] = [];
+
+      @Module({})
+      class AppModule implements OnModuleInit {
+        onModuleInit(): void {
+          order.push("onModuleInit");
+        }
+      }
+
+      await InjectorContext.create(AppModule, {
+        beforeInit: async () => {
+          await Promise.resolve();
+          order.push("beforeInit");
+        },
+      });
+
+      assertEquals(order, ["beforeInit", "onModuleInit"]);
+    });
+
+    it("should receive the constructed InjectorContext instance", async () => {
+      let receivedCtx: InjectorContext | undefined;
+
+      @Module({})
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule, {
+        beforeInit: (c) => {
+          receivedCtx = c;
+        },
+      });
+
+      assertEquals(receivedCtx, ctx);
+    });
+
+    it("should allow registerGlobal so provider is injectable during onModuleInit", async () => {
+      const LATE_TOKEN = Symbol("LATE_TOKEN");
+      let resolvedValue: string | undefined;
+
+      @Injectable()
+      class Consumer {
+        @Inject(LATE_TOKEN)
+        value!: string;
+      }
+
+      @Module({ providers: [Consumer] })
+      class AppModule implements OnModuleInit {
+        @Inject(Consumer)
+        consumer!: Consumer;
+
+        onModuleInit(): void {
+          resolvedValue = this.consumer.value;
+        }
+      }
+
+      await InjectorContext.create(AppModule, {
+        beforeInit: (ctx) => {
+          ctx.registerGlobal({ provide: LATE_TOKEN, useValue: "injected" });
+        },
+      });
+
+      assertEquals(resolvedValue, "injected");
+    });
+  });
+
+  describe("registerGlobal", () => {
+    it("should return this for fluent chaining", async () => {
+      @Module({})
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const result = ctx.registerGlobal({ provide: "TOKEN", useValue: "val" });
+
+      assertEquals(result, ctx);
+    });
+
+    it("should make a single provider resolvable from any module container", async () => {
+      const RUNTIME_TOKEN = Symbol("RUNTIME_TOKEN");
+
+      @Module({})
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      ctx.registerGlobal({ provide: RUNTIME_TOKEN, useValue: "runtime" });
+
+      const value = await ctx.resolveInternal<string>(RUNTIME_TOKEN);
+      assertEquals(value, "runtime");
+    });
+
+    it("should accept multiple providers in a single call", async () => {
+      const TOKEN_A = Symbol("TOKEN_A");
+      const TOKEN_B = Symbol("TOKEN_B");
+
+      @Module({})
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      ctx.registerGlobal(
+        { provide: TOKEN_A, useValue: "a" },
+        { provide: TOKEN_B, useValue: "b" },
+      );
+
+      const a = await ctx.resolveInternal<string>(TOKEN_A);
+      const b = await ctx.resolveInternal<string>(TOKEN_B);
+      assertEquals(a, "a");
+      assertEquals(b, "b");
+    });
+  });
+
   describe("InjectorContext buildContainer cache", () => {
     it("should reuse containers for shared imports", async () => {
       @Module({ providers: [SimpleService], exports: [SimpleService] })

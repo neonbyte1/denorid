@@ -34,6 +34,15 @@ export interface InjectorContextOptions {
    * @default true
    */
   useGlobals?: boolean;
+
+  /**
+   * Called after the context is constructed but before any {@linkcode OnModuleInit}
+   * hooks run. Use this to register global providers that must be injectable into
+   * module constructors.
+   *
+   * @param {InjectorContext} ctx - The freshly constructed (not yet initialised) context.
+   */
+  beforeInit?: (ctx: InjectorContext) => void | Promise<void>;
 }
 
 /**
@@ -60,12 +69,14 @@ export class InjectorContext implements InjectorContextLifecycle {
 
   /**
    * @param {Container} container - The root container managing all providers and children
+   * @param {Container} globalContainer - The shared global container accessible by all module containers
    * @param {CompiledModule} rootModule - The compiled root module context
    * @param {CompiledModule[]} modulesInOrder - The list of copmiled modules in resolution order
    * @param {Map<Type, ModuleRef>} moduleRefs - A map from module class types to their module references
    */
   private constructor(
     public readonly container: Container,
+    private readonly globalContainer: Container,
     protected readonly rootModule: CompiledModule,
     protected readonly modulesInOrder: CompiledModule[],
     protected readonly moduleRefs: Map<Type, ModuleRef>,
@@ -153,6 +164,18 @@ export class InjectorContext implements InjectorContextLifecycle {
       moduleRefs.set(mod.type, moduleRef);
     }
 
+    const context = new InjectorContext(
+      rootContainer,
+      globalContainer,
+      compiled,
+      modulesInOrder,
+      moduleRefs,
+    );
+
+    if (options?.beforeInit) {
+      await options.beforeInit(context);
+    }
+
     const initializedInstances = new Set<unknown>();
 
     const callOnModuleInit = async (instance: unknown) => {
@@ -191,12 +214,7 @@ export class InjectorContext implements InjectorContextLifecycle {
       });
     }
 
-    return new InjectorContext(
-      rootContainer,
-      compiled,
-      modulesInOrder,
-      moduleRefs,
-    );
+    return context;
   }
 
   /**
@@ -331,6 +349,19 @@ export class InjectorContext implements InjectorContextLifecycle {
    */
   public getHostModuleRef(): ModuleRef {
     return this.moduleRefs.get(this.rootModule.type)!;
+  }
+
+  /**
+   * Register providers into the shared global container, making them
+   * resolvable from any module in the context.
+   *
+   * @param {...Provider[]} providers - One or more providers to register globally.
+   * @returns {this}
+   */
+  public registerGlobal(...providers: Provider[]): this {
+    this.globalContainer.register(...providers);
+
+    return this;
   }
 
   /**
