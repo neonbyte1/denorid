@@ -46,8 +46,8 @@ function makeMockServer(): {
       calls["close"].push(true);
       await Promise.resolve();
     },
-    registerHandlers: (types: Type[], instances: unknown[]) => {
-      calls["registerHandlers"].push([types, instances]);
+    registerHandlers: (types: Type[], ctx: InjectorContext) => {
+      calls["registerHandlers"].push([types, ctx]);
     },
     setExceptionHandler: (h: unknown) => {
       calls["setExceptionHandler"].push(h);
@@ -131,7 +131,7 @@ describe("MicroserviceApplication", () => {
       await app.listen();
 
       assertEquals(calls["registerHandlers"].length, 1);
-      const [types] = calls["registerHandlers"][0] as [Type[], unknown[]];
+      const [types] = calls["registerHandlers"][0] as [Type[], InjectorContext];
       assertEquals(types.includes(TestCtrl as unknown as Type), true);
     });
 
@@ -148,12 +148,8 @@ describe("MicroserviceApplication", () => {
 
       await app.listen();
 
-      const [types, instances] = calls["registerHandlers"][0] as [
-        Type[],
-        unknown[],
-      ];
+      const [types] = calls["registerHandlers"][0] as [Type[], InjectorContext];
       assertEquals(types.length, 0);
-      assertEquals(instances.length, 0);
     });
   });
 

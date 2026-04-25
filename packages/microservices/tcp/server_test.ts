@@ -4,7 +4,7 @@ import {
   MessagePattern,
   serializePattern,
 } from "@denorid/core/microservices";
-import type { Type } from "@denorid/injector";
+import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals } from "@std/assert";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
@@ -14,6 +14,16 @@ import { TcpSerializer } from "./serializer.ts";
 import { TcpServer } from "./server.ts";
 
 const serializer = new TcpSerializer();
+
+function makeCtx(type: Type, instance: unknown): InjectorContext {
+  return {
+    runInRequestScopeAsync: (_id: string, fn: () => Promise<unknown>) => fn(),
+    getHostModuleRef: () => ({
+      get: (_type: Type, _opts: unknown) => Promise.resolve(instance),
+    }),
+    clearContext: () => {},
+  } as unknown as InjectorContext;
+}
 
 interface FakeConn {
   written: Uint8Array[];
@@ -146,7 +156,10 @@ describe("TcpServer", () => {
       );
 
       const server = new TcpServer({ host: "127.0.0.1", port: 9999 });
-      server.registerHandlers([Ctrl as unknown as Type], [new Ctrl()]);
+      server.registerHandlers(
+        [Ctrl as unknown as Type],
+        makeCtx(Ctrl as unknown as Type, new Ctrl()),
+      );
 
       const listenPromise = server.listen();
       await new Promise<void>((r) => setTimeout(r, 30));
@@ -186,7 +199,10 @@ describe("TcpServer", () => {
       );
 
       const server = new TcpServer({});
-      server.registerHandlers([ErrCtrl as unknown as Type], [new ErrCtrl()]);
+      server.registerHandlers(
+        [ErrCtrl as unknown as Type],
+        makeCtx(ErrCtrl as unknown as Type, new ErrCtrl()),
+      );
 
       const listenPromise = server.listen();
       await new Promise<void>((r) => setTimeout(r, 30));
@@ -223,9 +239,10 @@ describe("TcpServer", () => {
       );
 
       const server = new TcpServer({});
-      server.registerHandlers([StrErrCtrl as unknown as Type], [
-        new StrErrCtrl(),
-      ]);
+      server.registerHandlers(
+        [StrErrCtrl as unknown as Type],
+        makeCtx(StrErrCtrl as unknown as Type, new StrErrCtrl()),
+      );
 
       const listenPromise = server.listen();
       await new Promise<void>((r) => setTimeout(r, 30));
@@ -264,7 +281,10 @@ describe("TcpServer", () => {
       );
 
       const server = new TcpServer({});
-      server.registerHandlers([EvCtrl as unknown as Type], [new EvCtrl()]);
+      server.registerHandlers(
+        [EvCtrl as unknown as Type],
+        makeCtx(EvCtrl as unknown as Type, new EvCtrl()),
+      );
 
       const listenPromise = server.listen();
       await new Promise<void>((r) => setTimeout(r, 30));
@@ -324,7 +344,10 @@ describe("TcpServer", () => {
       );
 
       const server = new TcpServer({});
-      server.registerHandlers([Ctrl as unknown as Type], [new Ctrl()]);
+      server.registerHandlers(
+        [Ctrl as unknown as Type],
+        makeCtx(Ctrl as unknown as Type, new Ctrl()),
+      );
 
       const listenPromise = server.listen();
       await new Promise<void>((r) => setTimeout(r, 30));

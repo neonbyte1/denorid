@@ -1,8 +1,8 @@
 import type { InjectorContext, Type } from "@denorid/injector";
+import { MESSAGE_CONTROLLER_METADATA } from "./_constants.ts";
 import { Application, type ApplicationOptions } from "./application.ts";
 import type { MicroserviceApplicationContext } from "./application_context.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
-import { MESSAGE_CONTROLLER_METADATA } from "./_constants.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
 
 export class MicroserviceApplication extends Application
@@ -33,7 +33,7 @@ export class MicroserviceApplication extends Application
     await this.exceptionHandler.register();
     this.server.setExceptionHandler(this.exceptionHandler);
     this.server.setGlobalGuards([...this.globalGuards]);
-    await this.discoverHandlers();
+    this.discoverHandlers();
     await this.server.listen();
   }
 
@@ -44,19 +44,10 @@ export class MicroserviceApplication extends Application
     }
   }
 
-  private async discoverHandlers(): Promise<void> {
+  private discoverHandlers(): void {
     const tokens = this.ctx.container.getTokensByTag(
       MESSAGE_CONTROLLER_METADATA,
     );
-    const types: Type[] = [];
-    const instances: unknown[] = [];
-
-    for (const token of tokens) {
-      const instance = await this.ctx.resolveInternal(token);
-      types.push(token as Type);
-      instances.push(instance);
-    }
-
-    this.server.registerHandlers(types, instances);
+    this.server.registerHandlers(tokens as Type[], this.ctx);
   }
 }

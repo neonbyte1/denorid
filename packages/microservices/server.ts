@@ -10,17 +10,15 @@ import {
   type PatternType,
   serializePattern,
 } from "@denorid/core";
-import type { Type } from "@denorid/injector";
+import type { InjectorContext, Type } from "@denorid/injector";
 import { Logger, type LoggerService } from "@denorid/logger";
 import { MicroserviceExecutionContext } from "./execution_context.ts";
 import { MicroserviceHostArguments } from "./host_arguments.ts";
 
 /**
- * A resolved handler entry mapping a serialized pattern to a controller method.
+ * A handler entry mapping a serialized pattern to a controller method.
  */
 export interface HandlerRecord {
-  /** The resolved controller instance. */
-  instance: unknown;
   /** The method name to invoke on the instance. */
   methodName: string | symbol;
   /** Whether this handler expects a response (`"message"`) or not (`"event"`). */
@@ -47,6 +45,7 @@ export abstract class Server<
   /** Serialized-pattern → handler map populated by {@link registerHandlers}. */
   protected readonly handlers: Map<string, HandlerRecord> = new Map();
 
+  private ctx!: InjectorContext;
   private exceptionHandler?: ExceptionHandler;
   private globalGuards: (CanActivate | CanActivateFn)[] = [];
 
@@ -69,15 +68,14 @@ export abstract class Server<
   /**
    * @inheritdoc
    */
-  public override registerHandlers(types: Type[], instances: unknown[]): void {
-    for (let i = 0; i < types.length; ++i) {
-      const type = types[i];
-      const instance = instances[i];
+  public override registerHandlers(types: Type[], ctx: InjectorContext): void {
+    this.ctx = ctx;
+
+    for (const type of types) {
       const mappings = getMessageMappingMetadata(type) ?? [];
 
       for (const mapping of mappings) {
         this.handlers.set(serializePattern(mapping.pattern), {
-          instance,
           methodName: mapping.name,
           type: mapping.type,
           controllerType: type,
@@ -101,50 +99,64 @@ export abstract class Server<
       throw new Error(`No handler registered for pattern "${pattern}"`);
     }
 
-    const method =
-      (record.instance as Record<string | symbol, unknown>)[record.methodName];
+    const contextId = crypto.randomUUID();
 
-    if (typeof method !== "function") {
-      throw new Error(
-        `Handler "${String(record.methodName)}" is not a function`,
-      );
-    }
+    return await this.ctx.runInRequestScopeAsync(contextId, async () => {
+      try {
+        const instance = await this.ctx.getHostModuleRef().get(
+          record.controllerType,
+          { contextId, strict: false },
+        );
 
-    if (this.globalGuards.length > 0) {
-      const executionCtx = new MicroserviceExecutionContext(
-        pattern,
-        data,
-        record.controllerType,
-        method as unknown as HttpRouteFn,
-      );
+        const method =
+          (instance as Record<string | symbol, unknown>)[record.methodName];
 
-      for (const guard of this.globalGuards) {
-        const allowed = isFunction<CanActivateFn>(guard)
-          ? await guard(executionCtx)
-          : await guard.canActivate(executionCtx);
-
-        if (!allowed) {
-          throw new ForbiddenException();
+        if (typeof method !== "function") {
+          throw new Error(
+            `Handler "${String(record.methodName)}" is not a function`,
+          );
         }
-      }
-    }
 
-    try {
-      return await (method as (data: unknown) => unknown | Promise<unknown>)
-        .call(record.instance, data);
-    } catch (err) {
-      if (this.exceptionHandler) {
-        await this.exceptionHandler.handle(
-          err,
-          new MicroserviceHostArguments(pattern, data),
-        );
-      } else {
-        this.logger.error(
-          `Unhandled error in handler for pattern "${pattern}"`,
-          err,
-        );
+        if (this.globalGuards.length > 0) {
+          const executionCtx = new MicroserviceExecutionContext(
+            pattern,
+            data,
+            record.controllerType,
+            method as unknown as HttpRouteFn,
+          );
+
+          for (const guard of this.globalGuards) {
+            const allowed = isFunction<CanActivateFn>(guard)
+              ? await guard(executionCtx)
+              : await guard.canActivate(executionCtx);
+
+            if (!allowed) {
+              throw new ForbiddenException();
+            }
+          }
+        }
+
+        return await (method as (data: unknown) => unknown | Promise<unknown>)
+          .call(instance, data);
+      } catch (err) {
+        if (this.exceptionHandler) {
+          await this.exceptionHandler.handle(
+            err,
+            new MicroserviceHostArguments(pattern, data),
+          );
+        } else {
+          this.logger.error(
+            `Unhandled error in handler for pattern "${pattern}"`,
+            err,
+          );
+        }
+        throw err;
+        // I haven't found a solution to catch the finally :(
+        // deno-coverage-ignore-start
+      } finally {
+        this.ctx.clearContext(contextId);
       }
-      throw err;
-    }
+      // deno-coverage-ignore-stop
+    });
   }
 }

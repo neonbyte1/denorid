@@ -4,7 +4,7 @@ import {
   MessagePattern,
   serializePattern,
 } from "@denorid/core/microservices";
-import type { Type } from "@denorid/injector";
+import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals } from "@std/assert";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { spy, stub } from "@std/testing/mock";
@@ -15,6 +15,16 @@ import { RmqSerializer } from "./serializer.ts";
 import { RmqServer } from "./server.ts";
 
 const serializer = new RmqSerializer();
+
+function makeCtx(_: Type, instance: unknown): InjectorContext {
+  return {
+    runInRequestScopeAsync: (_id: string, fn: () => Promise<unknown>) => fn(),
+    getHostModuleRef: () => ({
+      get: (_type: Type, _opts: unknown) => Promise.resolve(instance),
+    }),
+    clearContext: () => {},
+  } as unknown as InjectorContext;
+}
 
 function makeBody(data: unknown): Buffer {
   return Buffer.from(serializer.serialize({ data }));
@@ -215,7 +225,10 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({});
-      server.registerHandlers([Ctrl as unknown as Type], [new Ctrl()]);
+      server.registerHandlers(
+        [Ctrl as unknown as Type],
+        makeCtx(Ctrl as unknown as Type, new Ctrl()),
+      );
       const stop = await runServer(server, conn);
 
       const msg = makeMsg(serializePattern("greet"), "world", {
@@ -247,7 +260,10 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({});
-      server.registerHandlers([EvCtrl as unknown as Type], [new EvCtrl()]);
+      server.registerHandlers(
+        [EvCtrl as unknown as Type],
+        makeCtx(EvCtrl as unknown as Type, new EvCtrl()),
+      );
       const stop = await runServer(server, conn);
 
       const msg = makeMsg(serializePattern("user.created"), null);
@@ -277,7 +293,10 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({ noAck: false });
-      server.registerHandlers([Ctrl as unknown as Type], [new Ctrl()]);
+      server.registerHandlers(
+        [Ctrl as unknown as Type],
+        makeCtx(Ctrl as unknown as Type, new Ctrl()),
+      );
       const stop = await runServer(server, conn);
 
       const msg = makeMsg(serializePattern("ok"), null);
@@ -307,7 +326,10 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({ noAck: true });
-      server.registerHandlers([Ctrl as unknown as Type], [new Ctrl()]);
+      server.registerHandlers(
+        [Ctrl as unknown as Type],
+        makeCtx(Ctrl as unknown as Type, new Ctrl()),
+      );
       const stop = await runServer(server, conn);
 
       const msg = makeMsg(serializePattern("ok"), null);
@@ -342,7 +364,10 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({ noAck: false });
-      server.registerHandlers([ErrCtrl as unknown as Type], [new ErrCtrl()]);
+      server.registerHandlers(
+        [ErrCtrl as unknown as Type],
+        makeCtx(ErrCtrl as unknown as Type, new ErrCtrl()),
+      );
       const stop = await runServer(server, conn);
 
       const msg = makeMsg(serializePattern("fail"), null, {
@@ -377,7 +402,10 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({});
-      server.registerHandlers([ErrCtrl as unknown as Type], [new ErrCtrl()]);
+      server.registerHandlers(
+        [ErrCtrl as unknown as Type],
+        makeCtx(ErrCtrl as unknown as Type, new ErrCtrl()),
+      );
       const stop = await runServer(server, conn);
 
       const msg = makeMsg(serializePattern("throw-str"), null, {

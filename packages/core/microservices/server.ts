@@ -1,6 +1,6 @@
 import type { ExceptionHandler } from "../exceptions/handler.ts";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
-import type { Type } from "@denorid/injector";
+import type { InjectorContext, Type } from "@denorid/injector";
 
 /**
  * Base class for microservice server transports.
@@ -38,10 +38,10 @@ export abstract class MicroserviceServer<
    * Registers pattern-to-handler mappings discovered from the DI container.
    *
    * @param {Type[]} types - Controller class constructors (used to read `Symbol.metadata`).
-   * @param {unknown[]} instances - Resolved instances, parallel to `types`.
+   * @param {InjectorContext} ctx - The injector context used to resolve instances lazily per dispatch.
    * @return {void}
    */
-  public abstract registerHandlers(types: Type[], instances: unknown[]): void;
+  public abstract registerHandlers(types: Type[], ctx: InjectorContext): void;
 
   /**
    * Registers global guards applied before every handler invocation.
