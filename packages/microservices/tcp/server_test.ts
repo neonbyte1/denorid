@@ -15,7 +15,7 @@ import { TcpServer } from "./server.ts";
 
 const serializer = new TcpSerializer();
 
-function makeCtx(type: Type, instance: unknown): InjectorContext {
+function makeCtx(_: Type, instance: unknown): InjectorContext {
   return {
     runInRequestScopeAsync: (_id: string, fn: () => Promise<unknown>) => fn(),
     getHostModuleRef: () => ({
