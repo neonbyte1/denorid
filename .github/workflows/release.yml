@@ -41,6 +41,8 @@ jobs:
       matrix:
         package:
           - drizzle
+          - jwt
+          - microservices
           - platform-hono
     uses: ./.github/workflows/jsr.yml
     with:
