@@ -31,4 +31,5 @@ await app.listen();
 
 ## License
 
-The [@denorid/platform-hono](https://github.com/neonbyte1/denorid) package is [MIT licensed](../../LICENSE.md).
+The [@denorid/platform-hono](https://github.com/neonbyte1/denorid) package is
+[MIT licensed](../../LICENSE.md).

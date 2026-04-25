@@ -1,4 +1,5 @@
 import type { RequestContext } from "./http/request_context.ts";
+import type { Pattern } from "./microservices/pattern.ts";
 
 /**
  * Methods to obtain request and response objects.
@@ -26,9 +27,26 @@ export interface HttpHostArguments {
   getResponse<T = unknown>(): T;
 }
 
+export interface RpcHostArguments {
+  /**
+   * Returns the pattern of the incoming message.
+   *
+   * @return {Pattern}
+   */
+  getPattern(): Pattern;
+
+  /**
+   * Returns the data payload of the incoming message.
+   *
+   * @return {unknown}
+   */
+  getData(): unknown;
+}
+
 /**
  * Provides methods for retrieving the arguments being passed to a handler.
  */
 export interface HostArguments {
   switchToHttp(): HttpHostArguments;
+  switchToRpc(): RpcHostArguments;
 }

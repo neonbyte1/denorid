@@ -19,7 +19,7 @@ import { z } from "zod";
 import { HonoControllerMapping } from "./controller_mapping.ts";
 import { HonoRequestContext } from "./request_context.ts";
 
-describe("HonoControllerMapping", () => {
+describe(HonoControllerMapping.name, () => {
   // todo: maybe export them?
   const CONTROLLER_METADATA = Symbol.for("denorid.controller");
   const CONTROLLER_REQUEST_MAPPING = Symbol.for("denorid.request_mapping");
@@ -254,7 +254,7 @@ describe("HonoControllerMapping", () => {
     });
   });
 
-  describe("route handler — request scope", () => {
+  describe("route handler - request scope", () => {
     it("passes x-request-id header value as the scope id", async () => {
       const { capturedRoutes, runInRequestScopeAsync } =
         await registerAndCapture({
@@ -304,7 +304,7 @@ describe("HonoControllerMapping", () => {
     });
   });
 
-  describe("route handler — controller invocation", () => {
+  describe("route handler - controller invocation", () => {
     it("resolves the controller class from the injector context", async () => {
       const { capturedRoutes, resolveInternal } = await registerAndCapture({
         route: { name: "index" },

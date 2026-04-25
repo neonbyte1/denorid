@@ -4,14 +4,12 @@ import {
   type CanActivateFn,
   ControllerMapping,
   type ExceptionHandler,
-  type ExecutionContext,
   ForbiddenException,
   type HostArguments,
   type HttpController,
   HttpException,
   HttpMethod,
   InternalServerErrorException,
-  type RequestContext,
   type RequestMappingMetadata,
   StatusCode,
   UnprocessableContentException,
@@ -20,6 +18,8 @@ import {
 import type { InjectorContext, Type } from "@denorid/injector";
 import type { Context, Hono } from "@hono/hono";
 import type { ZodType } from "zod";
+import { HonoExecutionContext } from "./execution_context.ts";
+import { HonoHostArguments } from "./host_arguments.ts";
 import { HonoRequestContext } from "./request_context.ts";
 
 export class HonoControllerMapping extends ControllerMapping {
@@ -61,18 +61,20 @@ export class HonoControllerMapping extends ControllerMapping {
 
       return await this.ctx.runInRequestScopeAsync(requestId, async () => {
         const context = new HonoRequestContext<unknown>(c, requestId, null);
-        const hostArguments = this.createHostArguments(c, context);
+        const hostArguments = new HonoHostArguments(c, context);
 
         try {
           const controller = await this.ctx.getHostModuleRef().get<
             HttpController
           >(controllerClass, { contextId: requestId, strict: false });
 
-          const executionContext: ExecutionContext = {
-            ...hostArguments,
-            getClass: <T = HttpController>() => controllerClass as Type<T>,
-            getHandler: () => controller[route.name],
-          };
+          const executionContext = new HonoExecutionContext(
+            c,
+            context,
+            controllerClass,
+            controller[route.name],
+          );
+
           if (!await this.resolveGuards(executionContext, ...guards)) {
             throw new ForbiddenException();
           }
@@ -171,14 +173,5 @@ export class HonoControllerMapping extends ControllerMapping {
     return responsePayload instanceof HttpException
       ? c.json(responsePayload.response, responsePayload.status as 500)
       : (responsePayload as Response);
-  }
-
-  private createHostArguments(c: Context, ctx: RequestContext): HostArguments {
-    return {
-      switchToHttp: () => ({
-        getRequest: () => ctx,
-        getResponse: <T>() => c as T,
-      }),
-    };
   }
 }

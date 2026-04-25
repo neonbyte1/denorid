@@ -21,6 +21,10 @@ describe("ExceptionHandler", () => {
         return undefined as T;
       },
     }),
+    switchToRpc: () => ({
+      getPattern: () => "",
+      getData: () => undefined,
+    }),
   };
 
   function makeCtx(
