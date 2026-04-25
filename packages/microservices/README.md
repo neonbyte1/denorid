@@ -109,7 +109,10 @@ class AppModule {}
 
 const app = await DenoridFactory.create(
   AppModule,
-  new RmqServer({ url: { hostname: "127.0.0.1", port: 5672 }, queue: "notifications" }),
+  new RmqServer({
+    url: { hostname: "127.0.0.1", port: 5672 },
+    queue: "notifications",
+  }),
 );
 
 await app.listen();
