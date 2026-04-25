@@ -97,7 +97,7 @@ export class HttpException extends IntrinsicException {
 
   /**
    * Builds an {@linkcode HttpExceptionBody} with only `message` and `statusCode`.
-   * Use when there is no primary error label — the body will not include an `error` field.
+   * Use when there is no primary error label - the body will not include an `error` field.
    *
    * @param {undefined | null | ""} nil - Must be `undefined`, `null`, or `""` to select this overload.
    * @param {HttpExceptionBodyMessage} message - The human-readable message (string, string array, or numeric code).
@@ -140,7 +140,7 @@ export class HttpException extends IntrinsicException {
     statusCode: number,
   ): HttpExceptionBody | Record<string, unknown>;
   /**
-   * Passthrough overload — returns a fully-formed custom body as-is without modification.
+   * Passthrough overload - returns a fully-formed custom body as-is without modification.
    * Use when the caller has already assembled the complete response object.
    *
    * @param {Body} custom - A pre-built body object; returned unchanged.

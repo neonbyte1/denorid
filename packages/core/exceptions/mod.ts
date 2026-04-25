@@ -2,10 +2,10 @@
  * Exception handling primitives for Denorid.
  *
  * This module exposes:
- * - {@linkcode ExceptionFilter} — interface for implementing custom exception filters
- * - {@linkcode Catch} — class decorator to register a filter for a specific exception type
- * - {@linkcode ExceptionHandler} — resolves and dispatches registered filters at runtime
- * - {@linkcode IntrinsicException} — base class for framework-internal exceptions that skip error logging
+ * - {@linkcode ExceptionFilter} - interface for implementing custom exception filters
+ * - {@linkcode Catch} - class decorator to register a filter for a specific exception type
+ * - {@linkcode ExceptionHandler} - resolves and dispatches registered filters at runtime
+ * - {@linkcode IntrinsicException} - base class for framework-internal exceptions that skip error logging
  * - All built-in HTTP exception classes (e.g. {@linkcode NotFoundException}, {@linkcode BadRequestException})
  *
  * @example
@@ -36,6 +36,7 @@
  *
  * @module
  */
+export * from "./context_not_available.ts";
 export * from "./filter.ts";
 export * from "./handler.ts";
 export * from "./http/mod.ts";
