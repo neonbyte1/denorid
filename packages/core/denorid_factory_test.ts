@@ -12,13 +12,12 @@ import type {
   MicroserviceApplicationContext,
 } from "./application_context.ts";
 import { DenoridFactory } from "./denorid_factory.ts";
-import type { ExceptionHandler } from "./exceptions/handler.ts";
 import type { ExecutionContext } from "./guards/execution_context.ts";
 import type { ControllerMappingOptions, HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
+import { HttpApplication } from "./http_application.ts";
 import { MicroserviceApplication } from "./microservice_application.ts";
 import { MicroserviceServer } from "./microservices/server.ts";
-import { HttpApplication } from "./http_application.ts";
 
 describe("DenoridFactory", () => {
   class RootModule {}
