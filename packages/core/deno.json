@@ -7,7 +7,9 @@
     "./exceptions": "./exceptions/mod.ts",
     "./exceptions/http": "./exceptions/http/mod.ts",
     "./http": "./http/mod.ts",
-    "./pipes": "./pipes/mod.ts"
+    "./pipes": "./pipes/mod.ts",
+    "./microservices": "./microservices/mod.ts",
+    "./testing": "./testing/mod.ts"
   },
   "imports": {
     "@denorid/logger": "jsr:@denorid/logger@^0.3.0",
