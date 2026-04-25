@@ -1,4 +1,13 @@
 {
   "name": "@denorid/microservices",
-  "version": "0.0.1"
+  "version": "0.0.1",
+  "exports": "./mod.ts",
+  "imports": {
+    "@denorid/core": "jsr:@denorid/core@^0.0.1",
+    "@denorid/injector": "jsr:@denorid/injector@^0.0.2",
+    "@denorid/logger": "jsr:@denorid/logger@^0.3.0",
+    "@std/msgpack": "jsr:@std/msgpack@^1.0.3",
+    "@types/amqplib": "npm:@types/amqplib@^0.10.8",
+    "amqplib": "npm:amqplib@^1.0.3"
+  }
 }

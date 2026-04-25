@@ -6,6 +6,7 @@
     "jsr:@std/assert@^1.0.17": "1.0.19",
     "jsr:@std/assert@^1.0.18": "1.0.19",
     "jsr:@std/async@^1.1.0": "1.2.0",
+    "jsr:@std/bytes@^1.0.5": "1.0.6",
     "jsr:@std/bytes@^1.0.6": "1.0.6",
     "jsr:@std/cli@^1.0.28": "1.0.28",
     "jsr:@std/crypto@^1.0.5": "1.0.5",
@@ -18,11 +19,14 @@
     "jsr:@std/http@^1.0.25": "1.0.25",
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "jsr:@std/media-types@^1.1.0": "1.1.0",
+    "jsr:@std/msgpack@^1.0.3": "1.0.3",
     "jsr:@std/net@^1.0.6": "1.0.6",
     "jsr:@std/path@^1.1.4": "1.1.4",
     "jsr:@std/streams@^1.0.17": "1.0.17",
     "jsr:@std/testing@^1.0.17": "1.0.17",
     "jsr:@std/uuid@^1.1.0": "1.1.0",
+    "npm:@types/amqplib@~0.10.8": "0.10.8",
+    "npm:amqplib@^1.0.3": "1.0.3",
     "npm:drizzle-orm@^1.0.0-beta.15-859cf75": "1.0.0-beta.9-e89174b_@libsql+client@0.17.0_@types+mssql@9.1.9_mssql@11.0.1",
     "npm:zod@^4.3.6": "4.3.6"
   },
@@ -89,6 +93,12 @@
     "@std/media-types@1.1.0": {
       "integrity": "c9d093f0c05c3512932b330e3cc1fe1d627b301db33a4c2c2185c02471d6eaa4"
     },
+    "@std/msgpack@1.0.3": {
+      "integrity": "b384239867dfd08aba9069d433e415a8229c6f966716d6b7fd3972a6fe605848",
+      "dependencies": [
+        "jsr:@std/bytes@^1.0.5"
+      ]
+    },
     "@std/net@1.0.6": {
       "integrity": "110735f93e95bb9feb95790a8b1d1bf69ec0dc74f3f97a00a76ea5efea25500c"
     },
@@ -115,7 +125,7 @@
     "@std/uuid@1.1.0": {
       "integrity": "6268db2ccf172849c9be80763354ca305d49ef4af41fe995623d44fcc3f7457c",
       "dependencies": [
-        "jsr:@std/bytes",
+        "jsr:@std/bytes@^1.0.6",
         "jsr:@std/crypto"
       ]
     }
@@ -363,6 +373,12 @@
     "@tediousjs/connection-string@0.5.0": {
       "integrity": "sha512-7qSgZbincDDDFyRweCIEvZULFAw5iz/DeunhvuxpL31nfntX3P4Yd4HkHBRg9H8CdqY1e5WFN1PZIz/REL9MVQ=="
     },
+    "@types/amqplib@0.10.8": {
+      "integrity": "sha512-vtDp8Pk1wsE/AuQ8/Rgtm6KUZYqcnTgNvEHwzCkX8rL7AGsC6zqAfKAAJhUZXFhM/Pp++tbnUHiam/8vVpPztA==",
+      "dependencies": [
+        "@types/node"
+      ]
+    },
     "@types/mssql@9.1.9": {
       "integrity": "sha512-P0nCgw6vzY23UxZMnbI4N7fnLGANt4LI4yvxze1paPj+LuN28cFv5EI+QidP8udnId/BKhkcRhm/BleNsjK65A==",
       "dependencies": [
@@ -405,6 +421,12 @@
     "agent-base@7.1.4": {
       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="
     },
+    "amqplib@1.0.3": {
+      "integrity": "sha512-nsrXa59tvX4HPjPPW8JJGuBb/Db0MOq3DOhGdSbIY7bTsQDMV2fmF9c3i74g/8Gt9+QWyrxfEPppOOoV9lK1uQ==",
+      "dependencies": [
+        "buffer-more-ints"
+      ]
+    },
     "base64-js@1.5.1": {
       "integrity": "sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA=="
     },
@@ -419,6 +441,9 @@
     },
     "buffer-equal-constant-time@1.0.1": {
       "integrity": "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA=="
+    },
+    "buffer-more-ints@1.0.0": {
+      "integrity": "sha512-EMetuGFz5SLsT0QTnXzINh4Ksr+oo4i+UGTXEshiGCQWnsgSs7ZhJ8fzlwQ+OzEMs0MpDAMr1hxnblp5a4vcHg=="
     },
     "buffer@6.0.3": {
       "integrity": "sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==",
@@ -771,6 +796,7 @@
       "jsr:@std/assert@^1.0.18",
       "jsr:@std/fmt@^1.0.9",
       "jsr:@std/http@^1.0.25",
+      "jsr:@std/msgpack@^1.0.3",
       "jsr:@std/testing@^1.0.17",
       "npm:zod@^4.3.6"
     ],
@@ -803,6 +829,15 @@
       "packages/logger": {
         "dependencies": [
           "jsr:@std/fmt@^1.0.9"
+        ]
+      },
+      "packages/microservices": {
+        "dependencies": [
+          "jsr:@denorid/core@^0.0.1",
+          "jsr:@denorid/injector@^0.0.2",
+          "jsr:@denorid/logger@0.3",
+          "npm:@types/amqplib@~0.10.8",
+          "npm:amqplib@^1.0.3"
         ]
       },
       "packages/platform-hono": {
