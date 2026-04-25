@@ -1,6 +1,6 @@
 {
   "name": "@denorid/core",
-  "version": "0.0.1",
+  "version": "1.0.0-beta1",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -12,8 +12,8 @@
     "./testing": "./testing/mod.ts"
   },
   "imports": {
-    "@denorid/logger": "jsr:@denorid/logger@^0.3.0",
-    "@denorid/injector": "jsr:@denorid/injector@^0.0.2",
+    "@denorid/logger": "jsr:@denorid/logger@^1.0.0-beta1",
+    "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta1",
     "@std/http": "jsr:@std/http@^1.0.25",
     "@std/uuid": "jsr:@std/uuid@^1.1.0",
     "zod": "npm:zod@^4.3.6"
