@@ -9,7 +9,7 @@ export interface ModuleRefOptions {
   /**
    * The default behaviour when resolving any instance via {@linkcode ModuleRef} is strict,
    * which means you're trying to resolve a provider registered within the current module scope.
-   * You need to set `strict` to `true` if you want to resolve tokens from other modules.
+   * You need to set `strict` to `false` if you want to resolve tokens from the whole application.
    *
    * @default true
    */
@@ -40,10 +40,10 @@ export interface ModuleRefContextOptions extends ModuleRefOptions {
  *   constructor(private moduleRef: ModuleRef) {}
  *
  *   async doSomething() {
- *     // Resolve from entire container (default)
+ *     // Resolve only within module scope (default)
  *     const logger = await this.moduleRef.get(Logger);
  *
- *     // Resolve only within module scope (strict: false)
+ *     // Resolve from the whole application container
  *     const localService = await this.moduleRef.get(LocalService, { strict: false });
  *   }
  * }
@@ -52,6 +52,7 @@ export interface ModuleRefContextOptions extends ModuleRefOptions {
 export class ModuleRef {
   public constructor(
     private readonly container: Container,
+    private readonly rootContainer: Container,
     private readonly moduleTokens: Set<InjectionToken>,
   ) {}
 
@@ -64,7 +65,7 @@ export class ModuleRef {
    * @returns {Promise<T>} The function returns a `Promise` that resolves into the provider instance.
    *
    * @throws {TokenNotFoundError} if the token is not found.
-   * @throws {Error} if `strict` is `false` and the token is not in the current module's scope.
+   * @throws {Error} if `strict` is `true` and the token is not in the current module's scope.
    */
   public get<T>(
     token: InjectionToken<T>,
@@ -81,7 +82,7 @@ export class ModuleRef {
    *          bound to the given context.
    *
    * @throws {TokenNotFoundError} if the token is not found.
-   * @throws {Error} if `strict` is `false` and the token is not in the current module's scope.
+   * @throws {Error} if `strict` is `true` and the token is not in the current module's scope.
    */
   public get<T>(
     token: InjectionToken<T>,
@@ -99,13 +100,17 @@ export class ModuleRef {
           `Token "${
             serializeToken(token)
           }" is not available in this module's scope. ` +
-            `Use { strict: true } to resolve from the entire container.`,
+            `Use { strict: false } to resolve from the whole application.`,
         );
       }
 
+      const container = !strict && !this.moduleTokens.has(token)
+        ? this.rootContainer
+        : this.container;
+
       return options && "contextId" in options
-        ? this.container.resolveWithContext(token, options.contextId)
-        : this.container.resolve(token);
+        ? container.resolveWithContext(token, options.contextId)
+        : container.resolve(token);
     }
   }
 
@@ -159,14 +164,14 @@ export class ModuleRef {
   }
 
   /**
-   * Check if a token is available in the entire container.
+   * Check if a token is available from the whole application container.
    *
    * @param {InjectionToken} token - The injection token to resolve
-   * @returns {boolean} The function returns `true` when the global module container
+   * @returns {boolean} The function returns `true` when the application container
    *          contains the `token`, otherwise `false`.
    */
   public hasGlobal(token: InjectionToken): boolean {
-    return this.container.has(token);
+    return this.rootContainer.canResolve(token);
   }
 
   /**
@@ -214,28 +219,62 @@ export class ModuleRef {
   ): Promise<T[]>;
   public async getByTag<T = unknown>(
     tag: Tag,
-    options?: ModuleRefContextOptions,
+    options?: ModuleRefOptions | ModuleRefContextOptions,
   ): Promise<T[]> {
     const strict = options?.strict ?? true;
-    const allInstances = await this.container.getByTag<T>(
-      tag,
-      options?.contextId,
-    );
+    const contextId = options && "contextId" in options
+      ? options.contextId
+      : undefined;
 
-    if (strict) {
-      return allInstances;
+    if (!strict) {
+      return await this.rootContainer.getByTag<T>(tag, contextId);
     }
 
-    const tokens = this.container.getTokensByTag(tag);
-    const filteredInstances: T[] = [];
+    const tokens = this.container
+      .getTokensByTag(tag, true)
+      .filter((token) => this.moduleTokens.has(token));
+    const instances: T[] = [];
 
-    for (let i = 0; i < tokens.length; ++i) {
-      if (this.moduleTokens.has(tokens[i])) {
-        filteredInstances.push(allInstances[i]);
-      }
+    for (const token of tokens) {
+      const instance = contextId
+        ? await this.container.resolveWithContext(token, contextId)
+        : await this.container.resolve(token);
+
+      instances.push(instance as T);
     }
 
-    return filteredInstances;
+    return instances;
+  }
+
+  /**
+   * Get all provider tokens registered with a specific tag.
+   *
+   * @param {Tag} tag - The tag to search for.
+   * @param {ModuleRefOptions|undefined} options - Optional lookup options.
+   * @returns {InjectionToken[]} The function returns an array of provider tokens
+   *          registered with the requested tag.
+   *
+   * @example
+   * ```ts
+   * const validatorTokens = this.moduleRef.getTokensByTag(VALIDATOR);
+   * const appValidatorTokens = this.moduleRef.getTokensByTag(VALIDATOR, {
+   *   strict: false,
+   * });
+   * ```
+   */
+  public getTokensByTag<T extends InjectionToken = InjectionToken>(
+    tag: Tag,
+    options?: ModuleRefOptions,
+  ): T[] {
+    const strict = options?.strict ?? true;
+
+    if (!strict) {
+      return this.rootContainer.getTokensByTag(tag) as T[];
+    }
+
+    return this.container
+      .getTokensByTag(tag, true)
+      .filter((token) => this.moduleTokens.has(token)) as T[];
   }
 
   /**

@@ -74,7 +74,7 @@ export class InjectorContext implements InjectorContextLifecycle {
    * @param {CompiledModule[]} modulesInOrder - The list of copmiled modules in resolution order
    * @param {Map<Type, ModuleRef>} moduleRefs - A map from module class types to their module references
    */
-  private constructor(
+  public constructor(
     public readonly container: Container,
     private readonly globalContainer: Container,
     protected readonly rootModule: CompiledModule,
@@ -159,7 +159,7 @@ export class InjectorContext implements InjectorContextLifecycle {
 
     for (const mod of modulesInOrder) {
       const container = moduleContainers.get(mod.type)!;
-      const moduleRef = new ModuleRef(container, mod.ownTokens);
+      const moduleRef = new ModuleRef(container, rootContainer, mod.ownTokens);
 
       moduleRefs.set(mod.type, moduleRef);
     }

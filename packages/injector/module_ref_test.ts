@@ -14,7 +14,7 @@ import {
   TaggedServiceB,
   TransientService,
 } from "./_test_fixtures.ts";
-import { Module } from "./decorators.ts";
+import { Injectable, Module, Tags } from "./decorators.ts";
 import { InjectorContext } from "./injector_context.ts";
 import { ModuleRef } from "./module_ref.ts";
 
@@ -82,6 +82,90 @@ describe("ModuleRef", () => {
       assertInstanceOf(a, TransientService);
       assertEquals(a.id, b.id);
     });
+
+    it("should resolve module-scoped token via strict: false when not exported to parent", async () => {
+      @Module({
+        providers: [TaggedServiceA, ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class FeatureModule {}
+
+      @Module({
+        imports: [FeatureModule],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const tokens = service.moduleRef.getTokensByTag(TAG_A);
+
+      assertEquals(tokens.length, 1);
+
+      const instance = await service.moduleRef.get(tokens[0]!, {
+        strict: false,
+      });
+
+      assertInstanceOf(instance, TaggedServiceA);
+    });
+
+    it("should resolve host module tokens when strict is false", async () => {
+      class HostService {}
+
+      @Module({
+        providers: [ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class FeatureModule {}
+
+      @Module({
+        imports: [FeatureModule],
+        providers: [HostService],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const host = await service.moduleRef.get(HostService, {
+        strict: false,
+      });
+
+      assertInstanceOf(host, HostService);
+      assertThrows(
+        () => service.moduleRef.get(HostService),
+        Error,
+        "not available",
+      );
+    });
+
+    it("should resolve host module tokens with contextId when strict is false", async () => {
+      @Module({
+        providers: [ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class FeatureModule {}
+
+      @Module({
+        imports: [FeatureModule],
+        providers: [TransientService],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const a = await service.moduleRef.get(TransientService, {
+        contextId: "ctx-1",
+        strict: false,
+      });
+      const b = await service.moduleRef.get(TransientService, {
+        contextId: "ctx-1",
+        strict: false,
+      });
+
+      assertInstanceOf(a, TransientService);
+      assertEquals(a.id, b.id);
+    });
   });
 
   describe("tryGet", () => {
@@ -144,9 +228,51 @@ describe("ModuleRef", () => {
       assertEquals(tagged.length, 2);
     });
 
-    it("should filter by module tokens (strict: false)", async () => {
+    it("should filter by module tokens (strict: true)", async () => {
       @Module({
         providers: [TaggedServiceA, ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const tagged = await service.moduleRef.getByTag<{ name: string }>(TAG_A);
+
+      assertEquals(tagged.length, 1);
+    });
+
+    it("should not include host module tags by default", async () => {
+      @Module({
+        providers: [ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class FeatureModule {}
+
+      @Module({
+        imports: [FeatureModule],
+        providers: [TaggedServiceA],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const tagged = await service.moduleRef.getByTag<{ name: string }>(TAG_A);
+
+      assertEquals(tagged.length, 0);
+    });
+
+    it("should include host module tags when strict is false", async () => {
+      @Module({
+        providers: [ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class FeatureModule {}
+
+      @Module({
+        imports: [FeatureModule],
+        providers: [TaggedServiceA],
         exports: [ServiceWithModuleRef],
       })
       class AppModule {}
@@ -157,7 +283,131 @@ describe("ModuleRef", () => {
         strict: false,
       });
 
-      assertEquals(tagged.length, 1);
+      assertEquals(tagged.map((item) => item.name), ["A"]);
+    });
+
+    it("should resolve module-scoped tags with contextId", async () => {
+      const TAG = Symbol("TAGGED_TRANSIENT");
+
+      @Injectable({ mode: "transient" })
+      @Tags(TAG)
+      class TaggedTransient {
+        public id = crypto.randomUUID();
+      }
+
+      @Module({
+        providers: [TaggedTransient, ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const [a] = await service.moduleRef.getByTag<TaggedTransient>(TAG, {
+        contextId: "ctx-1",
+      });
+      const [b] = await service.moduleRef.getByTag<TaggedTransient>(TAG, {
+        contextId: "ctx-1",
+      });
+
+      assertInstanceOf(a, TaggedTransient);
+      assertEquals(a.id, b.id);
+    });
+
+    it("should resolve host module tags with contextId when strict is false", async () => {
+      const TAG = Symbol("TAGGED_TRANSIENT");
+
+      @Injectable({ mode: "transient" })
+      @Tags(TAG)
+      class TaggedTransient {
+        public id = crypto.randomUUID();
+      }
+
+      @Module({
+        providers: [ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class FeatureModule {}
+
+      @Module({
+        imports: [FeatureModule],
+        providers: [TaggedTransient],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const [a] = await service.moduleRef.getByTag<TaggedTransient>(TAG, {
+        contextId: "ctx-1",
+        strict: false,
+      });
+      const [b] = await service.moduleRef.getByTag<TaggedTransient>(TAG, {
+        contextId: "ctx-1",
+        strict: false,
+      });
+
+      assertEquals(a.id, b.id);
+    });
+  });
+
+  describe("getTokensByTag", () => {
+    it("should get tagged provider tokens from the current module by default", async () => {
+      @Module({
+        providers: [TaggedServiceA, TaggedServiceB, ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const tokens = service.moduleRef.getTokensByTag(TAG_A);
+
+      assertEquals(tokens, [TaggedServiceA, TaggedServiceB]);
+    });
+
+    it("should not include host module tagged tokens by default", async () => {
+      @Module({
+        providers: [ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class FeatureModule {}
+
+      @Module({
+        imports: [FeatureModule],
+        providers: [TaggedServiceA],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const tokens = service.moduleRef.getTokensByTag(TAG_A);
+
+      assertEquals(tokens, []);
+    });
+
+    it("should include application tagged tokens when strict is false", async () => {
+      @Module({
+        providers: [ServiceWithModuleRef],
+        exports: [ServiceWithModuleRef],
+      })
+      class FeatureModule {}
+
+      @Module({
+        imports: [FeatureModule],
+        providers: [TaggedServiceA],
+        exports: [ServiceWithModuleRef],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.resolve(ServiceWithModuleRef);
+      const tokens = service.moduleRef.getTokensByTag(TAG_A, {
+        strict: false,
+      });
+
+      assertEquals(tokens, [TaggedServiceA]);
     });
   });
 
