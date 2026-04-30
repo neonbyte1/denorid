@@ -4,7 +4,10 @@ import {
   type ExceptionHandler,
   ForbiddenException,
   getMessageMappingMetadata,
+  getMethodGuards,
+  GUARDS_METADATA,
   type HttpRouteFn,
+  isClass,
   isFunction,
   MicroserviceServer,
   type PatternType,
@@ -25,6 +28,10 @@ export interface HandlerRecord {
   type: PatternType;
   /** The controller class constructor owning this handler. */
   controllerType: Type;
+  /** Guards defined on the controller class via `@UseGuards`. */
+  controllerGuards: (Type<CanActivate> | CanActivate | CanActivateFn)[];
+  /** Guards defined on this specific handler method via `@UseGuards`. */
+  methodGuards: (Type<CanActivate> | CanActivate | CanActivateFn)[];
 }
 
 /**
@@ -73,12 +80,23 @@ export abstract class Server<
 
     for (const type of types) {
       const mappings = getMessageMappingMetadata(type) ?? [];
+      const controllerGuards = [
+        ...(type[Symbol.metadata]?.[GUARDS_METADATA] as
+          | Set<Type<CanActivate> | CanActivate | CanActivateFn>
+          | undefined ?? new Set()),
+      ];
 
       for (const mapping of mappings) {
+        const methodGuards = [
+          ...(getMethodGuards(type, mapping.name) ?? new Set()),
+        ];
+
         this.handlers.set(serializePattern(mapping.pattern), {
           methodName: mapping.name,
           type: mapping.type,
           controllerType: type,
+          controllerGuards,
+          methodGuards,
         });
       }
     }
@@ -117,7 +135,13 @@ export abstract class Server<
           );
         }
 
-        if (this.globalGuards.length > 0) {
+        const allGuards = [
+          ...this.globalGuards,
+          ...record.controllerGuards,
+          ...record.methodGuards,
+        ];
+
+        if (allGuards.length > 0) {
           const executionCtx = new RcpExecutionContext(
             pattern,
             data,
@@ -125,10 +149,20 @@ export abstract class Server<
             method as unknown as HttpRouteFn,
           );
 
-          for (const guard of this.globalGuards) {
-            const allowed = isFunction<CanActivateFn>(guard)
-              ? await guard(executionCtx)
-              : await guard.canActivate(executionCtx);
+          for (const guard of allGuards) {
+            let allowed: boolean;
+
+            if (isClass<CanActivate>(guard)) {
+              const guardInstance = await this.ctx.getHostModuleRef().get(
+                guard,
+                { contextId },
+              );
+              allowed = await guardInstance.canActivate(executionCtx);
+            } else if (isFunction<CanActivateFn>(guard)) {
+              allowed = await guard(executionCtx);
+            } else {
+              allowed = await guard.canActivate(executionCtx);
+            }
 
             if (!allowed) {
               throw new ForbiddenException();

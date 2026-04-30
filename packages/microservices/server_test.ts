@@ -1,5 +1,10 @@
-import type { ExceptionHandler, HostArguments } from "@denorid/core";
-import { ForbiddenException } from "@denorid/core";
+import type {
+  CanActivate,
+  ExceptionHandler,
+  ExecutionContext,
+  HostArguments,
+} from "@denorid/core";
+import { ForbiddenException, UseGuards } from "@denorid/core";
 import {
   EventPattern,
   MessageController,
@@ -142,6 +147,8 @@ describe(Server.name, () => {
         methodName: "method",
         type: "message",
         controllerType: BadCls as unknown as Type,
+        controllerGuards: [],
+        methodGuards: [],
       });
       server["ctx"] = makeCtx([BadCls as unknown as Type, {
         method: "not-a-function",
@@ -256,6 +263,8 @@ describe(Server.name, () => {
         methodName: "handle",
         type: "message",
         controllerType: ClearCtrl as unknown as Type,
+        controllerGuards: [],
+        methodGuards: [],
       });
       server["ctx"] = {
         runInRequestScopeAsync: (_id: string, fn: () => Promise<unknown>) =>
@@ -448,6 +457,227 @@ describe(Server.name, () => {
       );
 
       assertEquals(secondGuardCalled, false);
+    });
+  });
+
+  describe("dispatch - controller guard enforcement", () => {
+    it("allows dispatch when class-level guard returns true", async () => {
+      @UseGuards(() => true)
+      @MessageController()
+      class GuardedCtrl {
+        @MessagePattern("ctrl.guard.allow")
+        handle(): string {
+          return "ctrl-ok";
+        }
+      }
+
+      server.registerHandlers(
+        [GuardedCtrl as unknown as Type],
+        makeCtx([GuardedCtrl as unknown as Type, new GuardedCtrl()]),
+      );
+
+      const result = await server.dispatchPublic(
+        serializePattern("ctrl.guard.allow"),
+        null,
+      );
+      assertEquals(result, "ctrl-ok");
+    });
+
+    it("throws ForbiddenException when class-level guard returns false", async () => {
+      @UseGuards(() => false)
+      @MessageController()
+      class BlockedCtrl {
+        @MessagePattern("ctrl.guard.block")
+        handle(): string {
+          return "never";
+        }
+      }
+
+      server.registerHandlers(
+        [BlockedCtrl as unknown as Type],
+        makeCtx([BlockedCtrl as unknown as Type, new BlockedCtrl()]),
+      );
+
+      await assertRejects(
+        () => server.dispatchPublic(serializePattern("ctrl.guard.block"), null),
+        ForbiddenException,
+      );
+    });
+
+    it("resolves a guard class via DI and allows when canActivate returns true", async () => {
+      class AllowGuard implements CanActivate {
+        canActivate(_ctx: ExecutionContext): boolean {
+          return true;
+        }
+      }
+
+      @UseGuards(AllowGuard)
+      @MessageController()
+      class DiGuardCtrl {
+        @MessagePattern("ctrl.di.allow")
+        handle(): string {
+          return "di-ok";
+        }
+      }
+
+      const guardInstance = new AllowGuard();
+
+      server.registerHandlers(
+        [DiGuardCtrl as unknown as Type],
+        makeCtx(
+          [DiGuardCtrl as unknown as Type, new DiGuardCtrl()],
+          [AllowGuard as unknown as Type, guardInstance],
+        ),
+      );
+
+      const result = await server.dispatchPublic(
+        serializePattern("ctrl.di.allow"),
+        null,
+      );
+      assertEquals(result, "di-ok");
+    });
+
+    it("resolves a guard class via DI and blocks when canActivate returns false", async () => {
+      class BlockGuard implements CanActivate {
+        canActivate(_ctx: ExecutionContext): boolean {
+          return false;
+        }
+      }
+
+      @UseGuards(BlockGuard)
+      @MessageController()
+      class DiGuardBlockCtrl {
+        @MessagePattern("ctrl.di.block")
+        handle(): string {
+          return "never";
+        }
+      }
+
+      const guardInstance = new BlockGuard();
+
+      server.registerHandlers(
+        [DiGuardBlockCtrl as unknown as Type],
+        makeCtx(
+          [DiGuardBlockCtrl as unknown as Type, new DiGuardBlockCtrl()],
+          [BlockGuard as unknown as Type, guardInstance],
+        ),
+      );
+
+      await assertRejects(
+        () => server.dispatchPublic(serializePattern("ctrl.di.block"), null),
+        ForbiddenException,
+      );
+    });
+  });
+
+  describe("dispatch - method guard enforcement", () => {
+    it("allows dispatch when method-level guard returns true", async () => {
+      @MessageController()
+      class MethodGuardCtrl {
+        @UseGuards(() => true)
+        @MessagePattern("method.guard.allow")
+        handle(): string {
+          return "method-ok";
+        }
+      }
+
+      server.registerHandlers(
+        [MethodGuardCtrl as unknown as Type],
+        makeCtx([MethodGuardCtrl as unknown as Type, new MethodGuardCtrl()]),
+      );
+
+      const result = await server.dispatchPublic(
+        serializePattern("method.guard.allow"),
+        null,
+      );
+      assertEquals(result, "method-ok");
+    });
+
+    it("throws ForbiddenException when method-level guard returns false", async () => {
+      @MessageController()
+      class MethodBlockCtrl {
+        @UseGuards(() => false)
+        @MessagePattern("method.guard.block")
+        handle(): string {
+          return "never";
+        }
+      }
+
+      server.registerHandlers(
+        [MethodBlockCtrl as unknown as Type],
+        makeCtx([MethodBlockCtrl as unknown as Type, new MethodBlockCtrl()]),
+      );
+
+      await assertRejects(
+        () =>
+          server.dispatchPublic(serializePattern("method.guard.block"), null),
+        ForbiddenException,
+      );
+    });
+  });
+
+  describe("dispatch - guard priority", () => {
+    it("evaluates global, then controller, then method guards in order", async () => {
+      const order: string[] = [];
+
+      @UseGuards(() => {
+        order.push("ctrl");
+        return true;
+      })
+      @MessageController()
+      class OrderCtrl {
+        @UseGuards(() => {
+          order.push("method");
+          return true;
+        })
+        @MessagePattern("guard.order")
+        handle(): string {
+          return "ordered";
+        }
+      }
+
+      server.registerHandlers(
+        [OrderCtrl as unknown as Type],
+        makeCtx([OrderCtrl as unknown as Type, new OrderCtrl()]),
+      );
+      server.setGlobalGuards([() => {
+        order.push("global");
+        return true;
+      }]);
+
+      await server.dispatchPublic(serializePattern("guard.order"), null);
+
+      assertEquals(order, ["global", "ctrl", "method"]);
+    });
+
+    it("short-circuits on first failing controller guard before method guard", async () => {
+      const methodGuardCalls: number[] = [];
+
+      @UseGuards(() => false)
+      @MessageController()
+      class ShortCtrl {
+        @UseGuards(() => {
+          methodGuardCalls.push(1);
+          return true;
+        })
+        @MessagePattern("guard.shortcircuit")
+        handle(): string {
+          return "never";
+        }
+      }
+
+      server.registerHandlers(
+        [ShortCtrl as unknown as Type],
+        makeCtx([ShortCtrl as unknown as Type, new ShortCtrl()]),
+      );
+
+      await assertRejects(
+        () =>
+          server.dispatchPublic(serializePattern("guard.shortcircuit"), null),
+        ForbiddenException,
+      );
+
+      assertEquals(methodGuardCalls, []);
     });
   });
 });
