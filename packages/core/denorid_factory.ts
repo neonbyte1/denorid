@@ -81,6 +81,10 @@ export class DenoridFactory {
           provide: ExceptionHandler,
           useValue: new ExceptionHandler(ctx),
         });
+        ctx.registerGlobal({
+          provide: InjectorContext,
+          useValue: ctx,
+        });
       },
     });
     const app = this.instantiateApplication(

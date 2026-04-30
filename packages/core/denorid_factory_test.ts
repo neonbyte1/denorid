@@ -115,7 +115,7 @@ describe("DenoridFactory", () => {
 
         opts.beforeInit(mockCtx);
 
-        assertEquals(registered.length, 1);
+        assertEquals(registered.length, 2);
         assertEquals(registered[0].provide, ExceptionHandler);
         assertInstanceOf(registered[0].useValue, ExceptionHandler);
       } finally {
