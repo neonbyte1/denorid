@@ -19,11 +19,17 @@ export class HonoExecutionContext extends HonoHostArguments
     super(c, ctx);
   }
 
+  /**
+   * @inheritdoc
+   */
   public getClass<T = HttpController>(): Type<T> {
     return this.controllerClass as Type<T>;
   }
 
-  public getHandler(): HttpRouteFn {
-    return this.handler;
+  /**
+   * @inheritdoc
+   */
+  public getHandler<T = HttpRouteFn>(): T {
+    return this.handler as T;
   }
 }

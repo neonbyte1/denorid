@@ -8,12 +8,12 @@ import {
   isFunction,
   MicroserviceServer,
   type PatternType,
+  RcpExecutionContext,
+  RcpHostArguments,
   serializePattern,
 } from "@denorid/core";
 import type { InjectorContext, Type } from "@denorid/injector";
 import { Logger, type LoggerService } from "@denorid/logger";
-import { MicroserviceExecutionContext } from "./execution_context.ts";
-import { MicroserviceHostArguments } from "./host_arguments.ts";
 
 /**
  * A handler entry mapping a serialized pattern to a controller method.
@@ -118,7 +118,7 @@ export abstract class Server<
         }
 
         if (this.globalGuards.length > 0) {
-          const executionCtx = new MicroserviceExecutionContext(
+          const executionCtx = new RcpExecutionContext(
             pattern,
             data,
             record.controllerType,
@@ -142,7 +142,7 @@ export abstract class Server<
         if (this.exceptionHandler) {
           await this.exceptionHandler.handle(
             err,
-            new MicroserviceHostArguments(pattern, data),
+            new RcpHostArguments(pattern, data),
           );
         } else {
           this.logger.error(

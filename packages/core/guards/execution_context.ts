@@ -21,7 +21,9 @@ export interface ExecutionContext extends HostArguments {
   /**
    * Gets a reference to the handler (method) that will be invoked next in the request pipeline.
    *
-   * @returns {HttpRouteFn} Reference of the handler (method).
+   * @template T Route method type
+   *
+   * @returns {T} Reference of the handler (method).
    */
-  getHandler(): HttpRouteFn;
+  getHandler<T = HttpRouteFn>(): T;
 }
