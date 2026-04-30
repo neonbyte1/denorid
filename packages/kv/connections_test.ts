@@ -1,5 +1,5 @@
 import type { ExceptionHandler } from "@denorid/core";
-import { RcpHostArguments } from "@denorid/core";
+import { RpcHostArguments } from "@denorid/core";
 import { Test } from "@denorid/core/testing";
 import { Injectable } from "@denorid/injector";
 import {
@@ -123,9 +123,9 @@ describe(KvConnections.name, () => {
 
     assertEquals(handled.length, 1);
     assertStrictEquals((handled[0] as unknown[])[0], failure);
-    assertInstanceOf((handled[0] as unknown[])[1], RcpHostArguments);
+    assertInstanceOf((handled[0] as unknown[])[1], RpcHostArguments);
     assertEquals(
-      ((handled[0] as unknown[])[1] as RcpHostArguments).switchToRpc()
+      ((handled[0] as unknown[])[1] as RpcHostArguments).switchToRpc()
         .getPattern(),
       "kv:connect",
     );
@@ -168,9 +168,9 @@ describe(KvConnections.name, () => {
 
     assertEquals(handled.length, 1);
     assertStrictEquals((handled[0] as unknown[])[0], failure);
-    assertInstanceOf((handled[0] as unknown[])[1], RcpHostArguments);
+    assertInstanceOf((handled[0] as unknown[])[1], RpcHostArguments);
     assertEquals(
-      ((handled[0] as unknown[])[1] as RcpHostArguments).switchToRpc()
+      ((handled[0] as unknown[])[1] as RpcHostArguments).switchToRpc()
         .getPattern(),
       "kv:close",
     );

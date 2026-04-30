@@ -1,16 +1,16 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { RcpExecutionContext, RcpHostArguments } from "./rcp_host_arguments.ts";
+import { RpcExecutionContext, RpcHostArguments } from "./rpc_host_arguments.ts";
 
-describe(RcpHostArguments.name, () => {
+describe(RpcHostArguments.name, () => {
   describe("switchToHttp()", () => {
-    it("throws - HTTP context not available in rcp", () => {
-      const host = new RcpHostArguments("test.pattern", { id: 1 });
+    it("throws - HTTP context not available in rpc", () => {
+      const host = new RpcHostArguments("test.pattern", { id: 1 });
 
       assertThrows(
         () => host.switchToHttp(),
         Error,
-        "switchToHttp() is not available in rcp context",
+        "switchToHttp() is not available in rpc context",
       );
     });
   });
@@ -18,7 +18,7 @@ describe(RcpHostArguments.name, () => {
   describe("switchToRpc()", () => {
     it("returns the pattern and data", () => {
       const data = { id: 42 };
-      const host = new RcpHostArguments("user.find", data);
+      const host = new RpcHostArguments("user.find", data);
       const rpc = host.switchToRpc();
 
       assertEquals(rpc.getPattern(), "user.find");
@@ -26,7 +26,7 @@ describe(RcpHostArguments.name, () => {
     });
 
     it("handles primitive payloads", () => {
-      const host = new RcpHostArguments("ping", "hello");
+      const host = new RpcHostArguments("ping", "hello");
       const rpc = host.switchToRpc();
 
       assertEquals(rpc.getPattern(), "ping");
@@ -34,24 +34,24 @@ describe(RcpHostArguments.name, () => {
     });
 
     it("handles undefined payload", () => {
-      const host = new RcpHostArguments("noop", undefined);
+      const host = new RpcHostArguments("noop", undefined);
       assertEquals(host.switchToRpc().getData(), undefined);
     });
 
     it("handles object pattern", () => {
-      const host = new RcpHostArguments({ cmd: "find" }, null);
+      const host = new RpcHostArguments({ cmd: "find" }, null);
       assertEquals(host.switchToRpc().getPattern(), { cmd: "find" });
     });
   });
 });
 
-describe(RcpExecutionContext.name, () => {
+describe(RpcExecutionContext.name, () => {
   class TestController {}
   const handlerFn = () => {};
 
   describe("getClass()", () => {
     it("returns the controller class", () => {
-      const ctx = new RcpExecutionContext(
+      const ctx = new RpcExecutionContext(
         "test.pattern",
         { id: 1 },
         TestController,
@@ -62,7 +62,7 @@ describe(RcpExecutionContext.name, () => {
     });
 
     it("returns the controller class with explicit type param", () => {
-      const ctx = new RcpExecutionContext(
+      const ctx = new RpcExecutionContext(
         "test.pattern",
         null,
         TestController,
@@ -75,7 +75,7 @@ describe(RcpExecutionContext.name, () => {
 
   describe("getHandler()", () => {
     it("returns the handler function", () => {
-      const ctx = new RcpExecutionContext(
+      const ctx = new RpcExecutionContext(
         "test.pattern",
         { id: 1 },
         TestController,

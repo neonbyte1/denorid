@@ -9,16 +9,16 @@ import type { Type } from "@denorid/injector/common";
 import type {
   HostArguments,
   HttpHostArguments,
-  RpcHostArguments,
+  RpcArguments,
 } from "./host_arguments.ts";
 
 /**
- * Host arguments for a RCP request context.
+ * Host arguments for an RPC request context.
  *
  * Implements {@link HostArguments} so it can be passed to {@link ExceptionHandler.handle}.
  * Use {@link switchToRpc} to access the message pattern and data payload.
  */
-export class RcpHostArguments implements HostArguments {
+export class RpcHostArguments implements HostArguments {
   /**
    * @param {Pattern} pattern - The message pattern.
    * @param {unknown} data - The message payload.
@@ -29,14 +29,14 @@ export class RcpHostArguments implements HostArguments {
   ) {}
 
   /**
-   * Not available in a RCP context - use {@link switchToRpc} instead.
+   * Not available in an RPC context - use {@link switchToRpc} instead.
    *
    * @throws {Error} Always.
    * @return {HttpHostArguments}
    */
   public switchToHttp(): HttpHostArguments {
     throw new ContextNotAvailableException(
-      "rcp",
+      "rpc",
       "switchToHttp",
       "switchToRpc",
     );
@@ -45,9 +45,9 @@ export class RcpHostArguments implements HostArguments {
   /**
    * Returns the RPC arguments for this request context.
    *
-   * @return {RpcHostArguments}
+   * @return {RpcArguments}
    */
-  public switchToRpc(): RpcHostArguments {
+  public switchToRpc(): RpcArguments {
     return {
       getPattern: () => this.pattern,
       getData: () => this.data,
@@ -56,13 +56,13 @@ export class RcpHostArguments implements HostArguments {
 }
 
 /**
- * Execution context for a RCP handler invocation.
+ * Execution context for an RPC handler invocation.
  *
  * Passed to global guards during message dispatch so they can inspect
  * the target controller and handler as well as the RPC arguments.
  */
-export class RcpExecutionContext<HandlerMethod = HttpRouteFn>
-  extends RcpHostArguments
+export class RpcExecutionContext<HandlerMethod = HttpRouteFn>
+  extends RpcHostArguments
   implements ExecutionContext {
   /**
    * @param HandlerMethod The handler method type

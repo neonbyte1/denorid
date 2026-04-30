@@ -37,5 +37,5 @@ export {
 } from "./http_application.ts";
 export * from "./microservices/mod.ts";
 export * from "./pipes/mod.ts";
-export * from "./rcp_host_arguments.ts";
+export * from "./rpc_host_arguments.ts";
 export * from "./type_guards.ts";

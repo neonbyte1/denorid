@@ -3,7 +3,7 @@ import type {
   ExceptionHandler,
   ExecutionContext,
 } from "@denorid/core";
-import { ForbiddenException, RcpHostArguments, UseGuards } from "@denorid/core";
+import { ForbiddenException, RpcHostArguments, UseGuards } from "@denorid/core";
 import { InjectorContext, type ModuleRef, type Type } from "@denorid/injector";
 import {
   assertEquals,
@@ -356,7 +356,7 @@ describe(KvQueueListener.name, () => {
     assertEquals(calls, [[undefined]]);
   });
 
-  it("delegates handler errors to the exception handler with RcpHostArguments", async () => {
+  it("delegates handler errors to the exception handler with RpcHostArguments", async () => {
     const failure = new Error("handler failed");
 
     @QueueHandler()
@@ -378,9 +378,9 @@ describe(KvQueueListener.name, () => {
 
     assertEquals(harness.exceptionCalls.length, 1);
     assertStrictEquals(harness.exceptionCalls[0][0], failure);
-    assertInstanceOf(harness.exceptionCalls[0][1], RcpHostArguments);
+    assertInstanceOf(harness.exceptionCalls[0][1], RpcHostArguments);
     assertEquals(
-      (harness.exceptionCalls[0][1] as RcpHostArguments).switchToRpc()
+      (harness.exceptionCalls[0][1] as RpcHostArguments).switchToRpc()
         .getPattern(),
       "failing",
     );
@@ -621,7 +621,7 @@ describe(KvQueueListener.name, () => {
       assertEquals(secondGuardCalled, false);
     });
 
-    it("passes RcpHostArguments with correct pattern when guard denies", async () => {
+    it("passes RpcHostArguments with correct pattern when guard denies", async () => {
       @UseGuards(() => false)
       @QueueHandler()
       class Handler {
@@ -641,9 +641,9 @@ describe(KvQueueListener.name, () => {
         payload: { x: 1 },
       });
 
-      assertInstanceOf(harness.exceptionCalls[0][1], RcpHostArguments);
+      assertInstanceOf(harness.exceptionCalls[0][1], RpcHostArguments);
       assertEquals(
-        (harness.exceptionCalls[0][1] as RcpHostArguments).switchToRpc()
+        (harness.exceptionCalls[0][1] as RpcHostArguments).switchToRpc()
           .getPattern(),
         "guard.host.check",
       );

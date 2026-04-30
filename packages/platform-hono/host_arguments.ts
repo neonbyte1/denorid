@@ -1,4 +1,4 @@
-import type { HttpHostArguments, RpcHostArguments } from "@denorid/core";
+import type { HttpHostArguments, RpcArguments } from "@denorid/core";
 import {
   ContextNotAvailableException,
   type HostArguments,
@@ -19,7 +19,7 @@ export class HonoHostArguments implements HostArguments {
     };
   }
 
-  public switchToRpc(): RpcHostArguments {
+  public switchToRpc(): RpcArguments {
     throw new ContextNotAvailableException(
       "HTTP",
       "switchToRpc",

@@ -8,8 +8,8 @@ import {
   type HttpRouteFn,
   isClass,
   isFunction,
-  RcpExecutionContext,
-  RcpHostArguments,
+  RpcExecutionContext,
+  RpcHostArguments,
 } from "@denorid/core";
 import {
   Inject,
@@ -126,7 +126,7 @@ export class KvQueueListener
         ];
 
         if (allGuards.length > 0) {
-          const executionCtx = new RcpExecutionContext(
+          const executionCtx = new RpcExecutionContext(
             msg.id,
             msg.payload,
             metadata.handler,
@@ -164,7 +164,7 @@ export class KvQueueListener
       } catch (err) {
         await this.exceptionHandler.handle(
           err,
-          new RcpHostArguments(msg.id, msg.payload),
+          new RpcHostArguments(msg.id, msg.payload),
         );
       }
     });

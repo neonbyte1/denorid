@@ -3,7 +3,7 @@ import {
   type HostArguments,
   type HttpHostArguments,
   type Pattern,
-  type RpcHostArguments,
+  type RpcArguments,
 } from "@denorid/core";
 
 /**
@@ -39,9 +39,9 @@ export class MicroserviceHostArguments implements HostArguments {
   /**
    * Returns the RPC arguments for this request context.
    *
-   * @return {RpcHostArguments}
+   * @return {RpcArguments}
    */
-  public switchToRpc(): RpcHostArguments {
+  public switchToRpc(): RpcArguments {
     return {
       getPattern: () => this.pattern,
       getData: () => this.data,

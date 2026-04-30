@@ -11,8 +11,8 @@ import {
   isFunction,
   MicroserviceServer,
   type PatternType,
-  RcpExecutionContext,
-  RcpHostArguments,
+  RpcExecutionContext,
+  RpcHostArguments,
   serializePattern,
 } from "@denorid/core";
 import type { InjectorContext, Type } from "@denorid/injector";
@@ -142,7 +142,7 @@ export abstract class Server<
         ];
 
         if (allGuards.length > 0) {
-          const executionCtx = new RcpExecutionContext(
+          const executionCtx = new RpcExecutionContext(
             pattern,
             data,
             record.controllerType,
@@ -176,7 +176,7 @@ export abstract class Server<
         if (this.exceptionHandler) {
           await this.exceptionHandler.handle(
             err,
-            new RcpHostArguments(pattern, data),
+            new RpcHostArguments(pattern, data),
           );
         } else {
           this.logger.error(

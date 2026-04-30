@@ -1,4 +1,4 @@
-import { ExceptionHandler, RcpHostArguments } from "@denorid/core";
+import { ExceptionHandler, RpcHostArguments } from "@denorid/core";
 import { Inject, Injectable } from "@denorid/injector";
 import { type ConnectionEntry, createConnectionMap } from "./_connections.ts";
 import { DEFAULT_QUEUE_NAME, KV_MODULE_OPTIONS } from "./_constants.ts";
@@ -59,7 +59,7 @@ export class KvConnections {
       } catch (err) {
         this.exceptionHandler.handle(
           err,
-          new RcpHostArguments("kv:connect", entry.path),
+          new RpcHostArguments("kv:connect", entry.path),
         );
       }
     }
@@ -79,7 +79,7 @@ export class KvConnections {
       } catch (err) {
         this.exceptionHandler.handle(
           err,
-          new RcpHostArguments("kv:close", entry.path),
+          new RpcHostArguments("kv:close", entry.path),
         );
       }
     }

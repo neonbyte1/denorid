@@ -27,7 +27,7 @@ export interface HttpHostArguments {
   getResponse<T = unknown>(): T;
 }
 
-export interface RpcHostArguments {
+export interface RpcArguments {
   /**
    * Returns the pattern of the incoming message.
    *
@@ -48,5 +48,5 @@ export interface RpcHostArguments {
  */
 export interface HostArguments {
   switchToHttp(): HttpHostArguments;
-  switchToRpc(): RpcHostArguments;
+  switchToRpc(): RpcArguments;
 }
