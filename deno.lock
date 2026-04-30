@@ -826,6 +826,12 @@
           "jsr:@panva/jose@^6.2.2"
         ]
       },
+      "packages/kv": {
+        "dependencies": [
+          "jsr:@denorid/core@^1.0.0-beta1",
+          "jsr:@denorid/injector@^1.0.0-beta1"
+        ]
+      },
       "packages/logger": {
         "dependencies": [
           "jsr:@std/fmt@^1.0.9"
