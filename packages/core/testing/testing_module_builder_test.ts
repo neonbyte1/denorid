@@ -4,9 +4,10 @@ import type {
   OnBeforeApplicationShutdown,
   OnModuleInit,
 } from "@denorid/injector";
-import { Inject, Injectable, Module } from "@denorid/injector";
-import { assertEquals, assertInstanceOf } from "@std/assert";
+import { Inject, Injectable, InjectorContext, Module } from "@denorid/injector";
+import { assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
 import { afterEach, describe, it } from "@std/testing/bdd";
+import { ExceptionHandler } from "../exceptions/handler.ts";
 import type { TestingModule } from "./testing_module.ts";
 import { Test, TestingModuleBuilder } from "./testing_module_builder.ts";
 
@@ -286,6 +287,27 @@ describe(TestingModuleBuilder.name, () => {
       assertEquals(mockerCalled, false);
     });
 
+    it("auto-mocks dependencies for explicit class providers", async () => {
+      const SERVICE = Symbol("service");
+      const DEP = Symbol("dep");
+
+      @Injectable()
+      class ServiceWithDep {
+        @Inject(DEP)
+        dep!: { value: number };
+      }
+
+      module = await Test.createTestingModule({
+        providers: [{ provide: SERVICE, useClass: ServiceWithDep }],
+      })
+        .useMocker((_token) => ({ value: 123 }))
+        .compile();
+
+      const svc = await module.get<ServiceWithDep>(SERVICE);
+
+      assertEquals(svc.dep, { value: 123 });
+    });
+
     it("explicit override wins over the auto-mocked value", async () => {
       const DEP = Symbol("dep");
 
@@ -306,6 +328,36 @@ describe(TestingModuleBuilder.name, () => {
       const svc = await module.get(ServiceWithDep);
 
       assertEquals(svc.dep, "from-override");
+    });
+  });
+
+  describe("useCoreGlobals()", () => {
+    it("registers core globals for isolated module tests", async () => {
+      @Injectable()
+      class ServiceWithCoreGlobals {
+        @Inject(ExceptionHandler)
+        exceptionHandler!: ExceptionHandler;
+
+        @Inject(InjectorContext)
+        injectorContext!: InjectorContext;
+      }
+
+      module = await Test.createTestingModule({
+        providers: [ServiceWithCoreGlobals],
+      })
+        .useCoreGlobals()
+        .compile();
+
+      const svc = await module.get(ServiceWithCoreGlobals);
+
+      assertInstanceOf(svc.exceptionHandler, ExceptionHandler);
+      assertInstanceOf(svc.injectorContext, InjectorContext);
+    });
+
+    it("keeps core globals opt-in", async () => {
+      module = await Test.createTestingModule({}).compile();
+
+      await assertRejects(() => module!.get(ExceptionHandler));
     });
   });
 

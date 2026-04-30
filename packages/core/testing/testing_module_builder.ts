@@ -11,6 +11,7 @@ import {
   InjectorContext,
   isClassProvider,
 } from "@denorid/injector";
+import { ExceptionHandler } from "../exceptions/handler.ts";
 import type { MockFactory } from "./mock_factory.ts";
 import { TestingModule } from "./testing_module.ts";
 
@@ -57,6 +58,7 @@ export interface OverrideBuilder {
 export class TestingModuleBuilder {
   private readonly overrides: Provider[] = [];
   private mocker: MockFactory | undefined;
+  private coreGlobals = false;
 
   public constructor(private readonly metadata: ModuleMetadata) {}
 
@@ -108,6 +110,18 @@ export class TestingModuleBuilder {
   }
 
   /**
+   * Registers the same core global providers that application bootstrap makes
+   * available, allowing feature modules to be compiled in isolation.
+   *
+   * @returns {TestingModuleBuilder}
+   */
+  public useCoreGlobals(): TestingModuleBuilder {
+    this.coreGlobals = true;
+
+    return this;
+  }
+
+  /**
    * Compile the testing module and return a {@linkcode TestingModule}.
    *
    * @returns {Promise<TestingModule>}
@@ -131,7 +145,25 @@ export class TestingModuleBuilder {
       exports: [],
     };
 
-    const ctx = await InjectorContext.create(dynamicModule);
+    const ctx = await InjectorContext.create(
+      dynamicModule,
+      this.coreGlobals
+        ? {
+          beforeInit: (ctx) => {
+            ctx.registerGlobal(
+              {
+                provide: ExceptionHandler,
+                useValue: new ExceptionHandler(ctx),
+              },
+              {
+                provide: InjectorContext,
+                useValue: ctx,
+              },
+            );
+          },
+        }
+        : undefined,
+    );
 
     return new TestingModule(ctx);
   }
