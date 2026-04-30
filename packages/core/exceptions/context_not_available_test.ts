@@ -1,4 +1,4 @@
-import { assertInstanceOf, assertMatch } from "@std/assert";
+import { assertEquals, assertInstanceOf, assertMatch } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { ContextNotAvailableException } from "./context_not_available.ts";
 
@@ -23,5 +23,18 @@ describe("ContextNotAvailableException", () => {
     assertMatch(err.message, /switchToHttp\(\)/);
     assertMatch(err.message, /microservice context/);
     assertMatch(err.message, /switchToRpc\(\)/);
+  });
+
+  it("omits the expected method hint when none is provided", () => {
+    const err = new ContextNotAvailableException(
+      "http",
+      "switchToRpc",
+      undefined,
+    );
+
+    assertEquals(
+      err.message,
+      "switchToRpc() is not available in http context.",
+    );
   });
 });
