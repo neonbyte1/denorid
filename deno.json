@@ -1,5 +1,6 @@
 {
   "tasks": {},
+  "unstable": ["kv"],
   "workspace":[
     "./packages/core",
     "./packages/drizzle",
