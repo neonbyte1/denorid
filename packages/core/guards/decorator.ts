@@ -5,10 +5,43 @@ import {
   type MethodDecorator,
   type Type,
 } from "@denorid/injector";
+import { CONTROLLER_REQUEST_MAPPING } from "../_constants.ts";
 import { preserveRequestMappingMetadata } from "../http/_request_mapping.ts";
 import type { CanActivate, CanActivateFn } from "./can_activate.ts";
 
 export const GUARDS_METADATA = Symbol.for("denorid.guards");
+
+/**
+ * Returns the method-level guards registered on `type` for the given `methodName`.
+ *
+ * Guards applied via {@link UseGuards} on a method are stored alongside the HTTP
+ * request-mapping entry for that method. This helper retrieves them without
+ * requiring callers to know about the HTTP-internal metadata structure.
+ *
+ * @param {Type} type - The controller or handler class constructor.
+ * @param {string | symbol} methodName - The method name to look up.
+ * @returns {Set<Type<CanActivate> | CanActivate | CanActivateFn> | undefined}
+ */
+export function getMethodGuards(
+  type: Type,
+  methodName: string | symbol,
+): Set<Type<CanActivate> | CanActivate | CanActivateFn> | undefined {
+  const metadata = type[Symbol.metadata];
+
+  if (metadata == null) {
+    return undefined;
+  }
+
+  const requestMapping = metadata[CONTROLLER_REQUEST_MAPPING] as
+    | Array<{ name: string | symbol; guards?: Set<unknown> }>
+    | undefined;
+
+  const entry = requestMapping?.find(({ name }) => name === methodName);
+
+  return entry?.guards as
+    | Set<Type<CanActivate> | CanActivate | CanActivateFn>
+    | undefined;
+}
 
 /**
  * Decorator that binds one or more guards to a controller class or a single
@@ -69,7 +102,7 @@ export function UseGuards(
       cache = preserveRequestMappingMetadata(ctx).guards ??= new Set();
     } else {
       cache = (ctx.metadata[GUARDS_METADATA] ??= new Set()) as Set<
-        CanActivate | CanActivateFn
+        Type<CanActivate> | CanActivate | CanActivateFn
       >;
     }
 

@@ -4,7 +4,7 @@ import { describe, it } from "@std/testing/bdd";
 import { CONTROLLER_REQUEST_MAPPING } from "../_constants.ts";
 import type { RequestMappingMetadata } from "../http/_request_mapping.ts";
 import type { CanActivate, CanActivateFn } from "./can_activate.ts";
-import { GUARDS_METADATA, UseGuards } from "./decorator.ts";
+import { getMethodGuards, GUARDS_METADATA, UseGuards } from "./decorator.ts";
 
 class MockGuard implements CanActivate {
   public canActivate(): boolean {
@@ -239,5 +239,52 @@ describe("@UseGuards()", () => {
 
       assertEquals(result, fn);
     });
+  });
+});
+
+describe("getMethodGuards()", () => {
+  it("returns undefined when the type has no Symbol.metadata", () => {
+    class NoMeta {}
+
+    // Strip metadata so the branch is exercised
+    Object.defineProperty(NoMeta, Symbol.metadata, { value: null });
+
+    assertEquals(getMethodGuards(NoMeta, "handle"), undefined);
+  });
+
+  it("returns undefined when no request-mapping entry exists for the method", () => {
+    class Ctrl {}
+
+    assertEquals(getMethodGuards(Ctrl, "handle"), undefined);
+  });
+
+  it("returns undefined when the entry exists but has no guards", () => {
+    class Ctrl {
+      public handle(): void {}
+    }
+
+    // Create a request-mapping entry without guards via the decorator
+    const mappings =
+      (Ctrl[Symbol.metadata] ??= {})[CONTROLLER_REQUEST_MAPPING] = [{
+        name: "handle",
+      }] as RequestMappingMetadata[];
+
+    void mappings;
+
+    assertEquals(getMethodGuards(Ctrl, "handle"), undefined);
+  });
+
+  it("returns the guards set when the entry has guards", () => {
+    const guardFn: CanActivateFn = () => true;
+
+    class Ctrl {
+      @UseGuards(guardFn)
+      public handle(): void {}
+    }
+
+    const guards = getMethodGuards(Ctrl, "handle");
+
+    assertInstanceOf(guards, Set);
+    assertEquals(guards.has(guardFn), true);
   });
 });
