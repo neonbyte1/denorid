@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://jsr.io/@denorid"><img alt="JSR" src="https://jsr.io/badges/@denorid"/></a>
+  <a href="https://jsr.io/@denorid"><img alt="JSR" src="https://jsr.io/badges/@denorid/core"/></a>
   <a href="https://codecov.io/github/neonbyte1/denorid" >
     <img src="https://codecov.io/github/neonbyte1/denorid/branch/main/graph/badge.svg?token=5IZTIW5KF1"/>
   </a>
