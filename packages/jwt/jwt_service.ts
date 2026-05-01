@@ -21,7 +21,7 @@ import { WrongKeyError } from "./exceptions.ts";
  *
  * Key material and default sign/verify options are resolved from module-level
  * {@link JwtModuleOptions} and may be overridden per-operation via the `options` argument.
- * Asymmetric algorithms (RS256, ES256, …) are selected automatically when a `privateKey` /
+ * Asymmetric algorithms (RS256, ES256, ...) are selected automatically when a `privateKey` /
  * `publicKey` is present; otherwise HMAC (HS256) is used.
  */
 @Injectable()

@@ -534,7 +534,7 @@ export class Logger implements LoggerService {
    * @example
    * ```ts
    * Logger.overrideLogger("Bootstrap");
-   * Logger.log("Starting…");
+   * Logger.log("Starting...");
    * Logger.overrideLogger(null); // restore previous context
    * ```
    */
@@ -666,7 +666,7 @@ export class Logger implements LoggerService {
    * is pretty-printed.
    *
    * @param {unknown} message - The value to include as the `message` field.
-   * @param {PrintMessageOptions} options - Contextual metadata (level, context, errorStack, …).
+   * @param {PrintMessageOptions} options - Contextual metadata (level, context, errorStack, ...).
    */
   protected printAsJson(
     message: unknown,
@@ -779,7 +779,7 @@ export class Logger implements LoggerService {
 
   /**
    * Returns `true` when `stack` looks like a JavaScript stack trace string
-   * (i.e. a multi-line string where the second line starts with `    at …:line:col`).
+   * (i.e. a multi-line string where the second line starts with `    at ...:line:col`).
    *
    * @param {unknown} stack - The value to test.
    */
@@ -998,7 +998,7 @@ export class Logger implements LoggerService {
    * - **String**: colourises with the level colour via {@linkcode Logger.colorize}.
    * - **Plain object** (`{}`): inspects and prefixes with `Object(<keyCount>)`.
    * - **Array**: inspects and prefixes with `Array(<length>)`.
-   * - **Anything else** (numbers, errors, Maps, …): formatted with `node:util` `inspect`.
+   * - **Anything else** (numbers, errors, Maps, ...): formatted with `node:util` `inspect`.
    *
    * @param {unknown} message - The value to stringify.
    * @param {LogLevel} level - Severity level passed through to colourisation helpers.
