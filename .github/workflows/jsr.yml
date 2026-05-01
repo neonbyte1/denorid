@@ -14,9 +14,18 @@ jobs:
       - name: 🌀 checkout repository
         uses: actions/checkout@v6
 
+      - name: 🏗️ setup deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+          cache: true
+
       - name: 🔍 query the current package version
         run: echo "result=$(cat "packages/${{ inputs.package }}/deno.json" | jq -r '.version')" >> $GITHUB_OUTPUT
         id: version
 
       - name: 👷 publish package
-        run: ./publish.sh ${{ inputs.package }} ${{ steps.version.outputs.result }}
+        run: |
+          deno --version
+          export DENO_BIN_PATH="$(which deno)"
+          ./publish.sh ${{ inputs.package }} ${{ steps.version.outputs.result }}
