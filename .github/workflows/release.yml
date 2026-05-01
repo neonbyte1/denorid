@@ -44,6 +44,8 @@ jobs:
           - jwt
           - microservices
           - platform-hono
+          - kv
+          - schedule
     uses: ./.github/workflows/jsr.yml
     with:
       package: ${{ matrix.package }}
