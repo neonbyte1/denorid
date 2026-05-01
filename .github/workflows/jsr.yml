@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 🌀 checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: 🔍 query the current package version
         run: echo "result=$(cat "packages/${{ inputs.package }}/deno.json" | jq -r '.version')" >> $GITHUB_OUTPUT
