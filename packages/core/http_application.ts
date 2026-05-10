@@ -160,7 +160,14 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
           options.inheritAppConfig ? [...this.globalGuards] : [],
         );
         server.registerHandlers(types, this.ctx);
-        server.listen();
+        const listenPromise = server.listen();
+        // Race against a resolved microtask: immediate rejections surface here,
+        // long-running servers' pending promises yield to the microtask instead.
+        await new Promise<void>((resolve, reject) => {
+          listenPromise.then(() => resolve(), reject);
+          Promise.resolve().then(resolve);
+        });
+        listenPromise.catch(() => {});
         started.push(server);
       } catch (error) {
         await Promise.all(started.map((s) => s.close().catch(() => {})));
