@@ -10,7 +10,7 @@ import type { MicroserviceServer } from "./microservices/server.ts";
 /**
  * Interface defining the core application context.
  */
-export interface ApplicationContext {
+export interface ApplicationContext extends AsyncDisposable {
   /**
    * Resolves a registered provider by its injection token.
    *
@@ -71,6 +71,13 @@ export interface ApplicationContext {
    * @returns {Promise<void>}
    */
   close(): Promise<void>;
+
+  /**
+   * Enables `await using` syntax by delegating to {@link close}.
+   *
+   * @returns {Promise<void>}
+   */
+  [Symbol.asyncDispose](): Promise<void>;
 }
 
 interface GlobalUsageContext {

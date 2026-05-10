@@ -79,4 +79,11 @@ export class TestingModule implements ApplicationContext {
     await this.ctx.onBeforeApplicationShutdown();
     await this.ctx.onApplicationShutdown();
   }
+
+  /**
+   * @inheritdoc
+   */
+  public [Symbol.asyncDispose](): Promise<void> {
+    return this.close();
+  }
 }

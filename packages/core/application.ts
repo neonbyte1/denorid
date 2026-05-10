@@ -139,5 +139,12 @@ export class Application<
     }
   }
 
+  /**
+   * @inheritdoc
+   */
+  public [Symbol.asyncDispose](): Promise<void> {
+    return this.close();
+  }
+
   // deno-coverage-ignore-stop
 }
