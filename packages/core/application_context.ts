@@ -5,6 +5,7 @@ import type {
   Tag,
 } from "@denorid/injector";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
+import type { MicroserviceServer } from "./microservices/server.ts";
 
 /**
  * Interface defining the core application context.
@@ -83,6 +84,26 @@ interface GlobalUsageContext {
   ): void;
 }
 
+export interface MicroserviceApplicationContext
+  extends ApplicationContext, GlobalUsageContext {
+  /**
+   * Starts the microservice.
+   */
+  listen(): Promise<void>;
+}
+
+/**
+ * Options for connecting a microservice to an HTTP application.
+ */
+export interface ConnectMicroserviceOptions {
+  /**
+   * When true, microservice inherits global guards from the HTTP application.
+   *
+   * @default false
+   */
+  inheritAppConfig?: boolean;
+}
+
 export interface HttpApplicationContext
   extends ApplicationContext, GlobalUsageContext {
   /**
@@ -91,12 +112,23 @@ export interface HttpApplicationContext
    * @todo: return a promise instead
    */
   listen(): void;
-}
 
-export interface MicroserviceApplicationContext
-  extends ApplicationContext, GlobalUsageContext {
   /**
-   * Starts the microservice.
+   * Connects a microservice server to this HTTP application.
+   *
+   * @param {MicroserviceServer<T>} server - The microservice server to connect.
+   * @param {ConnectMicroserviceOptions} [options] - Connection options.
+   * @returns {this} This application instance for method chaining.
    */
-  listen(): Promise<void>;
+  connectMicroservice<T extends object = Record<string, unknown>>(
+    server: MicroserviceServer<T>,
+    options?: ConnectMicroserviceOptions,
+  ): this;
+
+  /**
+   * Starts all connected microservices.
+   *
+   * @returns {Promise<void>}
+   */
+  startAllMicroservices(): Promise<void>;
 }

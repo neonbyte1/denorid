@@ -1,11 +1,16 @@
 import type { InjectorContext, Type } from "@denorid/injector";
+import { MESSAGE_CONTROLLER_METADATA } from "./_constants.ts";
 import { Application, type ApplicationOptions } from "./application.ts";
-import type { HttpApplicationContext } from "./application_context.ts";
+import type {
+  ConnectMicroserviceOptions,
+  HttpApplicationContext,
+} from "./application_context.ts";
 import { ExceptionHandler } from "./exceptions/handler.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
 import type { CorsOptions } from "./http/cors.ts";
+import type { MicroserviceServer } from "./microservices/server.ts";
 
 /**
  * Core HTTP-specific configuration options for an HTTP application.
@@ -67,6 +72,10 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   private listening?: "pending" | "active";
 
   private readonly globalGuards: Set<CanActivate | CanActivateFn> = new Set();
+  private readonly microservices: Map<
+    MicroserviceServer<object>,
+    ConnectMicroserviceOptions
+  > = new Map();
 
   /**
    * @param {Type} target - The root module class used to derive the logger name.
@@ -120,8 +129,54 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   /**
    * @inheritdoc
    */
+  public connectMicroservice<T extends object = Record<string, unknown>>(
+    server: MicroserviceServer<T>,
+    options: ConnectMicroserviceOptions = {},
+  ): this {
+    this.microservices.set(server as MicroserviceServer<object>, options);
+    return this;
+  }
+
+  /**
+   * @inheritdoc
+   */
+  public async startAllMicroservices(): Promise<void> {
+    if (this.microservices.size === 0) {
+      return;
+    }
+
+    await this.init();
+
+    const tokens = this.ctx.container.getTokensByTag(
+      MESSAGE_CONTROLLER_METADATA,
+    );
+    const types = tokens as Type[];
+    const started: MicroserviceServer<object>[] = [];
+
+    for (const [server, options] of this.microservices) {
+      try {
+        server.setExceptionHandler(this.exceptionHandler);
+        server.setGlobalGuards(
+          options.inheritAppConfig ? [...this.globalGuards] : [],
+        );
+        server.registerHandlers(types, this.ctx);
+        server.listen();
+        started.push(server);
+      } catch (error) {
+        await Promise.all(started.map((s) => s.close().catch(() => {})));
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * @inheritdoc
+   */
   public override async close(): Promise<void> {
     if (this.initialized) {
+      await Promise.all(
+        [...this.microservices.keys()].map((s) => s.close().catch(() => {})),
+      );
       await this.adapter.close();
       await super.close();
     }
