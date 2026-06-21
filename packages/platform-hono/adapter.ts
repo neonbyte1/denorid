@@ -1,6 +1,9 @@
-import type { ControllerMapping, HttpAdapter } from "@denorid/core";
+import type {
+  ControllerMapping,
+  ControllerMappingOptions,
+  HttpAdapter,
+} from "@denorid/core";
 import { Hono } from "@hono/hono";
-import type { ControllerMappingOptions } from "../core/http/adapter.ts";
 import { HonoControllerMapping } from "./controller_mapping.ts";
 
 export class HonoAdapter implements HttpAdapter {
