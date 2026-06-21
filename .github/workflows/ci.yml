@@ -43,7 +43,7 @@ jobs:
 
       - name: 🧪 run all tests and generate lcov file
         run: |
-          deno test --clean --coverage packages/
+          deno test --allow-env --clean --coverage packages/
           deno coverage --lcov --output=coverage.lcov coverage
           rm -rf coverage
 
