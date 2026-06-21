@@ -277,6 +277,24 @@ export interface NoThrowOption<T extends boolean = boolean> {
 }
 
 /**
+ * Non-empty tuple of enum values for a Drizzle `text({ enum })` column.
+ *
+ * Bridges a Zod enum's `.options` (typed as `T[]`) to the non-empty tuple
+ * (`[T, ...T[]]`) that `text({ enum })` requires, while preserving the literal
+ * union in the column type:
+ *
+ * ```ts
+ * import type { DrizzleEnum } from "@hags/core";
+ * import { ProjectType } from "@hags/contracts";
+ * text({ enum: ProjectType.options as DrizzleEnum<ProjectType> })
+ * ```
+ *
+ * Import it with `import type` so it stays erased — schema modules are executed
+ * by drizzle-kit and must not pull in `core`'s runtime graph.
+ */
+export type DrizzleEnum<T extends string = string> = [T, ...T[]];
+
+/**
  * Type alias for a Drizzle ORM PostgreSQL database instance.
  *
  * This represents a database connection created using the node-postgres driver
