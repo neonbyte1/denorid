@@ -46,6 +46,7 @@ jobs:
           - microservices
           - platform-hono
           - kv
+          - s3
           - schedule
     uses: ./.github/workflows/jsr.yml
     with:
