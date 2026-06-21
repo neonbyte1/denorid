@@ -1,6 +1,6 @@
 {
   "name": "@denorid/drizzle",
-  "version": "1.0.0-beta1",
+  "version": "1.0.0-beta2",
   "license": "MIT",
   "exports": "./mod.ts",
   "imports": {
