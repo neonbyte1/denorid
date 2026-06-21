@@ -37,7 +37,9 @@ if [[ \
   if ! test -z "${GITHUB_RUN_ID}"; then
     echo "☁️  publishing to https://jsr.io/@denorid/${1} ..."
 
-    npx jsr publish
+    # npm:jsr is still on 0.14.3 which STILL leads to the now resloved issue:
+    # https://github.com/denoland/deno/issues/33753
+    deno publish
   else
     echo "🤔 the package was not published because this job has not been triggered by GitHub Actions"
   fi
