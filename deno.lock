@@ -1,85 +1,115 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@hono/hono@^4.12.12": "4.12.12",
-    "jsr:@panva/jose@^6.2.2": "6.2.2",
-    "jsr:@std/assert@^1.0.17": "1.0.19",
-    "jsr:@std/assert@^1.0.18": "1.0.19",
-    "jsr:@std/async@^1.1.0": "1.2.0",
+    "jsr:@denorid/core@^1.0.0-beta1": "1.0.0-beta1",
+    "jsr:@denorid/injector@^1.0.0-beta1": "1.0.0-beta1",
+    "jsr:@denorid/logger@^1.0.0-beta1": "1.0.0-beta1",
+    "jsr:@hono/hono@^4.12.12": "4.12.26",
+    "jsr:@panva/jose@^6.2.2": "6.2.3",
+    "jsr:@std/assert@^1.0.19": "1.0.19",
+    "jsr:@std/async@^1.4.0": "1.4.0",
     "jsr:@std/bytes@^1.0.5": "1.0.6",
     "jsr:@std/bytes@^1.0.6": "1.0.6",
-    "jsr:@std/cli@^1.0.28": "1.0.28",
+    "jsr:@std/cli@^1.0.30": "1.0.30",
     "jsr:@std/crypto@^1.0.5": "1.0.5",
-    "jsr:@std/data-structures@^1.0.10": "1.0.10",
+    "jsr:@std/crypto@^1.1.0": "1.1.0",
+    "jsr:@std/data-structures@^1.1.0": "1.1.0",
     "jsr:@std/encoding@^1.0.10": "1.0.10",
-    "jsr:@std/fmt@^1.0.9": "1.0.9",
-    "jsr:@std/fs@^1.0.22": "1.0.23",
-    "jsr:@std/fs@^1.0.23": "1.0.23",
-    "jsr:@std/html@^1.0.5": "1.0.5",
-    "jsr:@std/http@^1.0.25": "1.0.25",
-    "jsr:@std/internal@^1.0.12": "1.0.12",
+    "jsr:@std/fmt@^1.0.10": "1.0.10",
+    "jsr:@std/fmt@^1.0.9": "1.0.10",
+    "jsr:@std/fs@^1.0.24": "1.0.24",
+    "jsr:@std/html@^1.0.7": "1.0.7",
+    "jsr:@std/http@^1.0.25": "1.1.1",
+    "jsr:@std/http@^1.1.1": "1.1.1",
+    "jsr:@std/internal@^1.0.12": "1.0.14",
+    "jsr:@std/internal@^1.0.14": "1.0.14",
     "jsr:@std/media-types@^1.1.0": "1.1.0",
     "jsr:@std/msgpack@^1.0.3": "1.0.3",
     "jsr:@std/net@^1.0.6": "1.0.6",
-    "jsr:@std/path@^1.1.4": "1.1.4",
-    "jsr:@std/streams@^1.0.17": "1.0.17",
-    "jsr:@std/testing@^1.0.17": "1.0.17",
-    "jsr:@std/uuid@^1.1.0": "1.1.0",
-    "npm:@types/amqplib@~0.10.8": "0.10.8",
-    "npm:amqplib@^1.0.3": "1.0.3",
+    "jsr:@std/path@^1.1.5": "1.1.5",
+    "jsr:@std/streams@^1.1.1": "1.1.1",
+    "jsr:@std/testing@^1.0.19": "1.0.19",
+    "jsr:@std/uuid@^1.1.0": "1.1.1",
+    "npm:amqplib@^1.2.0": "1.2.0",
     "npm:drizzle-orm@^1.0.0-beta.15-859cf75": "1.0.0-beta.9-e89174b_@libsql+client@0.17.0_@types+mssql@9.1.9_mssql@11.0.1",
-    "npm:zod@^4.3.6": "4.3.6"
+    "npm:zod@^4.3.6": "4.4.3",
+    "npm:zod@^4.4.3": "4.4.3"
   },
   "jsr": {
+    "@denorid/core@1.0.0-beta1": {
+      "integrity": "69fc3a508b99bec4c5ab7db0db276b8ed826d67638637bdd0c2a1fb6d37b59e9",
+      "dependencies": [
+        "jsr:@std/http@^1.0.25",
+        "jsr:@std/uuid"
+      ]
+    },
+    "@denorid/injector@1.0.0-beta1": {
+      "integrity": "e4c99b7d6c0c57d6aa328ebdef5cf9807b21e2ea10aa63be27fc37296b451d59"
+    },
+    "@denorid/logger@1.0.0-beta1": {
+      "integrity": "18bd4d99551b6d61be4a955db6fa80d67175f7e7a607d77bac8366ff6fa2a8be",
+      "dependencies": [
+        "jsr:@std/fmt@^1.0.9"
+      ]
+    },
     "@hono/hono@4.12.12": {
       "integrity": "dc765178d38b5c4619b358062f6aa5514f7205bb0530b2823ff6265bec69c535"
+    },
+    "@hono/hono@4.12.26": {
+      "integrity": "f473c70caaa2bb4aad40354195aef58a58c685692d701e1349d1abbf08da22bd"
     },
     "@panva/jose@6.2.2": {
       "integrity": "bfe1178a9d2f53effa5ee6c1786b6534a39690b03969472b3ad690600d8898ec"
     },
+    "@panva/jose@6.2.3": {
+      "integrity": "57cc772f01b2ac60f847a7e6ec815059762768186266ed833fb59953e9611312"
+    },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
-        "jsr:@std/internal"
+        "jsr:@std/internal@^1.0.12"
       ]
     },
-    "@std/async@1.2.0": {
-      "integrity": "c059c6f6d95ca7cc012ae8e8d7164d1697113d54b0b679e4372b354b11c2dee5"
+    "@std/async@1.4.0": {
+      "integrity": "4d70b008634f571cff9b554090d628c76141c32613aae0ff283fd5fa23d0c379"
     },
     "@std/bytes@1.0.6": {
       "integrity": "f6ac6adbd8ccd99314045f5703e23af0a68d7f7e58364b47d2c7f408aeb5820a"
     },
-    "@std/cli@1.0.28": {
-      "integrity": "74ef9b976db59ca6b23a5283469c9072be6276853807a83ec6c7ce412135c70a"
+    "@std/cli@1.0.30": {
+      "integrity": "769446536522d0417d7127ebcabcafac1ab0ce6766d0eb3fca1d36326fe98d13"
     },
     "@std/crypto@1.0.5": {
       "integrity": "0dcfbb319fe0bba1bd3af904ceb4f948cde1b92979ec1614528380ed308a3b40"
     },
-    "@std/data-structures@1.0.10": {
-      "integrity": "f574f86b0e07c69b9edc555fcc814b57d29258bad39fd5a34ba8a80ecf033cfe"
+    "@std/crypto@1.1.0": {
+      "integrity": "b8d6d0a6377a32b213af2661ed7bf1062d94feac0c57def5526a8e74a95c3ec8"
+    },
+    "@std/data-structures@1.1.0": {
+      "integrity": "c35ae4ad5d8e41a38573c2fe3e19b18ea2505f63cfea201edcb8720aca1f7f58"
     },
     "@std/encoding@1.0.10": {
       "integrity": "8783c6384a2d13abd5e9e87a7ae0520a30e9f56aeeaa3bdf910a3eaaf5c811a1"
     },
-    "@std/fmt@1.0.9": {
-      "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
+    "@std/fmt@1.0.10": {
+      "integrity": "90dfba288802ac6de82fb31d0917eb9e4450b9925b954d5e51fc29ac07419db5"
     },
-    "@std/fs@1.0.23": {
-      "integrity": "3ecbae4ce4fee03b180fa710caff36bb5adb66631c46a6460aaad49515565a37",
+    "@std/fs@1.0.24": {
+      "integrity": "f3061b45b81673a2bece689da041df32d174be064c89eb6397fb5718d3fb7877",
       "dependencies": [
         "jsr:@std/path"
       ]
     },
-    "@std/html@1.0.5": {
-      "integrity": "4e2d693f474cae8c16a920fa5e15a3b72267b94b84667f11a50c6dd1cb18d35e"
+    "@std/html@1.0.7": {
+      "integrity": "175c818905a6e75743c69c251395e273d82698e58cfe7dd76268d70e28b8d8fe"
     },
-    "@std/http@1.0.25": {
-      "integrity": "577b4252290af1097132812b339fffdd55fb0f4aeb98ff11bdbf67998aa17193",
+    "@std/http@1.1.1": {
+      "integrity": "e343a9a80aea07c716b91be5c79df764144430ad2dd7c9121ed7443f08dc74f7",
       "dependencies": [
         "jsr:@std/cli",
         "jsr:@std/encoding",
-        "jsr:@std/fmt",
-        "jsr:@std/fs@^1.0.23",
+        "jsr:@std/fmt@^1.0.10",
+        "jsr:@std/fs",
         "jsr:@std/html",
         "jsr:@std/media-types",
         "jsr:@std/net",
@@ -87,8 +117,8 @@
         "jsr:@std/streams"
       ]
     },
-    "@std/internal@1.0.12": {
-      "integrity": "972a634fd5bc34b242024402972cd5143eac68d8dffaca5eaa4dba30ce17b027"
+    "@std/internal@1.0.14": {
+      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
     },
     "@std/media-types@1.1.0": {
       "integrity": "c9d093f0c05c3512932b330e3cc1fe1d627b301db33a4c2c2185c02471d6eaa4"
@@ -102,23 +132,23 @@
     "@std/net@1.0.6": {
       "integrity": "110735f93e95bb9feb95790a8b1d1bf69ec0dc74f3f97a00a76ea5efea25500c"
     },
-    "@std/path@1.1.4": {
-      "integrity": "1d2d43f39efb1b42f0b1882a25486647cb851481862dc7313390b2bb044314b5",
+    "@std/path@1.1.5": {
+      "integrity": "ccea00982ea28c36becaf6e62f855406c76a8c32d462f66f415bbb7d83a271bc",
       "dependencies": [
-        "jsr:@std/internal"
+        "jsr:@std/internal@^1.0.14"
       ]
     },
-    "@std/streams@1.0.17": {
-      "integrity": "7859f3d9deed83cf4b41f19223d4a67661b3d3819e9fc117698f493bf5992140"
+    "@std/streams@1.1.1": {
+      "integrity": "92556d350e537e9dce527a6d08f6f15be3ff65e656079dea69d15252187c7613"
     },
-    "@std/testing@1.0.17": {
-      "integrity": "87bdc2700fa98249d48a17cd72413352d3d3680dcfbdb64947fd0982d6bbf681",
+    "@std/testing@1.0.19": {
+      "integrity": "f4236172365b216728dc3cc8b5e80a9f4c33083d1e4ede7613d5b25b4014898e",
       "dependencies": [
-        "jsr:@std/assert@^1.0.17",
+        "jsr:@std/assert",
         "jsr:@std/async",
         "jsr:@std/data-structures",
-        "jsr:@std/fs@^1.0.22",
-        "jsr:@std/internal",
+        "jsr:@std/fs",
+        "jsr:@std/internal@^1.0.14",
         "jsr:@std/path"
       ]
     },
@@ -126,7 +156,14 @@
       "integrity": "6268db2ccf172849c9be80763354ca305d49ef4af41fe995623d44fcc3f7457c",
       "dependencies": [
         "jsr:@std/bytes@^1.0.6",
-        "jsr:@std/crypto"
+        "jsr:@std/crypto@^1.0.5"
+      ]
+    },
+    "@std/uuid@1.1.1": {
+      "integrity": "7b49060282d90f72fec64952f8c7a2914cbe6fdba3eca665f8cedc90830154a7",
+      "dependencies": [
+        "jsr:@std/bytes@^1.0.6",
+        "jsr:@std/crypto@^1.1.0"
       ]
     }
   },
@@ -373,12 +410,6 @@
     "@tediousjs/connection-string@0.5.0": {
       "integrity": "sha512-7qSgZbincDDDFyRweCIEvZULFAw5iz/DeunhvuxpL31nfntX3P4Yd4HkHBRg9H8CdqY1e5WFN1PZIz/REL9MVQ=="
     },
-    "@types/amqplib@0.10.8": {
-      "integrity": "sha512-vtDp8Pk1wsE/AuQ8/Rgtm6KUZYqcnTgNvEHwzCkX8rL7AGsC6zqAfKAAJhUZXFhM/Pp++tbnUHiam/8vVpPztA==",
-      "dependencies": [
-        "@types/node"
-      ]
-    },
     "@types/mssql@9.1.9": {
       "integrity": "sha512-P0nCgw6vzY23UxZMnbI4N7fnLGANt4LI4yvxze1paPj+LuN28cFv5EI+QidP8udnId/BKhkcRhm/BleNsjK65A==",
       "dependencies": [
@@ -421,8 +452,8 @@
     "agent-base@7.1.4": {
       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="
     },
-    "amqplib@1.0.3": {
-      "integrity": "sha512-nsrXa59tvX4HPjPPW8JJGuBb/Db0MOq3DOhGdSbIY7bTsQDMV2fmF9c3i74g/8Gt9+QWyrxfEPppOOoV9lK1uQ==",
+    "amqplib@1.2.0": {
+      "integrity": "sha512-WVvkHAaL848/zjpJXXnN/80nPhCrwxlXWQFHTRDjbEGkwaKK+Ht+8iAC4LeKEzQTOJKxNnUGVLNy/70iFHkeEg==",
       "dependencies": [
         "buffer-more-ints"
       ]
@@ -787,17 +818,17 @@
         "is-wsl"
       ]
     },
-    "zod@4.3.6": {
-      "integrity": "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="
+    "zod@4.4.3": {
+      "integrity": "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="
     }
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/assert@^1.0.18",
-      "jsr:@std/fmt@^1.0.9",
-      "jsr:@std/http@^1.0.25",
-      "jsr:@std/testing@^1.0.17",
-      "npm:zod@^4.3.6"
+      "jsr:@std/assert@^1.0.19",
+      "jsr:@std/fmt@^1.0.10",
+      "jsr:@std/http@^1.1.1",
+      "jsr:@std/testing@^1.0.19",
+      "npm:zod@^4.4.3"
     ],
     "members": {
       "packages/core": {
@@ -843,8 +874,7 @@
           "jsr:@denorid/injector@^1.0.0-beta1",
           "jsr:@denorid/logger@^1.0.0-beta1",
           "jsr:@std/msgpack@^1.0.3",
-          "npm:@types/amqplib@~0.10.8",
-          "npm:amqplib@^1.0.3"
+          "npm:amqplib@^1.2.0"
         ]
       },
       "packages/platform-hono": {
