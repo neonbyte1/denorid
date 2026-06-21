@@ -3,6 +3,7 @@
   "unstable": ["kv", "cron"],
   "workspace":[
     "./packages/core",
+    "./packages/caching",
     "./packages/drizzle",
     "./packages/injector",
     "./packages/jwt",
