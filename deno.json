@@ -11,6 +11,7 @@
     "./packages/logger",
     "./packages/microservices/",
     "./packages/platform-hono",
+    "./packages/s3",
     "./packages/schedule"
   ],
   "imports": {

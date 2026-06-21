@@ -1,0 +1,12 @@
+{
+  "name": "@denorid/s3",
+  "version": "1.0.0-beta1",
+  "license": "MIT",
+  "exports": {
+    ".": "./mod.ts"
+  },
+  "imports": {
+    "@aws-sdk/client-s3": "npm:@aws-sdk/client-s3@^3.1040.0",
+    "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta1"
+  }
+}
