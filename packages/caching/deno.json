@@ -3,10 +3,13 @@
   "version": "1.0.0-beta1",
   "license": "MIT",
   "exports": {
-    ".": "./mod.ts"
+    ".": "./mod.ts",
+    "./adapters": "./adapters/mod.ts",
+    "./adapters/redis": "./adapters/redis.ts"
   },
   "imports": {
     "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta1",
+    "@keyv/redis": "npm:@keyv/redis@^5.1.6",
     "cache-manager": "npm:cache-manager@^7.2.8",
     "keyv": "npm:keyv@^5.6.0"
   }
