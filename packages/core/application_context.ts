@@ -4,6 +4,7 @@ import type {
   ModuleRefOptions,
   Tag,
 } from "@denorid/injector";
+import type { ConsoleCommandRunnerOptions } from "./cli/command_runner.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
 
@@ -71,6 +72,22 @@ export interface ApplicationContext extends AsyncDisposable {
    * @returns {Promise<void>}
    */
   close(): Promise<void>;
+
+  /**
+   * Discovers all `@ConsoleCommand`-decorated providers, parses the given
+   * argv slice (Symfony-compatible) and executes the matching command.
+   *
+   * Honours the global `--no-color` and `-h`/`--help` flags. When no command
+   * is provided, prints the command listing and resolves to exit code `0`.
+   *
+   * @param {string[]} [argv] - Argv slice (defaults to `Deno.args`).
+   * @param {ConsoleCommandRunnerOptions} [options] - Runner overrides (writers, decoration, app name).
+   * @returns {Promise<number>} Exit code returned by the command (0 = success).
+   */
+  runCommandLine(
+    argv?: string[],
+    options?: ConsoleCommandRunnerOptions,
+  ): Promise<number>;
 
   /**
    * Enables `await using` syntax by delegating to {@link close}.

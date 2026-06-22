@@ -7,10 +7,13 @@ export const EXCEPTION_FILTER_METADATA = Symbol.for(
   "denorid.exception_filter.metadata",
 );
 
-export const MESSAGE_PATTERN_METADATA: unique symbol = Symbol.for(
+export const MESSAGE_PATTERN_METADATA = Symbol.for(
   "denorid.message_pattern",
 );
 
-export const MESSAGE_CONTROLLER_METADATA: unique symbol = Symbol.for(
+export const MESSAGE_CONTROLLER_METADATA = Symbol.for(
   "denorid.message_controller",
 );
+
+export const CLI_COMMAND_METADATA = Symbol.for("denorid.cli.command");
+export const CLI_OPTIONS_METADATA = Symbol.for("denorid.cli.options");

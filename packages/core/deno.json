@@ -4,6 +4,7 @@
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
+    "./cli": "./cli/mod.ts",
     "./exceptions": "./exceptions/mod.ts",
     "./exceptions/http": "./exceptions/http/mod.ts",
     "./http": "./http/mod.ts",

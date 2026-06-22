@@ -8,6 +8,10 @@ import type {
 } from "@denorid/injector";
 import { Logger, type LoggerService, type LogLevel } from "@denorid/logger";
 import type { ApplicationContext } from "./application_context.ts";
+import {
+  ConsoleCommandRunner,
+  type ConsoleCommandRunnerOptions,
+} from "./cli/command_runner.ts";
 import { ExceptionHandler } from "./exceptions/handler.ts";
 
 /**
@@ -144,6 +148,25 @@ export class Application<
    */
   public [Symbol.asyncDispose](): Promise<void> {
     return this.close();
+  }
+
+  /**
+   * @inheritdoc
+   */
+  public async runCommandLine(
+    argv: string[] = Deno.args,
+    options?: ConsoleCommandRunnerOptions,
+  ): Promise<number> {
+    await this.init();
+    try {
+      const runner = new ConsoleCommandRunner(this.ctx, {
+        appName: this.metaType.name,
+        ...(options ?? {}),
+      });
+      return await runner.run(argv);
+    } finally {
+      await this.close();
+    }
   }
 
   // deno-coverage-ignore-stop

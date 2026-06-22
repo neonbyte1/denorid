@@ -24,6 +24,7 @@
  */
 export * from "./application.ts";
 export * from "./application_context.ts";
+export * from "./cli/mod.ts";
 export * from "./denorid_factory.ts";
 export * from "./exceptions/mod.ts";
 export * from "./guards/mod.ts";

@@ -6,6 +6,10 @@ import type {
   Tag,
 } from "@denorid/injector";
 import type { ApplicationContext } from "../application_context.ts";
+import {
+  ConsoleCommandRunner,
+  type ConsoleCommandRunnerOptions,
+} from "../cli/command_runner.ts";
 
 /**
  * A compiled test module that provides access to the DI container without export restrictions.
@@ -78,6 +82,20 @@ export class TestingModule implements ApplicationContext {
   public async close(): Promise<void> {
     await this.ctx.onBeforeApplicationShutdown();
     await this.ctx.onApplicationShutdown();
+  }
+
+  /**
+   * @inheritdoc
+   */
+  public async runCommandLine(
+    argv: string[] = Deno.args,
+    options?: ConsoleCommandRunnerOptions,
+  ): Promise<number> {
+    await this.init();
+
+    const runner = new ConsoleCommandRunner(this.ctx, options);
+
+    return await runner.run(argv);
   }
 
   /**
