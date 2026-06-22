@@ -147,7 +147,7 @@ export class DrizzleOrmModule {
         DrizzleMigrateCommand,
         DrizzleService,
       ],
-      exports: [DrizzleService],
+      exports: [DrizzleService, DrizzleGenerateCommand, DrizzleMigrateCommand],
     };
   }
 
@@ -253,7 +253,7 @@ export class DrizzleOrmModule {
         DrizzleMigrateCommand,
         DrizzleService,
       ],
-      exports: [DrizzleService],
+      exports: [DrizzleService, DrizzleGenerateCommand, DrizzleMigrateCommand],
     };
   }
 }
