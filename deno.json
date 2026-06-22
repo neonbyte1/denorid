@@ -2,6 +2,7 @@
   "tasks": {},
   "unstable": ["kv", "cron"],
   "workspace":[
+    "./packages/amqp",
     "./packages/core",
     "./packages/caching",
     "./packages/drizzle",

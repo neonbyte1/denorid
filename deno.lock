@@ -33,6 +33,7 @@
     "npm:@aws-sdk/client-s3@^3.1040.0": "3.1040.0",
     "npm:@keyv/redis@^5.1.6": "5.1.6_keyv@5.6.0",
     "npm:amqplib@^1.2.0": "1.2.0",
+    "npm:amqplib@^2.0.1": "2.0.1",
     "npm:cache-manager@^7.2.8": "7.2.8",
     "npm:drizzle-orm@~0.45.2": "0.45.2",
     "npm:keyv@^5.6.0": "5.6.0",
@@ -885,6 +886,9 @@
         "buffer-more-ints"
       ]
     },
+    "amqplib@2.0.1": {
+      "integrity": "sha512-a3P2MgfCf9nzVis12VxWEn0dS6hcqve7dlEAhXDtIWR27BlhtMkILOc+H9aeHjDi6i6r94dYKc2Kx2OFe3avvg=="
+    },
     "anynum@1.0.1": {
       "integrity": "sha512-N6//FLET/tXYNM/F6ABca1oH6fWB+KlTt909Le28WMDBk8oaT4vY17DCrwg2MvmuqUKt3Ni4N5dGJ/EoBgcO6A=="
     },
@@ -967,6 +971,13 @@
       "npm:zod@^4.4.3"
     ],
     "members": {
+      "packages/amqp": {
+        "dependencies": [
+          "jsr:@denorid/core@^1.0.0-beta2",
+          "jsr:@denorid/injector@^1.0.0-beta1",
+          "npm:amqplib@^2.0.1"
+        ]
+      },
       "packages/caching": {
         "dependencies": [
           "jsr:@denorid/injector@^1.0.0-beta1",
