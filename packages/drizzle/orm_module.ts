@@ -1,5 +1,7 @@
 import { type DynamicModule, Module } from "@denorid/injector";
 import { DRIZZLE_CONNECTION_OPTIONS } from "./_internal.ts";
+import { DrizzleGenerateCommand } from "./commands/migrations_generate.ts";
+import { DrizzleMigrateCommand } from "./commands/migrations_migrate.ts";
 import { DrizzleService } from "./drizzle_service.ts";
 import type {
   DrizzleOrmAsyncModuleOptions,
@@ -141,6 +143,8 @@ export class DrizzleOrmModule {
           provide: DRIZZLE_CONNECTION_OPTIONS,
           useValue: options,
         },
+        DrizzleGenerateCommand,
+        DrizzleMigrateCommand,
         DrizzleService,
       ],
       exports: [DrizzleService],
@@ -245,6 +249,8 @@ export class DrizzleOrmModule {
           useFactory: options.useFactory,
           inject: options.inject,
         },
+        DrizzleGenerateCommand,
+        DrizzleMigrateCommand,
         DrizzleService,
       ],
       exports: [DrizzleService],

@@ -7,7 +7,7 @@ describe("DrizzleOrmModule", () => {
     const dynamicModule = DrizzleOrmModule.register([]);
 
     assertExists(dynamicModule.providers);
-    assertEquals(dynamicModule.providers!.length, 2);
+    assertEquals(dynamicModule.providers!.length, 4);
     assertEquals(typeof dynamicModule.providers[0], "object");
     assertEquals("useValue" in dynamicModule.providers[0], true);
   });
@@ -18,7 +18,7 @@ describe("DrizzleOrmModule", () => {
     });
 
     assertExists(dynamicModule.providers);
-    assertEquals(dynamicModule.providers!.length, 2);
+    assertEquals(dynamicModule.providers!.length, 4);
     assertEquals(typeof dynamicModule.providers[0], "object");
     assertEquals("useFactory" in dynamicModule.providers[0], true);
   });
