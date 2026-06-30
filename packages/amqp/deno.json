@@ -6,6 +6,7 @@
   "imports": {
     "@denorid/core": "jsr:@denorid/core@^1.0.0-beta2",
     "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta1",
+    "@denorid/logger": "jsr:@denorid/logger@^1.0.0-beta1",
     "amqplib": "npm:amqplib@^2.0.1"
   }
 }
