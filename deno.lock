@@ -32,7 +32,6 @@
     "jsr:@std/uuid@^1.1.0": "1.1.1",
     "npm:@aws-sdk/client-s3@^3.1040.0": "3.1040.0",
     "npm:@keyv/redis@^5.1.6": "5.1.6_keyv@5.6.0",
-    "npm:amqplib@^1.2.0": "1.2.0",
     "npm:amqplib@^2.0.1": "2.0.1",
     "npm:cache-manager@^7.2.8": "7.2.8",
     "npm:drizzle-orm@~0.45.2": "0.45.2",
@@ -880,12 +879,6 @@
         "tslib"
       ]
     },
-    "amqplib@1.2.0": {
-      "integrity": "sha512-WVvkHAaL848/zjpJXXnN/80nPhCrwxlXWQFHTRDjbEGkwaKK+Ht+8iAC4LeKEzQTOJKxNnUGVLNy/70iFHkeEg==",
-      "dependencies": [
-        "buffer-more-ints"
-      ]
-    },
     "amqplib@2.0.1": {
       "integrity": "sha512-a3P2MgfCf9nzVis12VxWEn0dS6hcqve7dlEAhXDtIWR27BlhtMkILOc+H9aeHjDi6i6r94dYKc2Kx2OFe3avvg=="
     },
@@ -894,9 +887,6 @@
     },
     "bowser@2.14.1": {
       "integrity": "sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg=="
-    },
-    "buffer-more-ints@1.0.0": {
-      "integrity": "sha512-EMetuGFz5SLsT0QTnXzINh4Ksr+oo4i+UGTXEshiGCQWnsgSs7ZhJ8fzlwQ+OzEMs0MpDAMr1hxnblp5a4vcHg=="
     },
     "cache-manager@7.2.8": {
       "integrity": "sha512-0HDaDLBBY/maa/LmUVAr70XUOwsiQD+jyzCBjmUErYZUKdMS9dT59PqW59PpVqfGM7ve6H0J6307JTpkCYefHQ==",
@@ -975,6 +965,7 @@
         "dependencies": [
           "jsr:@denorid/core@^1.0.0-beta2",
           "jsr:@denorid/injector@^1.0.0-beta1",
+          "jsr:@denorid/logger@^1.0.0-beta1",
           "npm:amqplib@^2.0.1"
         ]
       },
@@ -1029,7 +1020,7 @@
           "jsr:@denorid/injector@^1.0.0-beta1",
           "jsr:@denorid/logger@^1.0.0-beta1",
           "jsr:@std/msgpack@^1.0.3",
-          "npm:amqplib@^1.2.0"
+          "npm:amqplib@^2.0.1"
         ]
       },
       "packages/platform-hono": {

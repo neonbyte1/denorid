@@ -7,6 +7,6 @@
     "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta1",
     "@denorid/logger": "jsr:@denorid/logger@^1.0.0-beta1",
     "@std/msgpack": "jsr:@std/msgpack@^1.0.3",
-    "amqplib": "npm:amqplib@^1.2.0"
+    "amqplib": "npm:amqplib@^2.0.1"
   }
 }
