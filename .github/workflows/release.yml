@@ -40,6 +40,7 @@ jobs:
     strategy:
       matrix:
         package:
+          - amqp
           - caching
           - drizzle
           - jwt
