@@ -16,3 +16,6 @@
 *.tmp
 *.lcov
 *.info
+coverage*.*
+/cov-*/
+/[Cc]overage-*/
