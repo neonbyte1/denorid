@@ -1,6 +1,6 @@
 import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { assertSpyCalls, spy } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { BadRequestException } from "../exceptions/http/bad_request.ts";
 import { ParseBoolPipe } from "./parse_bool.ts";
 

@@ -4,9 +4,9 @@ import {
   assertInstanceOf,
   assertStrictEquals,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { spy, stub } from "@std/testing/mock";
 import { Keyv } from "keyv";
+import { describe, it } from "node:test";
 import { CACHE_MANAGER } from "../_constants.ts";
 import { CachingModule } from "../module.ts";
 import type { Cache } from "../module_options.ts";
@@ -39,7 +39,9 @@ describe("redis adapter", () => {
       assertInstanceOf(nonBlocking.store, KeyvRedis);
       // Sanity: separate instances, not the same object handed back twice.
       if (blocking === nonBlocking) {
-        throw new Error("redisStoreNonBlocking returned the same instance as redisStore");
+        throw new Error(
+          "redisStoreNonBlocking returned the same instance as redisStore",
+        );
       }
     });
   });
@@ -51,7 +53,11 @@ describe("redis adapter", () => {
       assertInstanceOf(adapter, KeyvRedis);
 
       // Prevent the test from opening a real TCP connection on close.
-      const adapterDisconnect = stub(adapter, "disconnect", () => Promise.resolve());
+      const adapterDisconnect = stub(
+        adapter,
+        "disconnect",
+        () => Promise.resolve(),
+      );
       const storeDisconnect = spy(store, "disconnect");
 
       const module = await Test.createTestingModule({

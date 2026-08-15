@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { Buffer } from "node:buffer";
+import { describe, it } from "node:test";
 import {
   PublisherClient,
   RoutingClient,

@@ -4,8 +4,8 @@ import {
   type Type,
 } from "@denorid/injector";
 import { assertEquals, assertInstanceOf } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { assertSpyCalls, spy, stub } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { Application } from "./application.ts";
 import type {
   HttpApplicationContext,

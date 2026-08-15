@@ -1,5 +1,5 @@
 import { assertEquals, assertInstanceOf } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { StatusCode } from "../../http/status.ts";
 import { IntrinsicException } from "../intrinsic.ts";
 import { HttpException } from "./mod.ts";

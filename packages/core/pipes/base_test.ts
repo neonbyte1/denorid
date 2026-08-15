@@ -1,6 +1,6 @@
 import { assertInstanceOf, assertStrictEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { BadRequestException } from "../exceptions/http/bad_request.ts";
 import { NotFoundException } from "../exceptions/http/not_found.ts";
 import { StatusCode } from "../http/status.ts";

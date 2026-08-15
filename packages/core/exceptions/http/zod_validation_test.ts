@@ -1,5 +1,5 @@
 import { assertEquals, assertInstanceOf } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import type { ZodError } from "zod";
 import { StatusCode } from "../../http/status.ts";
 import { BadRequestException } from "./bad_request.ts";

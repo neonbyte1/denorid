@@ -15,9 +15,9 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { spy } from "@std/testing/mock";
 import { Buffer } from "node:buffer";
+import { describe, it } from "node:test";
 import { AMQP_MODULE_OPTIONS, AMQP_SERIALIZER } from "./_constants.ts";
 import {
   PublisherClient,

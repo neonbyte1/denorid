@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { isClass, isFunction, isNil, isString } from "./type_guards.ts";
 
 describe("isNil", () => {

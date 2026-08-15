@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { MESSAGE_PATTERN_METADATA } from "../_constants.ts";
 import { getMessageMappingMetadata } from "./metadata.ts";
 

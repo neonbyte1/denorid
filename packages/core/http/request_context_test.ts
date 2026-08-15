@@ -1,5 +1,5 @@
-import { describe, it } from "@std/testing/bdd";
 import { assertSpyCall, spy } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import type {
   PipeTransform,
   PipeTransformFn,

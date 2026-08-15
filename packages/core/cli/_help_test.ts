@@ -1,5 +1,5 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { OutputFormatter } from "./_formatter.ts";
 import { type CommandSummary, HelpRenderer } from "./_help.ts";
 import type { InputOption } from "./options.ts";

@@ -1,8 +1,8 @@
 import type { InjectorContext, Type } from "@denorid/injector";
 import type { Logger } from "@denorid/logger";
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { assertSpyCalls, spy } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import type { HostArguments } from "../host_arguments.ts";
 import { Catch, type ExceptionFilter } from "./filter.ts";
 import { ExceptionHandler } from "./handler.ts";

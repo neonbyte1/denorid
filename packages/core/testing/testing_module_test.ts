@@ -1,7 +1,7 @@
 import type { InjectionToken, InjectorContext, Tag } from "@denorid/injector";
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { TestingModule } from "./testing_module.ts";
 
 function makeCtx(overrides?: Record<string, unknown>): InjectorContext {

@@ -11,8 +11,8 @@ import {
   assertInstanceOf,
   assertStrictEquals,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { Buffer } from "node:buffer";
+import { describe, it } from "node:test";
 import { AMQP_CONSUMER } from "./_constants.ts";
 import { AmqpExplorer } from "./_explorer.ts";
 import { AmqpConnection } from "./connection.ts";

@@ -1,7 +1,7 @@
 import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { CLI_OPTIONS_METADATA } from "../_constants.ts";
 import type {
   ConsoleCommandInput,

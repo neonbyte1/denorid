@@ -1,7 +1,7 @@
 import type { InjectionToken, Type } from "@denorid/injector";
 import { assertEquals } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd";
 import { type Spy, spy } from "@std/testing/mock";
+import { beforeEach, describe, it } from "node:test";
 import {
   CONTROLLER_METADATA,
   CONTROLLER_REQUEST_MAPPING,

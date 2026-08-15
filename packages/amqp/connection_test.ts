@@ -1,8 +1,8 @@
 import { assertEquals, assertStrictEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
 import amqplib from "amqplib";
 import { Buffer } from "node:buffer";
+import { describe, it } from "node:test";
 import { AMQP_MODULE_OPTIONS } from "./_constants.ts";
 import { AmqpConnection } from "./connection.ts";
 import type { AmqpModuleOptions } from "./module_options.ts";

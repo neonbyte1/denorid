@@ -1,6 +1,6 @@
 import { Module } from "@denorid/injector";
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import type { ConsoleWriter } from "./cli/command_runner.ts";
 import {
   ConsoleCommand,

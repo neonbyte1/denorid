@@ -1,6 +1,6 @@
 import { InvalidStaticMemberDecoratorUsageError } from "@denorid/injector";
 import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { CONTROLLER_REQUEST_MAPPING } from "../_constants.ts";
 import type { RequestMappingMetadata } from "../http/_request_mapping.ts";
 import type { CanActivate, CanActivateFn } from "./can_activate.ts";

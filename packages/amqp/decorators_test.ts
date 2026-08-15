@@ -4,7 +4,7 @@ import {
   type Type,
 } from "@denorid/injector";
 import { assertEquals, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { AMQP_CONSUMER } from "./_constants.ts";
 import { type AmqpBinding, getAmqpBindings } from "./_metadata.ts";
 import {

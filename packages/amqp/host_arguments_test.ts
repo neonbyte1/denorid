@@ -1,7 +1,7 @@
 import { ContextNotAvailableException } from "@denorid/core";
 import type { Type } from "@denorid/injector";
 import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { AmqpExecutionContext, AmqpHostArguments } from "./host_arguments.ts";
 
 describe(AmqpHostArguments.name, () => {

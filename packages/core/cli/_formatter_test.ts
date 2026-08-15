@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { OutputFormatter, shouldDecorate } from "./_formatter.ts";
 
 const RESET = "\x1b[0m";

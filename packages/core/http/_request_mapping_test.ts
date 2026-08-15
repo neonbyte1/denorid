@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { getRequestMappingMetadata } from "./_request_mapping.ts";
 
 describe(getRequestMappingMetadata.name, () => {

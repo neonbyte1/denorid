@@ -6,7 +6,7 @@ import type {
 } from "@denorid/injector";
 import { Inject, Injectable, InjectorContext, Module } from "@denorid/injector";
 import { assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd";
+import { afterEach, describe, it } from "node:test";
 import { ExceptionHandler } from "../exceptions/handler.ts";
 import type { TestingModule } from "./testing_module.ts";
 import { Test, TestingModuleBuilder } from "./testing_module_builder.ts";
@@ -14,12 +14,16 @@ import { Test, TestingModuleBuilder } from "./testing_module_builder.ts";
 describe(TestingModuleBuilder.name, () => {
   let module: TestingModule | undefined;
 
-  afterEach(async () => {
-    await module?.close();
-    module = undefined;
-  });
+  function useModuleTeardown(): void {
+    afterEach(async () => {
+      await module?.close();
+      module = undefined;
+    });
+  }
 
   describe("compile()", () => {
+    useModuleTeardown();
+
     it("compiles with no metadata", async () => {
       module = await Test.createTestingModule({}).compile();
 
@@ -87,6 +91,8 @@ describe(TestingModuleBuilder.name, () => {
   });
 
   describe("overrideProvider()", () => {
+    useModuleTeardown();
+
     it("useValue() replaces a provider with a static value", async () => {
       @Injectable()
       class RealService {
@@ -210,6 +216,8 @@ describe(TestingModuleBuilder.name, () => {
   });
 
   describe("useMocker()", () => {
+    useModuleTeardown();
+
     it("auto-mocks @Inject field dependencies that are not declared", async () => {
       const DEP = Symbol("dep");
 
@@ -332,6 +340,8 @@ describe(TestingModuleBuilder.name, () => {
   });
 
   describe("useCoreGlobals()", () => {
+    useModuleTeardown();
+
     it("registers core globals for isolated module tests", async () => {
       @Injectable()
       class ServiceWithCoreGlobals {
@@ -362,6 +372,8 @@ describe(TestingModuleBuilder.name, () => {
   });
 
   describe("TestingModule lifecycle", () => {
+    useModuleTeardown();
+
     it("init() triggers onApplicationBootstrap on providers", async () => {
       let bootstrapped = false;
 

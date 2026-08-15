@@ -1,6 +1,6 @@
 import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { buildCommandRegistry } from "./_registry.ts";
 import type { ConsoleCommandInput } from "./command_interface.ts";
 import { ConsoleCommand, Option } from "./decorator.ts";

@@ -1,6 +1,6 @@
 import { assertEquals, assertInstanceOf } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { Buffer } from "node:buffer";
+import { describe, it } from "node:test";
 import { AMQP_SERIALIZER } from "./_constants.ts";
 import {
   AMQP_SERIALIZER as ExportedToken,

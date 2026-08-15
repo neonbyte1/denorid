@@ -1,6 +1,6 @@
 import type { Tag } from "@denorid/injector";
 import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { EXCEPTION_FILTER, EXCEPTION_FILTER_METADATA } from "../_constants.ts";
 import { Catch, type ExceptionFilterMetadata } from "./filter.ts";
 

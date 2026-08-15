@@ -11,8 +11,8 @@ import {
   assertNotStrictEquals,
   assertStrictEquals,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { spy } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { CACHE_MANAGER, CACHING_MODULE_OPTIONS } from "./_constants.ts";
 import { InjectCache } from "./decorator.ts";
 import { CachingModule } from "./module.ts";

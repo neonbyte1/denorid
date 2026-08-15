@@ -1,7 +1,7 @@
 import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals, assertStrictEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { spy, stub } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { ExceptionHandler } from "./exceptions/handler.ts";
 import { MicroserviceApplication } from "./microservice_application.ts";
 import {

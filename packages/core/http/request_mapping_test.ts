@@ -1,5 +1,5 @@
 import { assertEquals, assertExists, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { CONTROLLER_REQUEST_MAPPING } from "../_constants.ts";
 import type { RequestMappingMetadata } from "./_request_mapping.ts";
 import { HttpMethod } from "./method.ts";

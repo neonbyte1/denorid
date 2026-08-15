@@ -1,5 +1,5 @@
 import { assertEquals, assertInstanceOf, assertMatch } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { ContextNotAvailableException } from "./context_not_available.ts";
 
 describe("ContextNotAvailableException", () => {
