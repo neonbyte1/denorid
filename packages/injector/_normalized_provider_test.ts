@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { noopLogger } from "./_test_fixtures.ts";
 import { Container } from "./container.ts";
 import { InvalidProviderError } from "./errors.ts";

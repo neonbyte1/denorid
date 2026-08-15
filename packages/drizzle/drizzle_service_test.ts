@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { assertSpyCalls, spy, type Stub, stub } from "@std/testing/mock";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { MODULE_OPTIONS } from "./_internal.ts";
 import { DrizzleService } from "./drizzle_service.ts";
 import {
@@ -20,14 +20,16 @@ describe("DrizzleService", () => {
     constructor(public config: unknown) {}
   };
 
-  beforeEach(() => {
-    service = new DrizzleService();
-    mockDrizzle.calls.length = 0;
-  });
+  function useService(): void {
+    beforeEach(() => {
+      service = new DrizzleService();
+      mockDrizzle.calls.length = 0;
+    });
 
-  afterEach(() => {
-    importStub?.restore();
-  });
+    afterEach(() => {
+      importStub?.restore();
+    });
+  }
 
   const setOptions = (options: unknown) => {
     Object.defineProperty(service, MODULE_OPTIONS, {
@@ -47,6 +49,8 @@ describe("DrizzleService", () => {
 
   describe("onModuleInit", () => {
     describe("single connection (non-array options)", () => {
+      useService();
+
       it("should initialize postgres with default name", async () => {
         setOptions({
           type: "postgres",
@@ -75,6 +79,8 @@ describe("DrizzleService", () => {
     });
 
     describe("array of connections", () => {
+      useService();
+
       it("should initialize multiple postgres connections", async () => {
         setOptions([
           { type: "postgres", name: "primary", connection: "pg://primary" },
@@ -121,6 +127,8 @@ describe("DrizzleService", () => {
     });
 
     describe("postgres with pool", () => {
+      useService();
+
       it("should create pooled connection with string connection", async () => {
         setOptions({
           type: "postgres",
@@ -202,6 +210,8 @@ describe("DrizzleService", () => {
     });
 
     describe("postgres without pool", () => {
+      useService();
+
       it("should pass drizzle options", async () => {
         const drizzleOpts = { logger: true };
         setOptions({
@@ -219,6 +229,8 @@ describe("DrizzleService", () => {
     });
 
     describe("sqlite options", () => {
+      useService();
+
       it("should pass drizzle options", async () => {
         const drizzleOpts = { logger: true };
         setOptions({
@@ -236,6 +248,8 @@ describe("DrizzleService", () => {
     });
 
     describe("factory caching", () => {
+      useService();
+
       it("should reuse drizzle factory for same driver", async () => {
         let importCount = 0;
         setOptions([
@@ -259,6 +273,8 @@ describe("DrizzleService", () => {
     });
 
     describe("error handling", () => {
+      useService();
+
       it("should throw when drizzle import fails", async () => {
         setOptions({ type: "postgres", name: "fail", connection: "pg://x" });
         stubImport({});
@@ -272,6 +288,8 @@ describe("DrizzleService", () => {
   });
 
   describe("pg", () => {
+    useService();
+
     beforeEach(async () => {
       setOptions([
         { type: "postgres", name: "default", connection: "pg://default" },
@@ -323,6 +341,8 @@ describe("DrizzleService", () => {
   });
 
   describe("sqlite", () => {
+    useService();
+
     beforeEach(async () => {
       setOptions([
         { type: "sqlite", name: "default", database: ":memory:" },

@@ -6,8 +6,8 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { spy } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { InjectStorage, StorageConnections } from "./connections.ts";
 import { S3ConnectionNotFoundError } from "./exceptions.ts";
 import { S3Module } from "./module.ts";

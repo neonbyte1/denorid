@@ -1,9 +1,9 @@
 import { Transport } from "@denorid/core/microservices";
 import { InjectorContext, Module } from "@denorid/injector";
 import { assertEquals, assertInstanceOf } from "@std/assert";
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
 import amqplib from "amqplib";
+import { after, before, describe, it } from "node:test";
 import { mockStdWrite, type RestoreFn } from "./_test_utils.ts";
 import { ClientsModule } from "./clients_module.ts";
 import { RmqClient } from "./rmq/client.ts";
@@ -19,7 +19,7 @@ describe(ClientsModule.name, () => {
     on(): void;
   };
 
-  beforeAll(() => {
+  before(() => {
     restoreStdout = mockStdWrite(Deno.stdout);
     restoreStderr = mockStdWrite(Deno.stderr);
     tcpConn = {
@@ -43,7 +43,7 @@ describe(ClientsModule.name, () => {
     };
   });
 
-  afterAll(() => {
+  after(() => {
     restoreStdout();
     restoreStderr();
   });

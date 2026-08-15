@@ -13,8 +13,8 @@ import {
 } from "@denorid/core/microservices";
 import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals, assertRejects } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd";
 import { spy } from "@std/testing/mock";
+import { beforeEach, describe, it } from "node:test";
 import { Server } from "./server.ts";
 
 function makeCtx(...pairs: [Type, unknown][]): InjectorContext {
@@ -43,11 +43,15 @@ describe(Server.name, () => {
 
   let server: ConcreteServer;
 
-  beforeEach(() => {
-    server = new ConcreteServer({});
-  });
+  function useServer(): void {
+    beforeEach(() => {
+      server = new ConcreteServer({});
+    });
+  }
 
   describe("setExceptionHandler", () => {
+    useServer();
+
     it("stores the exception handler", () => {
       const handler = {} as ExceptionHandler;
 
@@ -60,6 +64,8 @@ describe(Server.name, () => {
   });
 
   describe("registerHandlers", () => {
+    useServer();
+
     it("registers handlers from decorated controller types", () => {
       @MessageController()
       class TestCtrl {
@@ -133,6 +139,8 @@ describe(Server.name, () => {
   });
 
   describe("dispatch", () => {
+    useServer();
+
     it("throws when no handler is registered for the pattern", async () => {
       await assertRejects(
         () => server.dispatchPublic("unknown", {}),
@@ -317,6 +325,8 @@ describe(Server.name, () => {
   });
 
   describe("setGlobalGuards", () => {
+    useServer();
+
     it("stores the provided guards", () => {
       const guard = () => true;
       server.setGlobalGuards([guard]);
@@ -341,6 +351,8 @@ describe(Server.name, () => {
   });
 
   describe("dispatch - guard enforcement", () => {
+    useServer();
+
     it("allows dispatch when function guard returns true", async () => {
       @MessageController()
       class GuardedCtrl {
@@ -461,6 +473,8 @@ describe(Server.name, () => {
   });
 
   describe("dispatch - controller guard enforcement", () => {
+    useServer();
+
     it("allows dispatch when class-level guard returns true", async () => {
       @UseGuards(() => true)
       @MessageController()
@@ -571,6 +585,8 @@ describe(Server.name, () => {
   });
 
   describe("dispatch - method guard enforcement", () => {
+    useServer();
+
     it("allows dispatch when method-level guard returns true", async () => {
       @MessageController()
       class MethodGuardCtrl {
@@ -617,6 +633,8 @@ describe(Server.name, () => {
   });
 
   describe("dispatch - guard priority", () => {
+    useServer();
+
     it("evaluates global, then controller, then method guards in order", async () => {
       const order: string[] = [];
 

@@ -1,5 +1,5 @@
 import { assertEquals, assertStrictEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import type { KvConnections } from "../connections.ts";
 import { KvQueue } from "./queue.ts";
 

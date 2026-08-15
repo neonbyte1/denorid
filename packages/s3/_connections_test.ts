@@ -1,5 +1,5 @@
 import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { createConnectionMap } from "./_connections.ts";
 import { DuplicateS3ConnectionNameError } from "./exceptions.ts";
 import { StorageClient } from "./storage_client.ts";

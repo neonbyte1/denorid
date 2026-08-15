@@ -4,8 +4,8 @@ import {
   assertInstanceOf,
   assertStrictEquals,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { CRON_PROVIDER } from "./_constants.ts";
 import { ScheduleExplorer } from "./_explorer.ts";
 import { CronJobRef } from "./cron_job_ref.ts";

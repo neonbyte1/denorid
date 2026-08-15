@@ -1,8 +1,8 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
 import amqplib from "amqplib";
 import { Buffer } from "node:buffer";
+import { after, before, describe, it } from "node:test";
 import { mockStdWrite, type RestoreFn } from "../_test_utils.ts";
 import { RmqClient } from "./client.ts";
 import { RmqSerializer } from "./serializer.ts";
@@ -79,12 +79,12 @@ describe(RmqClient.name, () => {
   let restoreStdout: RestoreFn;
   let restoreStderr: RestoreFn;
 
-  beforeAll(() => {
+  before(() => {
     restoreStdout = mockStdWrite(Deno.stdout);
     restoreStderr = mockStdWrite(Deno.stderr);
   });
 
-  afterAll(() => {
+  after(() => {
     restoreStdout();
     restoreStderr();
   });

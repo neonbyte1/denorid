@@ -4,7 +4,7 @@ import type {
   ValueProvider,
 } from "@denorid/injector";
 import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { JWT_MODULE_OPTIONS } from "./_constants.ts";
 import { JwtModule } from "./jwt_module.ts";
 

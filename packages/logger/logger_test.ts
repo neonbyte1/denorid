@@ -1,6 +1,6 @@
 import { assertEquals, assertMatch } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { spy } from "@std/testing/mock";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { Logger } from "./logger.ts";
 import type { LoggerService } from "./logger_service.ts";
 
@@ -12,42 +12,46 @@ describe("Logger", () => {
   let capturedOutput: string;
   let capturedStderr: string;
 
-  beforeEach(() => {
-    capturedOutput = "";
-    capturedStderr = "";
-    originalStdoutWriteSync = Deno.stdout.writeSync;
-    originalStderrWriteSync = Deno.stderr.writeSync;
-    originalConsoleLog = console.log;
-    originalConsoleError = console.error;
+  function useCapturedConsole(): void {
+    beforeEach(() => {
+      capturedOutput = "";
+      capturedStderr = "";
+      originalStdoutWriteSync = Deno.stdout.writeSync;
+      originalStderrWriteSync = Deno.stderr.writeSync;
+      originalConsoleLog = console.log;
+      originalConsoleError = console.error;
 
-    Deno.stdout.writeSync = spy((data: Uint8Array): number => {
-      capturedOutput += new TextDecoder().decode(data);
-      return data.length;
+      Deno.stdout.writeSync = spy((data: Uint8Array): number => {
+        capturedOutput += new TextDecoder().decode(data);
+        return data.length;
+      });
+
+      Deno.stderr.writeSync = spy((data: Uint8Array): number => {
+        capturedStderr += new TextDecoder().decode(data);
+        return data.length;
+      });
+
+      console.log = spy((...args: unknown[]): void => {
+        capturedOutput += args.map((arg) => JSON.stringify(arg)).join(" ");
+      });
+
+      console.error = spy((...args: unknown[]): void => {
+        capturedStderr += args.map((arg) => JSON.stringify(arg)).join(" ");
+      });
     });
 
-    Deno.stderr.writeSync = spy((data: Uint8Array): number => {
-      capturedStderr += new TextDecoder().decode(data);
-      return data.length;
+    afterEach(() => {
+      Deno.stdout.writeSync = originalStdoutWriteSync;
+      Deno.stderr.writeSync = originalStderrWriteSync;
+
+      console.log = originalConsoleLog;
+      console.error = originalConsoleError;
     });
-
-    console.log = spy((...args: unknown[]): void => {
-      capturedOutput += args.map((arg) => JSON.stringify(arg)).join(" ");
-    });
-
-    console.error = spy((...args: unknown[]): void => {
-      capturedStderr += args.map((arg) => JSON.stringify(arg)).join(" ");
-    });
-  });
-
-  afterEach(() => {
-    Deno.stdout.writeSync = originalStdoutWriteSync;
-    Deno.stderr.writeSync = originalStderrWriteSync;
-
-    console.log = originalConsoleLog;
-    console.error = originalConsoleError;
-  });
+  }
 
   describe("constructor", () => {
+    useCapturedConsole();
+
     it("should create the instance using the constructor with context signature", () => {
       const logger = new Logger("TestContext");
 
@@ -143,6 +147,8 @@ describe("Logger", () => {
   });
 
   describe("formatPid", () => {
+    useCapturedConsole();
+
     it("should append the prefix to formatPid", () => {
       const logger = new Logger();
 
@@ -157,6 +163,8 @@ describe("Logger", () => {
   });
 
   describe("formatContext", () => {
+    useCapturedConsole();
+
     it("should return empty string when argument is an empty string", () => {
       const logger = new Logger();
 
@@ -184,6 +192,8 @@ describe("Logger", () => {
   });
 
   describe("formatTimestamp", () => {
+    useCapturedConsole();
+
     it("should format a timestamp", () => {
       const logger = new Logger();
       const result = logger["formatTimestamp"](Date.now());
@@ -193,6 +203,8 @@ describe("Logger", () => {
   });
 
   describe("formatTimestampDiff", () => {
+    useCapturedConsole();
+
     it("should format timestamp diff with ms", () => {
       const logger = new Logger({ colors: false });
       const result = logger["formatTimestampDiff"](100);
@@ -209,6 +221,8 @@ describe("Logger", () => {
   });
 
   describe("colorIf", () => {
+    useCapturedConsole();
+
     it("should apply color when colors enabled and not json", () => {
       const logger = new Logger({ colors: true, json: false });
       const colorFn = (s: string) => `[colored]${s}[/colored]`;
@@ -235,6 +249,8 @@ describe("Logger", () => {
   });
 
   describe("colorize", () => {
+    useCapturedConsole();
+
     it("should colorize message when colors enabled", () => {
       const logger = new Logger({ colors: true });
       const result = logger["colorize"]("test", "log");
@@ -258,6 +274,8 @@ describe("Logger", () => {
   });
 
   describe("getColorByLogLevel", () => {
+    useCapturedConsole();
+
     it("should return color for debug level", () => {
       const logger = new Logger({ colors: true });
       const color = logger["getColorByLogLevel"]("debug");
@@ -296,6 +314,8 @@ describe("Logger", () => {
   });
 
   describe("getContextAndMessagesToPrint", () => {
+    useCapturedConsole();
+
     it("should return context from instance when single message", () => {
       const logger = new Logger("InstanceContext");
       const result = logger["getContextAndMessagesToPrint"](["message"]);
@@ -341,6 +361,8 @@ describe("Logger", () => {
   });
 
   describe("isStackFormat", () => {
+    useCapturedConsole();
+
     it("should return true for valid stack format", () => {
       const logger = new Logger();
       const stack = "Error: test\n    at someFunction:10:5";
@@ -365,6 +387,8 @@ describe("Logger", () => {
   });
 
   describe("getContextAndStackAndMessagesToPrint", () => {
+    useCapturedConsole();
+
     it("should handle two args with stack format", () => {
       const logger = new Logger("Ctx");
       const stack = "Error: test\n    at fn:10:5";
@@ -430,6 +454,8 @@ describe("Logger", () => {
   });
 
   describe("stringifyMessage", () => {
+    useCapturedConsole();
+
     it("should stringify string message", () => {
       const logger = new Logger({ colors: false });
       const result = logger["stringifyMessage"]("hello", "log");
@@ -475,6 +501,8 @@ describe("Logger", () => {
   });
 
   describe("updateAndGetTimestampDiff", () => {
+    useCapturedConsole();
+
     it("should return empty string on first call when timestamp disabled", () => {
       const logger = new Logger({ timestamp: false });
       const result = logger["updateAndGetTimestampDiff"]();
@@ -492,6 +520,8 @@ describe("Logger", () => {
   });
 
   describe("formatMessage", () => {
+    useCapturedConsole();
+
     it("should format a complete message", () => {
       const logger = new Logger({ colors: false });
       const result = logger["formatMessage"](
@@ -509,6 +539,8 @@ describe("Logger", () => {
   });
 
   describe("log", () => {
+    useCapturedConsole();
+
     it("should do nothing when the associated level is not set", () => {
       new Logger({ levels: [] }).fatal("some message");
 
@@ -595,6 +627,8 @@ some stack message
   });
 
   describe("printMessages", () => {
+    useCapturedConsole();
+
     it("should print to stderr for error level", () => {
       const logger = new Logger({ colors: false });
       logger["printMessages"](["error msg"], "ErrorCtx", "error");
@@ -619,6 +653,8 @@ some stack message
   });
 
   describe("writeFormattedMessage with forceConsole", () => {
+    useCapturedConsole();
+
     it("should use console.log when forceConsole=true and not stderr", () => {
       const logs: string[] = [];
       const originalLog = console.log;
@@ -647,6 +683,8 @@ some stack message
   });
 
   describe("JSON mode", () => {
+    useCapturedConsole();
+
     it("should print as JSON when json=true", () => {
       const logger = new Logger({ json: true, colors: false, compact: true });
       logger.log("json test");
@@ -676,6 +714,8 @@ some stack message
   });
 
   describe("printAsJson", () => {
+    useCapturedConsole();
+
     it("should print JSON log object", () => {
       const logger = new Logger({ json: true, colors: false, compact: true });
       logger["printAsJson"]("test", {
@@ -701,6 +741,8 @@ some stack message
   });
 
   describe("getJsonLogObject", () => {
+    useCapturedConsole();
+
     it("should create JSON log object without context", () => {
       const logger = new Logger({ json: true });
       const result = logger["getJsonLogObject"]("msg", {
@@ -737,6 +779,8 @@ some stack message
   });
 
   describe("stringifyReplacer", () => {
+    useCapturedConsole();
+
     it("should convert bigint to string", () => {
       const logger = new Logger();
       const result = logger["stringifyReplacer"]("key", BigInt(123));
@@ -786,6 +830,8 @@ some stack message
   });
 
   describe("static methods", () => {
+    useCapturedConsole();
+
     const STATIC_KEY = Symbol.for("drizzle.static_logger");
 
     beforeEach(() => {
@@ -836,6 +882,8 @@ some stack message
   });
 
   describe("overrideLogger", () => {
+    useCapturedConsole();
+
     const STATIC_KEY = Symbol.for("drizzle.static_logger");
 
     beforeEach(() => {
@@ -905,6 +953,8 @@ some stack message
   });
 
   describe("edge cases", () => {
+    useCapturedConsole();
+
     it("should handle nested function returning function", () => {
       const logger = new Logger({ colors: false });
       const result = logger["stringifyMessage"](() => () => "nested", "log");

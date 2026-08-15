@@ -1,7 +1,7 @@
 import type { Context } from "@hono/hono";
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { assertSpyCall, spy } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { HonoRequestContext } from "./request_context.ts";
 
 describe("HonoRequestContext", () => {

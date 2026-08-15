@@ -14,8 +14,8 @@ import {
   assertMatch,
   assertRejects,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { z } from "zod";
 import { HonoControllerMapping } from "./controller_mapping.ts";
 import { HonoRequestContext } from "./request_context.ts";

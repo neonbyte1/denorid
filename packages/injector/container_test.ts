@@ -5,7 +5,7 @@ import {
   assertInstanceOf,
   assertRejects,
 } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   DependentService,
   noopLogger,
@@ -29,15 +29,19 @@ import {
 describe("Container", () => {
   let container: Container;
 
-  beforeEach(() => {
-    container = new Container(noopLogger);
-  });
+  function useContainer(): void {
+    beforeEach(() => {
+      container = new Container(noopLogger);
+    });
 
-  afterEach(() => {
-    container.clear();
-  });
+    afterEach(() => {
+      container.clear();
+    });
+  }
 
   describe("register", () => {
+    useContainer();
+
     it("should register class provider (shorthand)", async () => {
       container.register(SimpleService);
 
@@ -123,6 +127,8 @@ describe("Container", () => {
   });
 
   describe("resolve", () => {
+    useContainer();
+
     it("should resolve singleton (default)", async () => {
       container.register(SimpleService);
 
@@ -273,6 +279,8 @@ describe("Container", () => {
   });
 
   describe("tryResolve", () => {
+    useContainer();
+
     it("should return instance if found", async () => {
       container.register(SimpleService);
 
@@ -310,6 +318,8 @@ describe("Container", () => {
   });
 
   describe("has", () => {
+    useContainer();
+
     it("should return true if provider exists", () => {
       container.register(SimpleService);
 
@@ -322,6 +332,8 @@ describe("Container", () => {
   });
 
   describe("canResolve", () => {
+    useContainer();
+
     it("should return true for own provider", () => {
       container.register(SimpleService);
 
@@ -359,6 +371,8 @@ describe("Container", () => {
   });
 
   describe("hierarchical resolution", () => {
+    useContainer();
+
     it("should resolve from exported child", async () => {
       const child = new Container(noopLogger, {
         exports: new Set([SimpleService]),
@@ -440,6 +454,8 @@ describe("Container", () => {
   });
 
   describe("request scope", () => {
+    useContainer();
+
     it("should throw RequestContextError outside context", async () => {
       container.register(RequestScopedService);
 
@@ -451,6 +467,8 @@ describe("Container", () => {
   });
 
   describe("tags", () => {
+    useContainer();
+
     it("should resolve by tag", async () => {
       container.register(TaggedServiceA, TaggedServiceB);
 
@@ -566,6 +584,8 @@ describe("Container", () => {
   });
 
   describe("getProviderMode", () => {
+    useContainer();
+
     it("should return singleton for default", () => {
       container.register(SimpleService);
 
@@ -638,6 +658,8 @@ describe("Container", () => {
   });
 
   describe("isRequestScoped", () => {
+    useContainer();
+
     it("should return true for request-scoped", () => {
       container.register(RequestScopedService);
 
@@ -652,6 +674,8 @@ describe("Container", () => {
   });
 
   describe("instantiateClass", () => {
+    useContainer();
+
     it("should create instance without ModuleRef", async () => {
       container.register(SimpleService);
 
@@ -662,6 +686,8 @@ describe("Container", () => {
   });
 
   describe("getInstances", () => {
+    useContainer();
+
     it("should return all resolved instances", async () => {
       container.register(SimpleService);
       await container.resolve(SimpleService);
@@ -701,6 +727,8 @@ describe("Container", () => {
   });
 
   describe("getChildren", () => {
+    useContainer();
+
     it("should return empty array initially", () => {
       assertEquals(container.getChildren().length, 0);
     });
@@ -722,6 +750,8 @@ describe("Container", () => {
   });
 
   describe("createChild", () => {
+    useContainer();
+
     it("should create linked child container", () => {
       const _ = container.createChild();
 
@@ -741,6 +771,8 @@ describe("Container", () => {
   });
 
   describe("clear", () => {
+    useContainer();
+
     it("should clear all data", async () => {
       container.register(SimpleService);
       await container.resolve(SimpleService);
@@ -763,6 +795,8 @@ describe("Container", () => {
   });
 
   describe("resolveWithContext", () => {
+    useContainer();
+
     it("should return same transient instance within same contextId", async () => {
       container.register(TransientService);
 
@@ -895,6 +929,8 @@ describe("Container", () => {
   });
 
   describe("clearContext", () => {
+    useContainer();
+
     it("should remove cached transient instances for the given contextId", async () => {
       container.register(TransientService);
 
@@ -924,6 +960,8 @@ describe("Container", () => {
   });
 
   describe("setExports / isExported", () => {
+    useContainer();
+
     it("should set and check exports", () => {
       container.setExports(new Set([SimpleService]));
 
@@ -933,6 +971,8 @@ describe("Container", () => {
   });
 
   describe("addChild", () => {
+    useContainer();
+
     it("should add child and set parent", () => {
       const child = new Container(noopLogger);
 
@@ -943,6 +983,8 @@ describe("Container", () => {
   });
 
   describe("Container tag edge cases", () => {
+    useContainer();
+
     it("should handle getByTag when own tag resolution fails", async () => {
       const container = new Container(noopLogger);
       const FAIL_TAG = Symbol("FAIL_TAG");
@@ -1079,6 +1121,8 @@ describe("Container", () => {
   });
 
   describe("_normalized_provider edge cases", () => {
+    useContainer();
+
     it("should handle factory with non-function provide and no mode", async () => {
       const container = new Container(noopLogger);
 

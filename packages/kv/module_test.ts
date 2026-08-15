@@ -5,8 +5,8 @@ import {
   assertInstanceOf,
   assertStrictEquals,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import { KvConnections } from "./connections.ts";
 import { KvModule } from "./module.ts";
 import { KvQueue } from "./queue/mod.ts";

@@ -10,7 +10,7 @@ import {
   assertInstanceOf,
   assertStrictEquals,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { QUEUE_HANDLER } from "../_constants.ts";
 import type { ConnectionEntry } from "../_connections.ts";
 import { KvConnections } from "../connections.ts";

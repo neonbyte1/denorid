@@ -3,7 +3,7 @@ import {
   InvalidStaticMemberDecoratorUsageError,
 } from "@denorid/injector";
 import { assertEquals, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import {
   DEFAULT_QUEUE_NAME,
   QUEUE_HANDLER,

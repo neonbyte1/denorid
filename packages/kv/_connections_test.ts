@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { createConnectionMap } from "./_connections.ts";
 
 describe(createConnectionMap.name, () => {

@@ -1,5 +1,5 @@
 import { assertArrayIncludes, assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { DrizzleGenerateCommand } from "./commands/migrations_generate.ts";
 import { DrizzleMigrateCommand } from "./commands/migrations_migrate.ts";
 import { DrizzleService } from "./drizzle_service.ts";

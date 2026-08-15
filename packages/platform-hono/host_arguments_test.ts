@@ -2,7 +2,7 @@ import type { RequestContext } from "@denorid/core";
 import { ContextNotAvailableException } from "@denorid/core";
 import type { Context } from "@hono/hono";
 import { assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { HonoHostArguments } from "./host_arguments.ts";
 import { HonoRequestContext } from "./request_context.ts";
 

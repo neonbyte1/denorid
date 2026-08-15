@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertExists, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import type { InjectableMetadata, InjectionDependency } from "./_metadata.ts";
 import { SimpleService, TAG_A } from "./_test_fixtures.ts";
 import type { Tag } from "./common.ts";

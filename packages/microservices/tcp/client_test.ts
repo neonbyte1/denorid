@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
+import { after, before, describe, it } from "node:test";
 import { mockStdWrite, type RestoreFn } from "../_test_utils.ts";
 import { encodeFrame } from "./_codec.ts";
 import { TcpClient } from "./client.ts";
@@ -49,12 +49,12 @@ describe("TcpClient", () => {
   let restoreStdout: RestoreFn;
   let restoreStderr: RestoreFn;
 
-  beforeAll(() => {
+  before(() => {
     restoreStdout = mockStdWrite(Deno.stdout);
     restoreStderr = mockStdWrite(Deno.stderr);
   });
 
-  afterAll(() => {
+  after(() => {
     restoreStdout();
     restoreStderr();
   });

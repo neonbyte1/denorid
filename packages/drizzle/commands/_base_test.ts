@@ -1,6 +1,6 @@
 import type { ConsoleCommandInput } from "@denorid/core";
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { DrizzleCommand } from "./_base.ts";
 
 /**

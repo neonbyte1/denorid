@@ -12,7 +12,7 @@ import {
   assertNotStrictEquals,
   assertStrictEquals,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { S3_MODULE_OPTIONS } from "./_constants.ts";
 import { InjectStorage, StorageConnections } from "./connections.ts";
 import { S3Module } from "./module.ts";

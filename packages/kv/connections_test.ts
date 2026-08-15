@@ -9,8 +9,8 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
+import { describe, it } from "node:test";
 import type { ConnectionEntry } from "./_connections.ts";
 import {
   ConnectionNotEstablishedException,

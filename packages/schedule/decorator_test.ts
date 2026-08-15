@@ -3,7 +3,7 @@ import {
   TAG_METADATA,
 } from "@denorid/injector";
 import { assertEquals, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { CRON_METADATA, CRON_PROVIDER } from "./_constants.ts";
 import type { CronMetadata } from "./_metadata.ts";
 import { Cron } from "./decorator.ts";

@@ -1,6 +1,6 @@
 import { generateKeyPair, type JWTPayload } from "@panva/jose";
 import { assertEquals, assertExists, assertThrows } from "@std/assert";
-import { beforeAll, describe, it } from "@std/testing/bdd";
+import { before, describe, it } from "node:test";
 import type { JwtModuleOptions } from "./common.ts";
 import { WrongKeyError } from "./exceptions.ts";
 import { JwtService } from "./jwt_service.ts";
@@ -17,7 +17,7 @@ describe("JwtService", () => {
   let rsaPublicKey: CryptoKey;
   let rsaPrivateKey: CryptoKey;
 
-  beforeAll(async () => {
+  before(async () => {
     const pair = await generateKeyPair("RS256");
 
     rsaPublicKey = pair.publicKey as CryptoKey;

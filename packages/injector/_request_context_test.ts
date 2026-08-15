@@ -1,5 +1,5 @@
 import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import {
   getRequestId,
   isInRequestContext,

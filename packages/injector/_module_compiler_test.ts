@@ -1,5 +1,5 @@
 import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { ModuleCompiler } from "./_module_compiler.ts";
 import { SimpleService } from "./_test_fixtures.ts";
 import { Module } from "./decorators.ts";

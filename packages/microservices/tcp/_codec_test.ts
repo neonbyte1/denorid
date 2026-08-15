@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { decodeFrame, encodeFrame, readFrame } from "./_codec.ts";
 import { TcpDeserializer } from "./deserializer.ts";
 import { TcpSerializer } from "./serializer.ts";

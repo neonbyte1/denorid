@@ -1,6 +1,6 @@
 import { S3, S3Client } from "@aws-sdk/client-s3";
 import { assert, assertEquals, assertInstanceOf } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { StorageClient } from "./storage_client.ts";
 
 describe("StorageClient", () => {
@@ -64,7 +64,8 @@ describe("StorageClient", () => {
     const proto = Object.getPrototypeOf(client);
     const inherited = Object.getPrototypeOf(proto);
     const inheritedMethods = Object.getOwnPropertyNames(inherited).filter(
-      (n) => n !== "constructor" && typeof Reflect.get(inherited, n) === "function",
+      (n) =>
+        n !== "constructor" && typeof Reflect.get(inherited, n) === "function",
     );
     assert(
       inheritedMethods.length >= 100,
