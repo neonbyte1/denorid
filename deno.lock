@@ -991,7 +991,9 @@
       "packages/drizzle": {
         "dependencies": [
           "jsr:@denorid/injector@^1.0.0-beta1",
-          "npm:drizzle-orm@^1.0.0-rc.4"
+          "npm:@libsql/client@0.10",
+          "npm:drizzle-orm@^1.0.0-rc.4",
+          "npm:pg@^8.11.0"
         ]
       },
       "packages/injector": {
