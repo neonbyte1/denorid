@@ -1003,11 +1003,33 @@ export class DrizzleService implements OnModuleInit {
   }
 
   // deno-coverage-ignore-start
+  /**
+   * Dynamic driver loader kept as a switch over **string-literal** specifiers
+   * rather than a variable-driven `import(name)`.
+   *
+   * When this package is consumed from JSR, the runtime dynamic import is
+   * evaluated in the module's own https://jsr.io/… scope, which has no
+   * import map, and the consumer's `deno.json` `imports` does not propagate
+   * there either (deno#26266). Only static-analyzable string-literal
+   * specifiers get captured in the JSR module graph and rewritten to the
+   * fully-qualified `npm:` URL at publish time. Using literals here keeps
+   * the peer-optional semantics (dynamic + try/catch) while making the
+   * dependencies visible to JSR's publish-time analyzer.
+   */
   private async import<T = Record<PropertyKey, unknown>>(
     name: string,
   ): Promise<Partial<T>> {
     try {
-      return await import(name);
+      switch (name) {
+        case "drizzle-orm/node-postgres":
+          return (await import("drizzle-orm/node-postgres")) as unknown as Partial<T>;
+        case "drizzle-orm/libsql":
+          return (await import("drizzle-orm/libsql")) as unknown as Partial<T>;
+        case "pg":
+          return (await import("pg")) as unknown as Partial<T>;
+        default:
+          return {};
+      }
     } catch {
       return {};
     }
