@@ -1,5 +1,7 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { assertSpyCalls, spy, type Stub, stub } from "@std/testing/mock";
+import { pgTable } from "drizzle-orm/pg-core";
+import { sqliteTable } from "drizzle-orm/sqlite-core";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { MODULE_OPTIONS } from "./_internal.ts";
 import { DrizzleService } from "./drizzle_service.ts";
@@ -395,6 +397,16 @@ describe("DrizzleService", () => {
       const service = new DrizzleService();
 
       assertThrows(() => service.sqlite(), DrizzleConnectionNotFoundError);
+    });
+  });
+
+  describe("deno.json map integrity", () => {
+    it("should statically resolve drizzle-orm/pg-core", () => {
+      assertEquals(typeof pgTable, "function");
+    });
+
+    it("should statically resolve drizzle-orm/sqlite-core", () => {
+      assertEquals(typeof sqliteTable, "function");
     });
   });
 });
