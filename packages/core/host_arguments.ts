@@ -77,4 +77,5 @@ export interface WsArguments {
 export interface HostArguments {
   switchToHttp(): HttpHostArguments;
   switchToRpc(): RpcArguments;
+  switchToWs(): WsArguments;
 }

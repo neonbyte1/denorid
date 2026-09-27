@@ -25,6 +25,15 @@ describe("ExceptionHandler", () => {
       getPattern: () => "",
       getData: () => undefined,
     }),
+    switchToWs: () => ({
+      getClient<T = unknown>(): T {
+        return undefined as T;
+      },
+      getData<T = unknown>(): T {
+        return undefined as T;
+      },
+      getPattern: () => "",
+    }),
   };
 
   function makeCtx(
