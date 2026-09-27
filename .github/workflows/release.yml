@@ -42,6 +42,7 @@ jobs:
         package:
           - amqp
           - caching
+          - config
           - drizzle
           - jwt
           - microservices
