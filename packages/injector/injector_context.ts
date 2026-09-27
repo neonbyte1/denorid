@@ -5,6 +5,7 @@ import {
   hasOnBeforeApplicationShutdown,
   hasOnModuleDestroy,
   hasOnModuleInit,
+  serializeToken,
 } from "./_internal.ts";
 import { type CompiledModule, ModuleCompiler } from "./_module_compiler.ts";
 import { runInModuleContext } from "./_module_context.ts";
@@ -201,8 +202,13 @@ export class InjectorContext implements InjectorContextLifecycle {
           try {
             const instance = await container.resolve(token);
             await callOnModuleInit(instance);
-          } catch {
-            /** @todo: double check - provider might be transient, skip silently? */
+          } catch (e) {
+            const err = e instanceof Error ? e : new Error(String(e));
+
+            logger.error(
+              `Failed to initialize ${serializeToken(token)}: ${err.message}`,
+              err.stack,
+            );
           }
         }
 

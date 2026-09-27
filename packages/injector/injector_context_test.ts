@@ -4,8 +4,11 @@ import {
   assertExists,
   assertInstanceOf,
   assertRejects,
+  assertStringIncludes,
   assertThrows,
 } from "@std/assert";
+import { Logger } from "@denorid/logger";
+import { stub } from "@std/testing/mock";
 import { describe, it } from "node:test";
 import {
   noopLogger,
@@ -897,7 +900,7 @@ describe("InjectorContext", () => {
   });
 
   describe("InjectorContext init error handling", () => {
-    it("should silently skip providers that fail to resolve during init", async () => {
+    it("logs providers that fail to resolve during init and continues", async () => {
       @Injectable()
       class FailingInitService {
         @Inject("MISSING_DEP")
@@ -910,10 +913,63 @@ describe("InjectorContext", () => {
       })
       class AppModule {}
 
+      using errorStub = stub(Logger.prototype, "error");
+
       const ctx = await InjectorContext.create(AppModule);
       const service = await ctx.resolve(SimpleService);
+      const initFailure = errorStub.calls.find(({ args }) =>
+        String(args[0]).startsWith("Failed to initialize FailingInitService:")
+      );
 
       assertExists(service);
+      assertExists(initFailure);
+      assertStringIncludes(String(initFailure.args[0]), "MISSING_DEP");
+      assertEquals(typeof initFailure.args[1], "string");
+    });
+
+    it("logs errors thrown by onModuleInit hooks", async () => {
+      @Injectable()
+      class FailingHookService implements OnModuleInit {
+        onModuleInit(): void {
+          throw new Error("hook exploded");
+        }
+      }
+
+      @Module({ providers: [FailingHookService] })
+      class AppModule {}
+
+      using errorStub = stub(Logger.prototype, "error");
+
+      await InjectorContext.create(AppModule);
+
+      assertEquals(errorStub.calls.length, 1);
+      assertEquals(
+        errorStub.calls[0].args[0],
+        "Failed to initialize FailingHookService: hook exploded",
+      );
+      assertStringIncludes(String(errorStub.calls[0].args[1]), "hook exploded");
+    });
+
+    it("wraps non-Error values thrown during init", async () => {
+      @Injectable()
+      class StringThrowHookService implements OnModuleInit {
+        onModuleInit(): void {
+          throw "plain failure";
+        }
+      }
+
+      @Module({ providers: [StringThrowHookService] })
+      class AppModule {}
+
+      using errorStub = stub(Logger.prototype, "error");
+
+      await InjectorContext.create(AppModule);
+
+      assertEquals(errorStub.calls.length, 1);
+      assertEquals(
+        errorStub.calls[0].args[0],
+        "Failed to initialize StringThrowHookService: plain failure",
+      );
     });
   });
 
