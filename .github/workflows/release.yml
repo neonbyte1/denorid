@@ -46,6 +46,7 @@ jobs:
           - drizzle
           - jwt
           - microservices
+          - openapi
           - platform-hono
           - platform-socket-io
           - kv
