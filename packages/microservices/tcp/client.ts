@@ -77,9 +77,14 @@ export class TcpClient extends ClientProxy {
     }
   }
 
-  /** Called by the DI container on application shutdown. */
-  public async onBeforeApplicationShutdown(): Promise<void> {
-    await this.close();
+  /**
+   * Closes the connection; the DI container calls this when it disposes the
+   * client on application shutdown, after every shutdown hook ran.
+   *
+   * @return {Promise<void>}
+   */
+  public [Symbol.asyncDispose](): Promise<void> {
+    return this.close();
   }
 
   /**
@@ -89,10 +94,15 @@ export class TcpClient extends ClientProxy {
     pattern: Pattern,
     data: unknown,
   ): Promise<T> {
-    await this.ensureConnected();
-
     const id = crypto.randomUUID();
-    const serialized = serializePattern(pattern);
+    // Encoded before anything is tracked: an unencodable payload rejects
+    // without leaving a `pending` entry behind or opening a connection.
+    const frame = encodeFrame(
+      { pattern: serializePattern(pattern), data, id },
+      this.serializer,
+    );
+
+    await this.ensureConnected();
 
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, {
@@ -100,15 +110,10 @@ export class TcpClient extends ClientProxy {
         reject,
       });
 
-      writeFrame(
-        this.socket!,
-        encodeFrame({ pattern: serialized, data, id }, this.serializer),
-      ).catch(
-        (err) => {
-          this.pending.delete(id);
-          reject(err);
-        },
-      );
+      writeFrame(this.socket!, frame).catch((err: unknown) => {
+        this.pending.delete(id);
+        reject(err);
+      });
     });
   }
 
@@ -168,7 +173,9 @@ export class TcpClient extends ClientProxy {
     const socket = this.socket!;
 
     try {
-      for await (const body of readFrames(socket)) {
+      for await (
+        const body of readFrames(socket, this.options.maxBufferSize)
+      ) {
         let frame: TcpResponseFrame;
 
         try {

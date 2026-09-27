@@ -3,7 +3,9 @@ import type { Deserializer } from "../deserializer.ts";
 import type { Serializer } from "../serializer.ts";
 
 const LENGTH_PREFIX_BYTES = 4;
-const MAX_FRAME_BYTES = 64 * 1024 * 1024; // 64 MiB hard limit
+
+/** Largest accepted frame body unless configured otherwise: 64 MiB. */
+const DEFAULT_MAX_FRAME_BYTES = 64 * 1024 * 1024;
 
 /**
  * Encodes a value as a length-prefixed frame ready for TCP transmission.
@@ -56,11 +58,18 @@ export class FrameDecoder {
   private bodyFilled = 0;
 
   /**
+   * @param {number} [maxFrameBytes=DEFAULT_MAX_FRAME_BYTES] - Largest accepted frame body in bytes.
+   */
+  public constructor(
+    private readonly maxFrameBytes: number = DEFAULT_MAX_FRAME_BYTES,
+  ) {}
+
+  /**
    * Feeds a chunk of received bytes into the decoder.
    *
    * @param {Uint8Array} chunk - Bytes received from the peer.
    * @return {Uint8Array[]} Every frame body completed by this chunk, in order.
-   * @throws {RangeError} When a declared frame length exceeds {@link MAX_FRAME_BYTES}.
+   * @throws {RangeError} When a declared frame length exceeds the maximum frame size.
    */
   public push(chunk: Uint8Array): Uint8Array[] {
     const frames: Uint8Array[] = [];
@@ -86,7 +95,7 @@ export class FrameDecoder {
 
         const length = this.headerView.getUint32(0, false);
 
-        if (length > MAX_FRAME_BYTES) {
+        if (length > this.maxFrameBytes) {
           throw new RangeError(`Frame too large: ${length} bytes`);
         }
 
@@ -122,13 +131,15 @@ export class FrameDecoder {
  * frame is discarded.
  *
  * @param {AsyncIterable<Uint8Array>} source - The byte stream to read from.
+ * @param {number} [maxFrameBytes=DEFAULT_MAX_FRAME_BYTES] - Largest accepted frame body in bytes.
  * @return {AsyncGenerator<Uint8Array, void, undefined>} The frame bodies, in order.
- * @throws {RangeError} When a declared frame length exceeds {@link MAX_FRAME_BYTES}.
+ * @throws {RangeError} When a declared frame length exceeds `maxFrameBytes`.
  */
 export async function* readFrames(
   source: AsyncIterable<Uint8Array>,
+  maxFrameBytes: number = DEFAULT_MAX_FRAME_BYTES,
 ): AsyncGenerator<Uint8Array, void, undefined> {
-  const decoder = new FrameDecoder();
+  const decoder = new FrameDecoder(maxFrameBytes);
   const chunks = source[Symbol.asyncIterator]();
 
   while (true) {

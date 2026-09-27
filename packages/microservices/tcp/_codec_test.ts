@@ -138,15 +138,24 @@ describe(FrameDecoder.name, () => {
     assertEquals(decodeFrame(body, deserializer), "stable");
   });
 
-  it("accepts a declared length of exactly 64 MiB", () => {
+  it("accepts a declared length of exactly 64 MiB by default", () => {
     assertEquals(new FrameDecoder().push(header(64 * 1024 * 1024)), []);
   });
 
-  it("throws RangeError when declared length exceeds 64 MiB", () => {
+  it("throws RangeError when declared length exceeds 64 MiB by default", () => {
     assertThrows(
       () => new FrameDecoder().push(header(64 * 1024 * 1024 + 1)),
       RangeError,
       "Frame too large: 67108865 bytes",
+    );
+  });
+
+  it("applies a custom maximum frame size inclusively", () => {
+    assertEquals(new FrameDecoder(16).push(header(16)), []);
+    assertThrows(
+      () => new FrameDecoder(16).push(header(17)),
+      RangeError,
+      "Frame too large: 17 bytes",
     );
   });
 });
@@ -201,6 +210,24 @@ describe(readFrames.name, () => {
       RangeError,
       "Frame too large",
     );
+  });
+
+  it("rejects frames above the given maximum frame size", async () => {
+    const small = encodeFrame("ok", serializer);
+    const frames: unknown[] = [];
+
+    await assertRejects(
+      async () => {
+        for await (
+          const body of readFrames(chunksOf([small, header(17)]), 16)
+        ) {
+          frames.push(decodeFrame(body, deserializer));
+        }
+      },
+      RangeError,
+      "Frame too large: 17 bytes",
+    );
+    assertEquals(frames, ["ok"]);
   });
 });
 

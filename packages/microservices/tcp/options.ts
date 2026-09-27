@@ -20,7 +20,14 @@ export interface TcpOptions {
   retryAttempts?: number;
   /** Delay in milliseconds between reconnection attempts. */
   retryDelay?: number;
-  /** Maximum byte size of the receive buffer. */
+  /**
+   * Maximum byte size of a single received frame body. A peer announcing a
+   * larger frame is disconnected: `TcpServer` answers the requests already
+   * running on that connection and then closes it, `TcpClient` rejects its
+   * pending requests with `Connection closed`. Defaults to 64 MiB.
+   *
+   * @default 67108864
+   */
   maxBufferSize?: number;
 }
 

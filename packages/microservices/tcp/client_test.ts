@@ -262,6 +262,15 @@ describe(TcpClient.name, () => {
       );
     });
 
+    it("resolves undefined when the response frame carries no response", async () => {
+      const peer = await startPeer((socket, frame) =>
+        respond(socket, { id: frame.id })
+      );
+      const client = createClient({ port: peer.port });
+
+      assertEquals(await client.send("void", null), undefined);
+    });
+
     it("rejects when the request cannot be written", async () => {
       const peer = await startPeer();
       const client = createClient({ port: peer.port });
@@ -278,6 +287,19 @@ describe(TcpClient.name, () => {
       );
 
       await assertRejects(() => client.send("pat", {}), Error, "write failed");
+    });
+
+    it("rejects without tracking the request when the payload cannot be encoded", async () => {
+      const peer = await startPeer();
+      const client = createClient({ port: peer.port });
+
+      await client.connect();
+      await assertRejects(
+        () => client.send("pat", { at: new Date(0) }),
+        Error,
+        "Cannot safely encode",
+      );
+      assertEquals(client["pending"].size, 0);
     });
   });
 
@@ -298,19 +320,21 @@ describe(TcpClient.name, () => {
     });
   });
 
-  describe("onBeforeApplicationShutdown()", () => {
+  describe("[Symbol.asyncDispose]()", () => {
     registerCleanup();
 
-    it("closes the connection", async () => {
+    it("closes the connection when the client goes out of scope", async () => {
       const peer = await startPeer();
-      const client = createClient({ port: peer.port });
       const accepted = peer.nextConnection();
+      let serverSideClosed: Promise<unknown[]>;
 
-      await client.connect();
+      {
+        await using client = new TcpClient({ port: peer.port });
 
-      const serverSideClosed = once(await accepted, "close");
+        await client.connect();
+        serverSideClosed = once(await accepted, "close");
+      }
 
-      await client.onBeforeApplicationShutdown();
       await serverSideClosed;
     });
   });
@@ -374,6 +398,20 @@ describe(TcpClient.name, () => {
         "Connection closed",
       );
       await once(await received.promise, "close");
+    });
+
+    it("drops the connection when a response exceeds maxBufferSize", async () => {
+      const peer = await startPeer((socket, frame) =>
+        respond(socket, { id: frame.id, response: frame.data })
+      );
+      const client = createClient({ port: peer.port, maxBufferSize: 128 });
+
+      assertEquals(await client.send("echo", "fits"), "fits");
+      await assertRejects(
+        () => client.send("echo", "x".repeat(200)),
+        Error,
+        "Connection closed",
+      );
     });
   });
 });

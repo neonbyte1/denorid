@@ -6,7 +6,7 @@ import {
 } from "@denorid/core/microservices";
 import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals, assertRejects } from "@std/assert";
-import { stub } from "@std/testing/mock";
+import { spy, stub } from "@std/testing/mock";
 import { once } from "node:events";
 import net, { type AddressInfo, type Socket } from "node:net";
 import process from "node:process";
@@ -82,20 +82,8 @@ function event(pattern: string, data: unknown): Uint8Array {
   return encodeFrame({ pattern: serializePattern(pattern), data }, serializer);
 }
 
-/**
- * Writes `bytes`, half-closes the socket and collects every response frame
- * until the server closes the connection.
- */
-async function exchange(
-  socket: Socket,
-  ...bytes: Uint8Array[]
-): Promise<unknown[]> {
-  for (const chunk of bytes) {
-    socket.write(chunk);
-  }
-
-  socket.end();
-
+/** Collects every response frame until the server closes the connection. */
+async function responsesOf(socket: Socket): Promise<unknown[]> {
   const responses: unknown[] = [];
 
   for await (const body of readFrames(socket)) {
@@ -103,6 +91,20 @@ async function exchange(
   }
 
   return responses;
+}
+
+/**
+ * Writes `bytes`, half-closes the socket and collects every response frame
+ * until the server closes the connection.
+ */
+function exchange(socket: Socket, ...bytes: Uint8Array[]): Promise<unknown[]> {
+  for (const chunk of bytes) {
+    socket.write(chunk);
+  }
+
+  socket.end();
+
+  return responsesOf(socket);
 }
 
 function registerCleanup(): void {
@@ -151,6 +153,21 @@ describe(TcpServer.name, () => {
       const [err] = await once(refused, "error");
 
       assertEquals((err as { code?: string }).code, "ECONNREFUSED");
+    });
+
+    it("serves again when called after close()", async () => {
+      const server = withController(new TcpServer({ port: 0 }), PingController);
+      const first = await start(server);
+
+      await server.close();
+      await first.stopped;
+
+      const { port } = await start(server);
+
+      assertEquals(
+        await exchange(await connectTo(port), message("ping", "again", "id-1")),
+        [{ id: "id-1", isDisposed: true, response: "pong:again" }],
+      );
     });
 
     it("defaults to 127.0.0.1:3000", async () => {
@@ -227,6 +244,120 @@ describe(TcpServer.name, () => {
       await clientClosed;
       await stopped;
     });
+
+    it("delivers the responses of running handlers before closing connections", async () => {
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+
+      @MessageController()
+      class SlowCtrl {
+        @MessagePattern("slow")
+        public async slow(): Promise<string> {
+          started.resolve();
+          await release.promise;
+          return "done";
+        }
+      }
+
+      const server = withController(new TcpServer({ port: 0 }), SlowCtrl);
+      const { port, stopped } = await start(server);
+      const client = await connectTo(port);
+      const responses = responsesOf(client);
+
+      client.write(message("slow", null, "id-1"));
+      await started.promise;
+
+      const closing = server.close();
+
+      release.resolve();
+      await closing;
+      await stopped;
+
+      assertEquals(await responses, [
+        { id: "id-1", isDisposed: true, response: "done" },
+      ]);
+    });
+
+    it("drops frames received after it started", async () => {
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const handled: unknown[] = [];
+
+      @MessageController()
+      class Ctrl {
+        @MessagePattern("slow")
+        public async slow(): Promise<string> {
+          started.resolve();
+          await release.promise;
+          return "done";
+        }
+
+        @MessagePattern("ping")
+        public ping(data: unknown): unknown {
+          handled.push(data);
+          return data;
+        }
+      }
+
+      const server = withController(new TcpServer({ port: 0 }), Ctrl);
+      const { port } = await start(server);
+      const accepted = once(server["netServer"]!, "connection");
+      const busy = await connectTo(port);
+
+      await accepted;
+
+      const acceptedIdle = once(server["netServer"]!, "connection");
+      const idle = await connectTo(port);
+
+      await acceptedIdle;
+
+      const busyResponses = responsesOf(busy);
+
+      busy.write(message("slow", null, "slow-id"));
+      await started.promise;
+
+      const closing = server.close();
+
+      // Nothing runs on `idle`, so dropping the frame closes it right away.
+      assertEquals(
+        await exchange(idle, message("ping", "late", "late-id")),
+        [],
+      );
+
+      release.resolve();
+      await closing;
+
+      assertEquals(handled, []);
+      assertEquals(await busyResponses, [
+        { id: "slow-id", isDisposed: true, response: "done" },
+      ]);
+    });
+
+    it("waits for running event handlers", async () => {
+      const started = Promise.withResolvers<void>();
+      const order: string[] = [];
+
+      @MessageController()
+      class SlowEvtCtrl {
+        @EventPattern("slow.evt")
+        public async onEvent(): Promise<void> {
+          started.resolve();
+          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+          order.push("handled");
+        }
+      }
+
+      const server = withController(new TcpServer({ port: 0 }), SlowEvtCtrl);
+      const { port } = await start(server);
+      const client = await connectTo(port);
+
+      client.write(event("slow.evt", null));
+      await started.promise;
+      await server.close();
+      order.push("closed");
+
+      assertEquals(order, ["handled", "closed"]);
+    });
   });
 
   describe("message handling", () => {
@@ -242,7 +373,7 @@ describe(TcpServer.name, () => {
       );
     });
 
-    it("answers several requests from a single chunk in order", async () => {
+    it("answers several requests from a single chunk", async () => {
       const server = withController(new TcpServer({ port: 0 }), PingController);
       const { port } = await start(server);
       const first = message("ping", 1, "id-1");
@@ -252,10 +383,102 @@ describe(TcpServer.name, () => {
       chunk.set(first);
       chunk.set(second, first.byteLength);
 
-      assertEquals(await exchange(await connectTo(port), chunk), [
+      const responses = await exchange(await connectTo(port), chunk);
+      const byId: unknown[] = (responses as { id: string }[]).toSorted(
+        (a, b) => a.id.localeCompare(b.id),
+      );
+
+      assertEquals(byId, [
         { id: "id-1", isDisposed: true, response: "pong:1" },
         { id: "id-2", isDisposed: true, response: "pong:2" },
       ]);
+    });
+
+    it("answers a fast request while a slow one on the same connection runs", async () => {
+      const release = Promise.withResolvers<void>();
+
+      @MessageController()
+      class MixedCtrl {
+        @MessagePattern("slow")
+        public async slow(): Promise<string> {
+          await release.promise;
+          return "slow";
+        }
+
+        @MessagePattern("fast")
+        public fast(): string {
+          return "fast";
+        }
+      }
+
+      const server = withController(new TcpServer({ port: 0 }), MixedCtrl);
+      const { port } = await start(server);
+      const client = await connectTo(port);
+      const frames = readFrames(client);
+
+      client.write(message("slow", null, "slow-id"));
+      client.write(message("fast", null, "fast-id"));
+
+      // Serving one request at a time answers nothing before the slow handler
+      // returns: release it eventually so that fails instead of hanging.
+      const fallback = setTimeout(release.resolve, 1_000);
+      const first = await frames.next();
+
+      clearTimeout(fallback);
+      release.resolve();
+
+      const second = await frames.next();
+
+      assertEquals(
+        [first.value, second.value].map((body) =>
+          decodeFrame(body as Uint8Array, deserializer)
+        ),
+        [
+          { id: "fast-id", isDisposed: true, response: "fast" },
+          { id: "slow-id", isDisposed: true, response: "slow" },
+        ],
+      );
+    });
+
+    it("omits the response field when the handler returns undefined", async () => {
+      @MessageController()
+      class VoidCtrl {
+        @MessagePattern("void")
+        public handle(): void {}
+      }
+
+      const server = withController(new TcpServer({ port: 0 }), VoidCtrl);
+      const { port } = await start(server);
+
+      assertEquals(
+        await exchange(await connectTo(port), message("void", null, "void-id")),
+        [{ id: "void-id", isDisposed: true }],
+      );
+    });
+
+    it("writes and logs a serialization error when the response cannot be encoded", async () => {
+      @MessageController()
+      class DateCtrl {
+        @MessagePattern("date")
+        public date(): { at: Date } {
+          return { at: new Date(0) };
+        }
+      }
+
+      const server = withController(new TcpServer({ port: 0 }), DateCtrl);
+      using logError = spy(server["logger"], "error");
+      const { port } = await start(server);
+
+      assertEquals(
+        await exchange(await connectTo(port), message("date", null, "date-id")),
+        [{
+          id: "date-id",
+          isDisposed: true,
+          err:
+            "Failed to serialize response: Cannot safely encode value into messagepack",
+        }],
+      );
+      assertEquals(logError.calls.length, 1);
     });
 
     it("writes the error message when the handler throws an Error", async () => {
@@ -355,6 +578,26 @@ describe(TcpServer.name, () => {
       client.write(new Uint8Array([0x04, 0x00, 0x00, 0x01]));
 
       await clientClosed;
+    });
+
+    it("closes the connection when a frame exceeds maxBufferSize", async () => {
+      const server = withController(
+        new TcpServer({ port: 0, maxBufferSize: 40 }),
+        PingController,
+      );
+      const { port } = await start(server);
+
+      assertEquals(
+        await exchange(await connectTo(port), message("ping", "ok", "id-1")),
+        [{ id: "id-1", isDisposed: true, response: "pong:ok" }],
+      );
+      assertEquals(
+        await exchange(
+          await connectTo(port),
+          message("ping", "x".repeat(64), "id-2"),
+        ),
+        [],
+      );
     });
 
     it("keeps serving when a response cannot be written", async () => {
