@@ -4,6 +4,7 @@ import {
   STATUS_TEXT,
   StatusCode,
 } from "@denorid/core";
+import type { ZodType } from "zod";
 import {
   type ApiMetadata,
   type ApiRouteMetadata,
@@ -16,6 +17,7 @@ import type { ApiResponseOptions, ApiResponseStatus } from "./decorators.ts";
 import type { OpenApiDocumentOptions } from "./module_options.ts";
 import type {
   ComponentsObject,
+  MediaTypeObject,
   OpenAPIObject,
   OperationObject,
   ParameterLocation,
@@ -206,6 +208,51 @@ function createHeaderParameters(
 }
 
 /**
+ * Creates the item schema of a server-sent event stream: the parsed event
+ * fields, with one alternative per event name describing its `data`. Data of
+ * string schemas is the schema itself, other data is JSON
+ * (`contentMediaType` and `contentSchema`). The `message` alternative also
+ * matches events without `event` field, which browsers dispatch as
+ * `message`.
+ *
+ * @param {Record<string, ZodType>} events - Schema of the data by event name.
+ * @param {SchemaCollector} schemas - Collects the schemas of the document.
+ * @return {SchemaObject} The item schema.
+ */
+function createEventSchema(
+  events: Record<string, ZodType>,
+  schemas: SchemaCollector,
+): SchemaObject {
+  const alternatives = Object.entries(events).map(([name, zodSchema]) => {
+    const { schema, resolved } = schemas.convert(zodSchema, "output");
+
+    return {
+      properties: {
+        event: { const: name },
+        data: resolved.type === "string" ? schema : {
+          type: "string" as const,
+          contentMediaType: "application/json",
+          contentSchema: schema,
+        },
+      },
+      ...(name === "message" ? {} : { required: ["event"] }),
+    };
+  });
+
+  return {
+    type: "object",
+    properties: {
+      event: { type: "string" },
+      data: { type: "string" },
+      id: { type: "string" },
+      retry: { type: "integer", minimum: 0 },
+    },
+    required: ["data"],
+    ...(alternatives.length > 0 ? { oneOf: alternatives } : {}),
+  };
+}
+
+/**
  * Creates the servers of a host-restricted route: a network-path reference
  * (`//api.example.com`, same scheme as the documentation page) per host
  * name, and a server with a `{host}` variable per RegExp, which a URL cannot
@@ -228,8 +275,10 @@ function createServers(host: NonNullable<HttpRoute["host"]>): ServerObject[] {
 }
 
 /**
- * Creates a documented response. Without `contentType`, scalar schemas are
- * `text/plain`, the way the HTTP adapter sends strings, numbers and booleans.
+ * Creates a documented response. Without `contentType`, item schemas are
+ * `application/jsonl`, events `text/event-stream`, scalar schemas
+ * `text/plain` (the way the HTTP adapter sends strings, numbers and
+ * booleans) and other schemas `application/json`.
  *
  * @param {ApiResponseStatus} status - Status of the response.
  * @param {ApiResponseOptions} options - The `@ApiResponse()` options.
@@ -246,21 +295,48 @@ function createResponse(
       ? "Default response"
       : STATUS_TEXT[status] ?? "Response");
 
-  if (options.schema === undefined) {
+  if (options.events !== undefined) {
+    return {
+      description,
+      content: {
+        [options.contentType ?? "text/event-stream"]: {
+          itemSchema: createEventSchema(options.events, schemas),
+        },
+      },
+    };
+  }
+
+  if (options.schema === undefined && options.itemSchema === undefined) {
     return { description };
   }
 
-  const { schema, resolved } = schemas.convert(options.schema, "output");
-  // Types of the schema or of every union member; "?" for untyped ones.
-  const types = (resolved.anyOf ?? [resolved])
-    .flatMap((variant) => [(variant as SchemaObject).type ?? "?"].flat())
-    .filter((type) => type !== "null");
-  const contentType = options.contentType ??
-    (types.length > 0 && types.every((type) => Object.hasOwn(TEXT_TYPES, type))
-      ? "text/plain"
-      : "application/json");
+  const media: MediaTypeObject = {};
+  let contentType = options.contentType;
 
-  return { description, content: { [contentType]: { schema } } };
+  if (options.schema !== undefined) {
+    const { schema, resolved } = schemas.convert(options.schema, "output");
+    // Types of the schema or of every union member; "?" for untyped ones.
+    const types = (resolved.anyOf ?? [resolved])
+      .flatMap((variant) => [(variant as SchemaObject).type ?? "?"].flat())
+      .filter((type) => type !== "null");
+
+    media.schema = schema;
+    contentType ??= options.itemSchema === undefined &&
+        types.length > 0 &&
+        types.every((type) => Object.hasOwn(TEXT_TYPES, type))
+      ? "text/plain"
+      : undefined;
+  }
+
+  if (options.itemSchema !== undefined) {
+    media.itemSchema = schemas.convert(options.itemSchema, "output").schema;
+    contentType ??= "application/jsonl";
+  }
+
+  return {
+    description,
+    content: { [contentType ?? "application/json"]: media },
+  };
 }
 
 /**

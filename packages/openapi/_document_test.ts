@@ -21,6 +21,7 @@ import type { OpenApiDocumentOptions } from "./module_options.ts";
 import type {
   OperationObject,
   ParameterObject,
+  ResponseObject,
   SchemaObject,
 } from "./types.ts";
 
@@ -860,6 +861,137 @@ describe("createDocument()", () => {
           200: { description: "OK" },
           400: { description: "Invalid" },
           403: { description: "Denied" },
+        },
+      );
+    });
+  });
+
+  describe("streamed responses", () => {
+    const LogEntry = z.object({ level: z.number(), message: z.string() });
+    const Chat = z.object({ text: z.string() }).meta({ id: "StreamChat" });
+
+    it("documents item schemas as JSON Lines by default", () => {
+      class StreamController {
+        @ApiResponse(StatusCode.Ok, { itemSchema: LogEntry })
+        @ApiResponse(StatusCode.Accepted, {
+          itemSchema: LogEntry,
+          contentType: "application/x-ndjson",
+        })
+        @ApiResponse(StatusCode.PartialContent, {
+          schema: z.array(LogEntry),
+          itemSchema: LogEntry,
+        })
+        public logs(): void {}
+      }
+
+      const responses = operation([route(StreamController, "logs")], "/")
+        ?.responses as Record<string, ResponseObject>;
+      const item: SchemaObject = {
+        type: "object",
+        properties: { level: { type: "number" }, message: { type: "string" } },
+        required: ["level", "message"],
+        additionalProperties: false,
+      };
+
+      assertEquals(responses[200].content, {
+        "application/jsonl": { itemSchema: item },
+      });
+      assertEquals(responses[202].content, {
+        "application/x-ndjson": { itemSchema: item },
+      });
+      assertEquals(responses[206].content, {
+        "application/jsonl": {
+          schema: { type: "array", items: item },
+          itemSchema: item,
+        },
+      });
+    });
+
+    it("documents server-sent events by name", () => {
+      class EventsController {
+        @ApiResponse(StatusCode.Ok, {
+          description: "Chat events",
+          events: { message: Chat, ping: z.string() },
+        })
+        public events(): void {}
+      }
+
+      const document = createDocument(
+        [route(EventsController, "events")],
+        OPTIONS,
+      );
+
+      assertEquals(document.paths?.["/"]?.get?.responses?.[200], {
+        description: "Chat events",
+        content: {
+          "text/event-stream": {
+            itemSchema: {
+              type: "object",
+              properties: {
+                event: { type: "string" },
+                data: { type: "string" },
+                id: { type: "string" },
+                retry: { type: "integer", minimum: 0 },
+              },
+              required: ["data"],
+              oneOf: [
+                {
+                  properties: {
+                    event: { const: "message" },
+                    data: {
+                      type: "string",
+                      contentMediaType: "application/json",
+                      contentSchema: {
+                        $ref: "#/components/schemas/StreamChat",
+                      },
+                    },
+                  },
+                },
+                {
+                  properties: {
+                    event: { const: "ping" },
+                    data: { type: "string" },
+                  },
+                  required: ["event"],
+                },
+              ],
+            },
+          },
+        },
+      });
+      assertEquals(Object.keys(document.components?.schemas ?? {}), [
+        "StreamChat",
+      ]);
+    });
+
+    it("keeps a custom event media type and leaves out empty alternatives", () => {
+      class EmptyEventsController {
+        @ApiResponse(StatusCode.Ok, {
+          events: {},
+          contentType: "text/event-stream; charset=utf-8",
+        })
+        public events(): void {}
+      }
+
+      assertEquals(
+        operation([route(EmptyEventsController, "events")], "/")?.responses
+          ?.[200],
+        {
+          description: "OK",
+          content: {
+            "text/event-stream; charset=utf-8": {
+              itemSchema: {
+                type: "object",
+                properties: {
+                  event: { type: "string" },
+                  data: { type: "string" },
+                  id: { type: "string" },
+                  retry: { type: "integer", minimum: 0 },
+                },
+                required: ["data"],
+              },
+            },
+          },
         },
       );
     });

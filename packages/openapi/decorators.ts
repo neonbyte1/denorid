@@ -41,22 +41,54 @@ export interface ApiOperationOptions {
   requestBody?: RequestBodyObject;
 }
 
-/** A response documented with {@link ApiResponse}. */
-export interface ApiResponseOptions {
+/** Fields shared by every response documented with {@link ApiResponse}. */
+export interface ApiResponseBaseOptions {
   /** Description of the response. Defaults to the status text, e.g. `OK`. */
   description?: string;
+  /**
+   * Media type of the body. Defaults to `application/jsonl` with an
+   * `itemSchema`, `text/event-stream` with `events`, and otherwise to how the
+   * HTTP adapter sends a handler result: `text/plain` for string, number and
+   * boolean schemas, `application/json` for others.
+   */
+  contentType?: string;
+}
+
+/** A response with a body, or a stream of items, documented by zod schemas. */
+export interface ApiResponseBodyOptions extends ApiResponseBaseOptions {
   /**
    * Zod schema of the response body, documented as its output (the parsed
    * type, `z.infer<typeof schema>`).
    */
   schema?: ZodType;
   /**
-   * Media type of the body. Defaults to how the HTTP adapter sends a handler
-   * result: `text/plain` for string, number and boolean schemas,
-   * `application/json` otherwise.
+   * Zod schema of every item of a streamed response in a sequential media
+   * type, e.g. one line of `application/jsonl` (the default media type),
+   * `application/x-ndjson` or `application/json-seq`. Documented as output.
    */
-  contentType?: string;
+  itemSchema?: ZodType;
+  /** Not with `schema` or `itemSchema`. */
+  events?: never;
 }
+
+/** A stream of server-sent events (`text/event-stream`). */
+export interface ApiResponseEventsOptions extends ApiResponseBaseOptions {
+  /**
+   * The events of the stream, by event name: the zod schema of the `data`
+   * field. Data of string schemas is documented as sent as is, other data as
+   * JSON. The `message` event also covers events sent without `event` field.
+   */
+  events: Record<string, ZodType>;
+  /** Not with `events`. */
+  schema?: never;
+  /** Not with `events`. */
+  itemSchema?: never;
+}
+
+/** A response documented with {@link ApiResponse}. */
+export type ApiResponseOptions =
+  | ApiResponseBodyOptions
+  | ApiResponseEventsOptions;
 
 /** Status of a documented response; `default` covers every other status. */
 export type ApiResponseStatus = StatusCode | "default";
@@ -187,6 +219,10 @@ export function ApiOperation(options: ApiOperationOptions): MethodDecorator {
  * Routes without a documented `1xx`-`3xx` response get the success response
  * of the framework: the `@HttpCode()` status, `200` without one.
  *
+ * Streamed responses (OpenAPI 3.2 sequential media types) are documented per
+ * item: `itemSchema` for JSON Lines and similar formats, `events` for
+ * server-sent events.
+ *
  * @example
  * ```ts
  * \@Post()
@@ -197,9 +233,22 @@ export function ApiOperation(options: ApiOperationOptions): MethodDecorator {
  * public create(ctx: RequestContext<typeof CreateThread>): Promise<unknown> {}
  * ```
  *
+ * @example Streams
+ * ```ts
+ * \@Get("/logs")
+ * \@ApiResponse(StatusCode.Ok, { itemSchema: LogEntry })
+ * public logs(): Response {}
+ *
+ * \@Get("/events")
+ * \@ApiResponse(StatusCode.Ok, {
+ *   events: { message: ChatMessage, typing: z.object({ userId: z.uuid() }) },
+ * })
+ * public events(): Response {}
+ * ```
+ *
  * @param {ApiResponseStatus} status - Status code, or `default`.
- * @param {ApiResponseOptions} [options] - Description, body schema and media
- *   type.
+ * @param {ApiResponseOptions} [options] - Description, body or item schema,
+ *   events and media type.
  * @return {Decorator<ClassDecoratorContext, Type> & MethodDecorator} A
  *   decorator for controller classes and route methods.
  */
