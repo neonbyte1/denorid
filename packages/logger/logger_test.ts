@@ -1,12 +1,26 @@
 import { assertEquals, assertMatch } from "@std/assert";
-import { spy } from "@std/testing/mock";
+import {
+  type GetParametersFromProp,
+  spy,
+  type Stub,
+  stub,
+} from "@std/testing/mock";
+import process from "node:process";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Logger } from "./logger.ts";
 import type { LoggerService } from "./logger_service.ts";
 
+type Stdout = typeof process.stdout;
+type Stderr = typeof process.stderr;
+type WriteStub<S extends Stdout | Stderr> = Stub<
+  S,
+  GetParametersFromProp<S, "write">,
+  boolean
+>;
+
 describe("Logger", () => {
-  let originalStdoutWriteSync: typeof Deno.stdout.writeSync;
-  let originalStderrWriteSync: typeof Deno.stderr.writeSync;
+  let stdoutWrite: WriteStub<Stdout>;
+  let stderrWrite: WriteStub<Stderr>;
   let originalConsoleLog: typeof console.log;
   let originalConsoleError: typeof console.error;
   let capturedOutput: string;
@@ -16,20 +30,26 @@ describe("Logger", () => {
     beforeEach(() => {
       capturedOutput = "";
       capturedStderr = "";
-      originalStdoutWriteSync = Deno.stdout.writeSync;
-      originalStderrWriteSync = Deno.stderr.writeSync;
       originalConsoleLog = console.log;
       originalConsoleError = console.error;
 
-      Deno.stdout.writeSync = spy((data: Uint8Array): number => {
-        capturedOutput += new TextDecoder().decode(data);
-        return data.length;
-      });
+      stdoutWrite = stub(
+        process.stdout,
+        "write",
+        (chunk: string | Uint8Array): boolean => {
+          capturedOutput += String(chunk);
+          return true;
+        },
+      );
 
-      Deno.stderr.writeSync = spy((data: Uint8Array): number => {
-        capturedStderr += new TextDecoder().decode(data);
-        return data.length;
-      });
+      stderrWrite = stub(
+        process.stderr,
+        "write",
+        (chunk: string | Uint8Array): boolean => {
+          capturedStderr += String(chunk);
+          return true;
+        },
+      );
 
       console.log = spy((...args: unknown[]): void => {
         capturedOutput += args.map((arg) => JSON.stringify(arg)).join(" ");
@@ -41,8 +61,8 @@ describe("Logger", () => {
     });
 
     afterEach(() => {
-      Deno.stdout.writeSync = originalStdoutWriteSync;
-      Deno.stderr.writeSync = originalStderrWriteSync;
+      stdoutWrite.restore();
+      stderrWrite.restore();
 
       console.log = originalConsoleLog;
       console.error = originalConsoleError;
@@ -152,13 +172,13 @@ describe("Logger", () => {
     it("should append the prefix to formatPid", () => {
       const logger = new Logger();
 
-      assertEquals(logger["formatPid"](), `[Denorid] ${Deno.pid}  - `);
+      assertEquals(logger["formatPid"](), `[Denorid] ${process.pid}  - `);
     });
 
     it("should use custom prefix", () => {
       const logger = new Logger({ prefix: "MyApp" });
 
-      assertEquals(logger["formatPid"](), `[MyApp] ${Deno.pid}  - `);
+      assertEquals(logger["formatPid"](), `[MyApp] ${process.pid}  - `);
     });
   });
 
@@ -682,6 +702,39 @@ some stack message
     });
   });
 
+  describe("writeFormattedMessage without forceConsole", () => {
+    useCapturedConsole();
+
+    it("should write the untrimmed string to process.stdout when not stderr", () => {
+      const logger = new Logger({ colors: false });
+      logger["writeFormattedMessage"]("  out line\n", false);
+
+      assertEquals(stdoutWrite.calls.map((call) => call.args), [[
+        "  out line\n",
+      ]]);
+      assertEquals(stderrWrite.calls.length, 0);
+    });
+
+    it("should write the untrimmed string to process.stderr when stderr", () => {
+      const logger = new Logger({ colors: false });
+      logger["writeFormattedMessage"]("  err line\n", true);
+
+      assertEquals(stderrWrite.calls.map((call) => call.args), [[
+        "  err line\n",
+      ]]);
+      assertEquals(stdoutWrite.calls.length, 0);
+    });
+
+    it("should write one chunk per message in call order", () => {
+      const logger = new Logger({ colors: false });
+      logger["printMessages"](["first", "second"], "Ctx", "log");
+
+      assertEquals(stdoutWrite.calls.length, 2);
+      assertMatch(String(stdoutWrite.calls[0].args[0]), /first\n$/);
+      assertMatch(String(stdoutWrite.calls[1].args[0]), /second\n$/);
+    });
+  });
+
   describe("JSON mode", () => {
     useCapturedConsole();
 
@@ -751,6 +804,7 @@ some stack message
       });
 
       assertEquals(result.level, "log");
+      assertEquals(result.pid, process.pid);
       assertEquals(result.message, "msg");
       assertEquals(result.context, undefined);
     });

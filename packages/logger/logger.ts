@@ -6,7 +6,8 @@ import {
   red,
   yellow,
 } from "@std/fmt/colors";
-import { inspect, type InspectOptions } from "node:util";
+import process from "node:process";
+import util, { type InspectOptions } from "node:util";
 import {
   dateTimeFormatter,
   DEFAULT_DEPTH,
@@ -35,7 +36,7 @@ export interface PrintMessageOptions {
 export interface JsonLogObject {
   /** Severity level. */
   level: LogLevel;
-  /** Process ID (`Deno.pid`). */
+  /** Process ID (`process.pid` from `node:process`). */
   pid: number;
   /** Unix epoch milliseconds at the time of the call. */
   timestamp: number;
@@ -582,7 +583,9 @@ export class Logger implements LoggerService {
    *
    * When `forceConsole` is enabled in the logger options, output is delegated
    * to `console.log` / `console.error`. Otherwise the message is written
-   * synchronously directly to the underlying Deno stream to preserve ordering.
+   * directly to `process.stdout` / `process.stderr` (from `node:process`),
+   * which preserves the ordering of lines written to the same stream on Deno,
+   * Bun and Node.js.
    *
    * @param {string} formattedMessage - The fully-formatted log line to write.
    * @param {boolean} shouldUseStderr - When `true`, the message is written to stderr; otherwise stdout.
@@ -597,14 +600,10 @@ export class Logger implements LoggerService {
       } else {
         console.log(formattedMessage.trim());
       }
+    } else if (shouldUseStderr) {
+      process.stderr.write(formattedMessage);
     } else {
-      const stream = Deno[shouldUseStderr ? "stderr" : "stdout"];
-      const data = new TextEncoder().encode(formattedMessage);
-      let written = 0;
-
-      while (written < data.length) {
-        written += stream.writeSync(data.subarray(written));
-      }
+      process.stdout.write(formattedMessage);
     }
   }
 
@@ -662,7 +661,7 @@ export class Logger implements LoggerService {
    *
    * When colors are disabled and `inspectOptions.compact` is `true` the object
    * is serialised with `JSON.stringify` (using {@linkcode Logger.stringifyReplacer}
-   * for non-serialisable values); otherwise `Deno.inspect` is used so the output
+   * for non-serialisable values); otherwise `node:util` `inspect` is used so the output
    * is pretty-printed.
    *
    * @param {unknown} message - The value to include as the `message` field.
@@ -676,7 +675,7 @@ export class Logger implements LoggerService {
     const formattedMessage =
       !this.options.colors && this.inspectOptions.compact === true
         ? `${JSON.stringify(logObject, this.stringifyReplacer)}\n`
-        : `${inspect(logObject, this.inspectOptions)}\n`;
+        : `${util.inspect(logObject, this.inspectOptions)}\n`;
 
     this.writeFormattedMessage(
       formattedMessage,
@@ -689,7 +688,7 @@ export class Logger implements LoggerService {
    *
    * Handles value types that are not natively serialisable by JSON:
    * - `bigint` and `symbol` are converted via `.toString()`.
-   * - `Map`, `Set`, and `Error` instances are converted with `Deno.inspect`.
+   * - `Map`, `Set`, and `Error` instances are converted with `node:util` `inspect`.
    *
    * @param {string} _ - The property key (unused).
    * @param {unknown} value - The value to serialise.
@@ -704,7 +703,7 @@ export class Logger implements LoggerService {
     if (
       value instanceof Map || value instanceof Set || value instanceof Error
     ) {
-      return inspect(value, this.inspectOptions);
+      return util.inspect(value, this.inspectOptions);
     }
 
     return value;
@@ -728,7 +727,7 @@ export class Logger implements LoggerService {
   ): JsonLogObject {
     const logObject: Partial<JsonLogObject> = {
       level: options.level,
-      pid: Deno.pid,
+      pid: process.pid,
       timestamp: Date.now(),
     };
 
@@ -838,7 +837,7 @@ export class Logger implements LoggerService {
    * @returns {string} The PID prefix string.
    */
   protected formatPid(): string {
-    return `[${this.options.prefix}] ${Deno.pid}  - `;
+    return `[${this.options.prefix}] ${process.pid}  - `;
   }
 
   /**
@@ -1023,7 +1022,7 @@ export class Logger implements LoggerService {
       return this.colorize(message, level);
     }
 
-    const text = inspect(message, this.inspectOptions);
+    const text = util.inspect(message, this.inspectOptions);
 
     if (isPlainObject(message)) {
       return `Object(${Object.keys(text).length}) ${text}`;

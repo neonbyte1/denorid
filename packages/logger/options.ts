@@ -71,7 +71,7 @@ export interface LoggerOptions {
   compact?: boolean;
   /**
    * Route all output through `console.log` / `console.error` instead of
-   * writing directly to `Deno.stdout` / `Deno.stderr`.
+   * writing directly to `process.stdout` / `process.stderr` (`node:process`).
    * @default false
    */
   forceConsole?: boolean;
