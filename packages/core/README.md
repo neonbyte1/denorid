@@ -90,11 +90,12 @@ filters run: with `@Catch(HttpException)` and `@Catch(Error)`, a
 
 ## Request validation
 
-`@Body()` (JSON), `@Form()` (form data), `@Query()` and `@Params()` validate the
-inputs of a route with Zod schemas. Validation runs after the guards allowed the
-request and before the handler: the path parameters first, then the query
-string, then the body, which is only read when the route declares `@Body()` or
-`@Form()`. An invalid input answers `400 Bad Request` with one message per issue
+`@Body()` (JSON), `@Form()` (form data), `@Query()`, `@Params()` and
+`@RequestHeaders()` validate the inputs of a route with Zod schemas. Validation
+runs after the guards allowed the request and before the handler: the path
+parameters first, then the query string, then the headers, then the body, which
+is only read when the route declares `@Body()` or `@Form()`. An invalid input
+answers `400 Bad Request` with one message per issue
 (`"limit: Too big: expected number to be <=100"`); a body that cannot be parsed
 answers `400` with `"Malformed request body"`.
 
@@ -107,6 +108,7 @@ import {
   Post,
   Query,
   type RequestContext,
+  RequestHeaders,
 } from "@denorid/core";
 import { z } from "zod";
 
@@ -115,15 +117,18 @@ const ListQuery = z.object({
   limit: z.coerce.number().int().max(100).default(20),
   tags: z.array(z.string()).optional(),
 });
+const TenantHeaders = z.object({ "x-tenant-id": z.uuid() });
 const CreateThread = z.object({ title: z.string().min(1) });
 
 @Controller("threads")
 export class ThreadController {
   @Get()
   @Query(ListQuery)
+  @RequestHeaders(TenantHeaders)
   public list(ctx: RequestContext): unknown {
     const { limit, tags } = ctx.validated(ListQuery);
-    return { limit, tags };
+    const tenant = ctx.validated(TenantHeaders)["x-tenant-id"];
+    return { limit, tags, tenant };
   }
 
   @Get(":id")
@@ -143,14 +148,20 @@ export class ThreadController {
 - `ctx.validated(schema)` returns the parsed value (defaults, coercions and
   transforms applied) of a schema declared on the route; it throws for any other
   schema. The parsed body is also available as `ctx.dto`.
-- Path parameters and query values are strings: use `z.coerce` for numbers,
-  booleans and dates.
+- Path parameters, query values and headers are strings: use `z.coerce` for
+  numbers, booleans and dates.
 - Query string: a key given once is passed as a string, a repeated key as a
   `string[]`. A key whose schema accepts an array (`z.array()`, `z.tuple()` or
   `z.set()`, also inside `.optional()`, `.default()`, unions, ...) is always a
   `string[]`, so `?tags=a` gives `["a"]`. A repeated key whose schema expects a
   single value fails: `?limit=1&limit=2` answers `400` instead of using one of
   the values.
+- Headers: the schema receives every header of the request with its name in
+  lowercase, so its keys must be lowercase (`"x-tenant-id"`), whatever casing
+  the client sent. A header sent several times arrives as one value joined with
+  `,`. `z.object()` strips the headers it does not declare. The decorator is
+  named `@RequestHeaders()` rather than `@Headers()` so it does not shadow the
+  global `Headers` class.
 - Refinements may be async.
 
 ## Registered routes
@@ -180,9 +191,11 @@ export class RouteLister {
 
 Every entry holds the `method`, the full `path` (base path, controller path and
 route path, e.g. `/api/threads/:id`; a path array gives one entry per path), the
-`controller` class, the route `metadata` (including the `@Body()`, `@Form()`,
-`@Query()` and `@Params()` schemas) and the `guards` (global, controller and
-method guards, without duplicates).
+`controller` class, the `host` restriction of the controller (only present for
+`@Controller({ host })`: a string, a RegExp or an array of both), the route
+`metadata` (including the `@Body()`, `@Form()`, `@Query()`, `@Params()` and
+`@RequestHeaders()` schemas) and the `guards` (global, controller and method
+guards, without duplicates).
 
 ## Testing
 
