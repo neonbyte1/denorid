@@ -37,11 +37,23 @@ export interface JwtSignOptions {
   exp?: number | string | Date;
   /** Issued-at claim (`iat`). Identifies the time at which the token was issued. */
   iat?: number | string | Date;
-  /** Additional JOSE protected header parameters merged into the token header. */
+  /**
+   * JOSE protected header parameters, merged over the module-level `signOptions.protectedHeader`.
+   *
+   * `alg` defaults to the algorithm inferred from the signing key. A module-level `alg` only
+   * applies while the module key signs; a per-operation `secret` / `privateKey` uses its own
+   * inferred algorithm unless this header sets `alg`.
+   */
   protectedHeader?: Partial<JWTHeaderParameters>;
-  /** Symmetric secret used with HMAC algorithms (e.g. HS256). Mutually exclusive with `privateKey`. */
+  /**
+   * Symmetric secret used with HMAC algorithms (e.g. HS256). Mutually exclusive with `privateKey`.
+   * Overrides the module `secret` and `privateKey`.
+   */
   secret?: SecretType;
-  /** Asymmetric private key used with algorithms such as RS256 or ES256. Mutually exclusive with `secret`. */
+  /**
+   * Asymmetric private key used with algorithms such as RS256 or ES256. Mutually exclusive with
+   * `secret`. Overrides the module `secret` and `privateKey`.
+   */
   privateKey?: KeyType;
 }
 
@@ -52,9 +64,15 @@ export interface JwtSignOptions {
  * verification key. `secret` and `publicKey` are mutually exclusive.
  */
 export interface JwtVerifyOptions extends JWTVerifyOptions {
-  /** Symmetric secret used to verify HMAC-signed tokens. Mutually exclusive with `publicKey`. */
+  /**
+   * Symmetric secret used to verify HMAC-signed tokens. Mutually exclusive with `publicKey`.
+   * Overrides the module `secret` and `publicKey`.
+   */
   secret?: SecretType;
-  /** Asymmetric public key used to verify tokens signed with RS256, ES256, etc. Mutually exclusive with `secret`. */
+  /**
+   * Asymmetric public key used to verify tokens signed with RS256, ES256, etc. Mutually exclusive
+   * with `secret`. Overrides the module `secret` and `publicKey`.
+   */
   publicKey?: KeyType;
 }
 
@@ -75,6 +93,10 @@ export interface JwtModuleOptions {
   publicKey?: KeyType;
   /** Default asymmetric private key used for token signing. */
   privateKey?: KeyType;
-  /** Default verification options applied to every verify operation. */
-  verifyOptions?: JwtVerifyOptions;
+  /**
+   * Default verification options (e.g. `issuer`, `audience`, `algorithms`, `maxTokenAge`) applied
+   * to every verify operation. Per-operation options replace individual fields. Key material
+   * belongs in {@link JwtModuleOptions.secret} / {@link JwtModuleOptions.publicKey}.
+   */
+  verifyOptions?: Omit<JwtVerifyOptions, "secret" | "publicKey">;
 }
