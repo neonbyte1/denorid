@@ -7,6 +7,7 @@
     "@denorid/core": "jsr:@denorid/core@^1.0.0-beta1",
     "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta1",
     "@hono/hono": "jsr:@hono/hono@^4.13.9",
+    "@hono/node-server": "npm:@hono/node-server@^2.1.1",
     "zod": "npm:zod@^4.6.5"
   }
 }

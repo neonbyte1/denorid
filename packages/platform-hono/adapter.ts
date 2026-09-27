@@ -4,26 +4,35 @@ import type {
   HttpAdapter,
 } from "@denorid/core";
 import { Hono } from "@hono/hono";
+import { type ServerHandle, startServer } from "./_serve.ts";
 import { HonoControllerMapping } from "./controller_mapping.ts";
 
+/**
+ * {@linkcode HttpAdapter} backed by a {@link https://hono.dev | Hono} app.
+ *
+ * Serves the app through the native HTTP server of the current runtime:
+ * `Deno.serve` on Deno, `Bun.serve` on Bun and `@hono/node-server` on Node.js.
+ */
 export class HonoAdapter implements HttpAdapter {
   private readonly app = new Hono();
-  private server?: Deno.HttpServer<Deno.NetAddr>;
+  private server?: ServerHandle;
 
   /**
    * @inheritdoc
    */
   public listen(port?: number): void {
-    this.server ??= Deno.serve({ port: port ?? 3000 }, this.app.fetch);
+    this.server ??= startServer(this.app.fetch, port ?? 3000);
   }
 
   /**
    * @inheritdoc
    */
   public async close(): Promise<void> {
-    await this.server?.shutdown();
+    const server = this.server;
 
     delete this.server;
+
+    await server?.close();
   }
 
   /**

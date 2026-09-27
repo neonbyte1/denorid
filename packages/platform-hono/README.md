@@ -15,8 +15,19 @@
 ## Installation
 
 ```bash
+# Deno
 deno add jsr:@denorid/platform-hono
+# Bun
+bunx jsr add @denorid/platform-hono
+# Node.js
+npx jsr add @denorid/platform-hono
 ```
+
+## Runtime support
+
+`HonoAdapter` serves the app through the native HTTP server of the runtime it
+runs on: `Deno.serve` on Deno, `Bun.serve` on Bun and
+[`@hono/node-server`](https://github.com/honojs/node-server) on Node.js.
 
 ## Quick Start
 
