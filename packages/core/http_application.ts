@@ -89,7 +89,11 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   ) {
     super(target, ctx, options);
 
-    this.options = { port: options.port, basePath: options.basePath };
+    this.options = {
+      port: options.port,
+      basePath: options.basePath,
+      cors: options.cors,
+    };
     this.adapter = options.adapter;
   }
 

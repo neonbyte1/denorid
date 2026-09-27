@@ -4,6 +4,7 @@ import { assertSpyCalls, spy, stub } from "@std/testing/mock";
 import { describe, it } from "node:test";
 import type { ControllerMappingOptions, HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
+import type { CorsOptions } from "./http/cors.ts";
 import { HttpApplication } from "./http_application.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
 
@@ -40,12 +41,17 @@ function makeHttpAdapter(mapping?: ControllerMapping): HttpAdapter {
 }
 
 function makeApp(
-  opts: { metaType?: Type; adapter?: HttpAdapter; ctx?: InjectorContext } = {},
+  opts: {
+    metaType?: Type;
+    adapter?: HttpAdapter;
+    ctx?: InjectorContext;
+    cors?: boolean | CorsOptions;
+  } = {},
 ): HttpApplication {
   return new HttpApplication(
     (opts.metaType ?? RootModule) as Type,
     opts.ctx ?? makeInjectorContext(),
-    { adapter: opts.adapter ?? makeHttpAdapter() },
+    { adapter: opts.adapter ?? makeHttpAdapter(), cors: opts.cors },
   );
 }
 
@@ -110,6 +116,17 @@ describe("HttpApplication", () => {
       await app.init();
 
       assertEquals(app["initialized"], true);
+    });
+
+    it("passes the cors option to the controller mapping", async () => {
+      const cors: CorsOptions = { origin: "https://example.com" };
+      const adapter = makeHttpAdapter();
+      const createMappingSpy = spy(adapter, "createControllerMapping");
+
+      await makeApp({ adapter, cors }).init();
+
+      assertSpyCalls(createMappingSpy, 1);
+      assertStrictEquals(createMappingSpy.calls[0].args[0].cors, cors);
     });
   });
 
