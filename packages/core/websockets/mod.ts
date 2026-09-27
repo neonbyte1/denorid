@@ -9,3 +9,4 @@ export * from "./adapter.ts";
 export * from "./exception.ts";
 export * from "./gateway_options.ts";
 export * from "./interfaces.ts";
+export * from "./ws_host_arguments.ts";
