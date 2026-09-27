@@ -25,6 +25,7 @@ import type {
   ResponseObject,
   SchemaObject,
   SecurityRequirementObject,
+  ServerObject,
 } from "./types.ts";
 
 /** Version of the OpenAPI specification of the generated documents. */
@@ -202,6 +203,28 @@ function createHeaderParameters(
     .map(([name, property]) =>
       createParameter(name, "header", required.includes(name), property)
     );
+}
+
+/**
+ * Creates the servers of a host-restricted route: a network-path reference
+ * (`//api.example.com`, same scheme as the documentation page) per host
+ * name, and a server with a `{host}` variable per RegExp, which a URL cannot
+ * express.
+ *
+ * @param {NonNullable<HttpRoute["host"]>} host - Host option of the
+ *   controller.
+ * @return {ServerObject[]} The servers.
+ */
+function createServers(host: NonNullable<HttpRoute["host"]>): ServerObject[] {
+  return [host].flat().map((entry) =>
+    typeof entry === "string" ? { url: `//${entry}` } : {
+      url: "//{host}",
+      description: `Hosts matching ${entry}`,
+      variables: {
+        host: { default: "", description: `A host matching ${entry}` },
+      },
+    }
+  );
 }
 
 /**
@@ -404,8 +427,9 @@ function convertRouteSchemas(
 /**
  * Creates the OpenAPI document of the registered routes.
  *
- * Routes of excluded controllers and excluded routes are left out. When
- * several routes share a method and path, the first registered one is
+ * Routes of excluded controllers and excluded routes are left out, and so
+ * are routes of controllers with an empty `host` list, which serve no host.
+ * When several routes share a method and path, the first registered one is
  * documented, since it answers the requests.
  *
  * @param {readonly HttpRoute[]} routes - The registered routes.
@@ -428,7 +452,10 @@ export function createDocument(
     const handler = readRouteMetadata(route.controller, route.metadata.name) ??
       NO_METADATA;
 
-    if (controller.exclude || handler.exclude) {
+    if (
+      controller.exclude || handler.exclude ||
+      (Array.isArray(route.host) && route.host.length === 0)
+    ) {
       continue;
     }
 
@@ -451,6 +478,9 @@ export function createDocument(
         typeof name === "symbol" ? name.description : name
       }`;
     const security = createSecurity(route, controller, handler);
+    const servers = route.host === undefined
+      ? undefined
+      : createServers(route.host);
 
     for (const requirement of security ?? []) {
       for (const scheme of Object.keys(requirement)) {
@@ -493,6 +523,7 @@ export function createDocument(
         responses: createResponses(route, controller, handler, schemas),
         ...(deprecated === undefined ? {} : { deprecated }),
         ...(security === undefined ? {} : { security }),
+        ...(servers === undefined ? {} : { servers }),
       };
 
       (paths[template.path] ??= {})[method] = operation;

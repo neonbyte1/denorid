@@ -48,6 +48,7 @@ const OPTIONS: OpenApiDocumentOptions = {
 interface RouteOptions {
   method?: HttpMethod;
   path?: string;
+  host?: HttpRoute["host"];
   guards?: HttpRoute["guards"];
   metadata?: Omit<RequestMappingMetadata, "name" | "method">;
 }
@@ -63,6 +64,7 @@ function route(
     method,
     path: options.path ?? "/",
     controller,
+    ...(options.host === undefined ? {} : { host: options.host }),
     metadata: { name, method, ...options.metadata },
     guards: options.guards ?? [],
   };
@@ -502,6 +504,52 @@ describe("createDocument()", () => {
           "/{id}",
         )?.parameters?.map((parameter) => (parameter as ParameterObject).in),
         ["path", "query", "header"],
+      );
+    });
+  });
+
+  describe("servers", () => {
+    it("documents the hosts of host-restricted routes", () => {
+      const found = operation(
+        [route(PlainController, "find", {
+          host: ["api.example.com", /^(.+)\.example\.com$/],
+        })],
+        "/",
+      );
+
+      assertEquals(found?.servers, [
+        { url: "//api.example.com" },
+        {
+          url: "//{host}",
+          description: "Hosts matching /^(.+)\\.example\\.com$/",
+          variables: {
+            host: {
+              default: "",
+              description: "A host matching /^(.+)\\.example\\.com$/",
+            },
+          },
+        },
+      ]);
+      assertEquals(
+        operation(
+          [route(PlainController, "find", { host: "admin.example.com" })],
+          "/",
+        )?.servers,
+        [{ url: "//admin.example.com" }],
+      );
+      assertEquals(
+        operation([route(PlainController, "find")], "/")?.servers,
+        undefined,
+      );
+    });
+
+    it("leaves out routes of controllers serving no host", () => {
+      assertEquals(
+        createDocument(
+          [route(PlainController, "find", { host: [] })],
+          OPTIONS,
+        ).paths,
+        {},
       );
     });
   });
