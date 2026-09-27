@@ -19,4 +19,18 @@ describe(HonoRequestContext.name, () => {
       );
     });
   });
+
+  describe("switchToWs()", () => {
+    it("ensure method throws exception", () => {
+      assertThrows(
+        () =>
+          new HonoHostArguments(
+            undefined as unknown as Context,
+            undefined as unknown as RequestContext,
+          ).switchToWs(),
+        ContextNotAvailableException,
+        "switchToWs() is not available in HTTP context. Use switchToHttp() instead.",
+      );
+    });
+  });
 });
