@@ -99,6 +99,15 @@ describe("OutputFormatter", () => {
       );
     });
 
+    it("keeps the style when an unknown closing tag appears inside it", () => {
+      const formatter = new OutputFormatter(true);
+
+      assertEquals(
+        formatter.format("<error>a </div> b</error>"),
+        `${RED_BG_WHITE_FG}a ${RESET}</div>${RED_BG_WHITE_FG} b${RESET}`,
+      );
+    });
+
     it("apply() wraps a string with the named style", () => {
       const formatter = new OutputFormatter(true);
 

@@ -93,12 +93,14 @@ export function shouldDecorate(): boolean {
 }
 
 /**
- * Parses Symfony-style markup (`<info>…</info>`) and replaces tags with ANSI
+ * Parses Symfony-style markup (`<info>...</info>`) and replaces tags with ANSI
  * escape sequences.
  *
- * Unknown tags are emitted verbatim so callers may safely format text that
- * happens to contain `<...>` literals. Nesting is supported and inner tags
- * override outer ones segment by segment.
+ * Unknown tags, opening or closing, are emitted verbatim so callers may safely
+ * format text that happens to contain `<...>` literals. Nesting is supported
+ * and inner tags override outer ones segment by segment. Text that must not
+ * be parsed at all (e.g. exception messages) should be styled with
+ * {@linkcode OutputFormatter.apply} instead.
  */
 export class OutputFormatter {
   /** When `false` all markup is stripped and no ANSI escapes are emitted. */
@@ -148,7 +150,7 @@ export class OutputFormatter {
    * Formats markup-bearing input, replacing recognised tags with ANSI escapes
    * (when decorated) or stripping them (when not).
    *
-   * @param {string} input - Source text containing zero or more `<style>…</style>` segments.
+   * @param {string} input - Source text containing zero or more `<style>...</style>` segments.
    * @returns {string} Rendered output.
    */
   public format(input: string): string {
@@ -171,14 +173,12 @@ export class OutputFormatter {
         output += this.renderSegment(segment, stack);
       }
 
-      if (slash === "/") {
-        if (stack.length > 0) {
-          stack.pop();
-        } else {
-          output += full;
-        }
-      } else if (this.styles.has(name)) {
+      if (!this.styles.has(name)) {
+        output += full;
+      } else if (slash !== "/") {
         stack.push(this.styles.get(name)!);
+      } else if (stack.length > 0) {
+        stack.pop();
       } else {
         output += full;
       }
