@@ -25,6 +25,21 @@
 
 [Denorid][git_url] is _yet another_ framework built on top of [Deno][deno_url] and has been heavily inspired by [Nest][nest_url], which we all love, but was designed for [Node.JS](https://nodejs.org/en). We don't want to compete with [Nest][nest_url], but rather offer an alternative for [Deno][deno_url].
 
+## Runtime support
+
+The packages run on [Deno][deno_url], [Bun](https://bun.com) and
+[Node.js](https://nodejs.org/en) (22+). Install them from JSR:
+
+```bash
+deno add jsr:@denorid/core
+bunx jsr add @denorid/core
+npx jsr add @denorid/core
+```
+
+Runtime specific features pick the native API when available: HTTP serving
+(`Deno.serve`, `Bun.serve`, `@hono/node-server`), cron (`Deno.cron`, otherwise
+croner) and KV (`Deno.openKv`, otherwise `@deno/kv`).
+
 ## License
 
 [Denorid][git_url] is [MIT licensed](LICENSE.md).
