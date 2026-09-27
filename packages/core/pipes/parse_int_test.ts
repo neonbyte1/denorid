@@ -17,6 +17,13 @@ describe("ParseIntPipe", () => {
     it("parses zero as string", () => {
       assertEquals(new ParseIntPipe().transform("0"), 0);
     });
+
+    it("parses the largest safe integer string", () => {
+      assertEquals(
+        new ParseIntPipe().transform(String(Number.MAX_SAFE_INTEGER)),
+        Number.MAX_SAFE_INTEGER,
+      );
+    });
   });
 
   describe("transform: numeric values", () => {
@@ -27,6 +34,29 @@ describe("ParseIntPipe", () => {
     it("passes through 0", () => {
       assertEquals(new ParseIntPipe().transform(0), 0);
     });
+  });
+
+  describe("transform: non-integer and unsafe values", () => {
+    for (
+      const input of [
+        1.5,
+        -0.1,
+        Number.MAX_SAFE_INTEGER + 1,
+        "99999999999999999999",
+        "-9007199254740993",
+        "1e3",
+        "12abc",
+        "",
+      ]
+    ) {
+      it(`rejects ${JSON.stringify(input)}`, () => {
+        assertThrows(
+          () => new ParseIntPipe().transform(input),
+          BadRequestException,
+          "Validation failed (numeric string is expected).",
+        );
+      });
+    }
   });
 
   describe("transform:  optional nil handling", () => {
