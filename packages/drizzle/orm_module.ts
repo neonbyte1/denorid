@@ -6,14 +6,16 @@ import { DrizzleService } from "./drizzle_service.ts";
 import type {
   DrizzleOrmAsyncModuleOptions,
   DrizzleOrmModuleOptions,
+  DrizzleOrmRegisterOptions,
 } from "./module_options.ts";
 
 /**
  * Module for integrating Drizzle ORM with @denorid/injector.
  *
  * This module provides methods to register Drizzle database connections either
- * synchronously or asynchronously. It handles the setup of database connections
- * and makes them globally available throughout your application via the DrizzleService.
+ * synchronously or asynchronously and exposes them through the `DrizzleService`.
+ * Import the module where `DrizzleService` is injected, or register it with
+ * `global: true` to make it injectable in every module.
  *
  * The module supports:
  * - Single or multiple database connections
@@ -62,6 +64,7 @@ import type {
  * \@Module({
  *   imports: [
  *     DrizzleOrmModule.registerAsync({
+ *       imports: [ConfigModule],
  *       inject: [ConfigService],
  *       useFactory: (config: ConfigService) => ({
  *         type: "postgres",
@@ -84,15 +87,19 @@ export class DrizzleOrmModule {
    * database connections.
    *
    * @param {DrizzleOrmModuleOptions} options - Database connection configuration options
-   * @returns A dynamic module configuration object
+   * @param {DrizzleOrmRegisterOptions} [moduleOptions] - Module settings such as `global`
+   * @returns {DynamicModule} A dynamic module configuration object
    *
    * @example Single PostgreSQL connection
    * ```ts
+   * import { defineRelations } from "drizzle-orm";
+   * import * as schema from "./db/schema.ts";
+   *
    * DrizzleOrmModule.register({
    *   type: "postgres",
    *   connection: "postgresql://localhost/mydb",
    *   pool: true,
-   *   drizzle: { schema }
+   *   drizzle: { relations: defineRelations(schema) }
    * })
    * ```
    *
@@ -101,7 +108,7 @@ export class DrizzleOrmModule {
    * DrizzleOrmModule.register({
    *   type: "sqlite",
    *   database: "./local.db",
-   *   drizzle: { schema }
+   *   drizzle: { relations }
    * })
    * ```
    *
@@ -135,9 +142,13 @@ export class DrizzleOrmModule {
    * ])
    * ```
    */
-  public static register(options: DrizzleOrmModuleOptions): DynamicModule {
+  public static register(
+    options: DrizzleOrmModuleOptions,
+    moduleOptions: DrizzleOrmRegisterOptions = {},
+  ): DynamicModule {
     return {
       module: DrizzleOrmModule,
+      global: moduleOptions.global,
       providers: [
         {
           provide: DRIZZLE_CONNECTION_OPTIONS,
@@ -167,13 +178,14 @@ export class DrizzleOrmModule {
    * @example Using ConfigService for environment-based config
    * ```ts
    * DrizzleOrmModule.registerAsync({
+   *   imports: [ConfigModule],
    *   inject: [ConfigService],
    *   useFactory: (config: ConfigService) => ({
    *     type: "postgres",
    *     connection: config.get('DATABASE_URL'),
    *     pool: true,
    *     drizzle: {
-   *       schema: mySchema,
+   *       relations,
    *       logger: config.get('NODE_ENV') === 'development'
    *     }
    *   })
@@ -183,6 +195,7 @@ export class DrizzleOrmModule {
    * @example Async initialization with multiple dependencies
    * ```ts
    * DrizzleOrmModule.registerAsync({
+   *   imports: [ConfigModule, SecretsModule],
    *   inject: [ConfigService, SecretsManager],
    *   useFactory: async (config: ConfigService, secrets: SecretsManager) => {
    *     const password = await secrets.getSecret('DB_PASSWORD');
@@ -206,6 +219,7 @@ export class DrizzleOrmModule {
    * @example Multiple connections with async config
    * ```ts
    * DrizzleOrmModule.registerAsync({
+   *   imports: [ConfigModule],
    *   inject: [ConfigService],
    *   useFactory: async (config: ConfigService) => [
    *     {
@@ -243,6 +257,8 @@ export class DrizzleOrmModule {
   ): DynamicModule {
     return {
       module: DrizzleOrmModule,
+      global: options.global,
+      imports: options.imports ?? [],
       providers: [
         {
           provide: DRIZZLE_CONNECTION_OPTIONS,

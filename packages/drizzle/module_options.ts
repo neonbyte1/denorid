@@ -1,5 +1,7 @@
+import type { ModuleMetadata } from "@denorid/injector";
 import type { InjectionToken } from "@denorid/injector/common";
-import type { DrizzleConfig } from "drizzle-orm";
+import type { AnyRelations, DrizzleConfig } from "drizzle-orm";
+import type { DrizzlePgConfig } from "drizzle-orm/pg-core";
 import type { ConnectionOptions } from "node:tls";
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
@@ -25,9 +27,23 @@ export interface DrizzleOrmBaseConnectionOptions<
   name: string;
   type: T;
   /**
-   * Optional drizzle configuration
+   * Optional drizzle configuration (`relations`, `logger`, `cache`, `jit`, ...).
+   *
+   * drizzle-orm v1 builds the relational query API (`db.query`) only from
+   * `relations`, created with `defineRelations`; a `schema` bag is not
+   * supported anymore.
+   *
+   * @example Usage
+   * ```ts
+   * import { defineRelations } from "drizzle-orm";
+   * import * as schema from "./db/schema.ts";
+   *
+   * const relations = defineRelations(schema);
+   *
+   * drizzle: { relations, logger: true }
+   * ```
    */
-  drizzle?: DrizzleConfig;
+  drizzle?: Omit<DrizzleConfig<Record<string, never>, AnyRelations>, "schema">;
 }
 
 /**
@@ -44,22 +60,24 @@ export interface DrizzleOrmBaseConnectionOptions<
  *   type: "sqlite",
  *   name: "default",
  *   database: "./local.db",
- *   drizzle: { casing: "snake_case" }
+ *   drizzle: { relations }
  * };
  * ```
  */
 export interface DrizzleOrmSqliteConnectionOptions
   extends DrizzleOrmBaseConnectionOptions<"sqlite"> {
   /**
-   * The SQLite database file path or LibSQL connection string.
+   * The SQLite database file path or LibSQL connection URL.
    *
-   * Can be a local file path (e.g., "./data.db") or a connection URL
-   * for cloud-based SQLite services like Turso.
+   * Can be a local file path (e.g., "./data.db"), `:memory:`, or a LibSQL
+   * URL such as `file:./data.db` or `libsql://[your-database].turso.io`.
+   * A value without a URL scheme is treated as a file path and opened as a
+   * `file:` URL.
    *
    * @example Usage
    * ```ts
    * database: "./local.db"
-   * database: "libsql: //[your-database].turso.io"
+   * database: "libsql://[your-database].turso.io"
    * database: ":memory:" // In-memory database
    * ```
    */
@@ -205,14 +223,24 @@ export interface DrizzleOrmPostgresConnectionOptions
    */
   connection: string | DrizzlePostgresPoolOptions;
   /**
-   * Whether to use connection pooling.
+   * Whether this package creates the `pg.Pool` itself.
    *
-   * When true, creates a pg.Pool instance for managing multiple connections.
-   * When false or undefined, uses a direct connection.
+   * drizzle's `node-postgres` driver always connects through a `pg.Pool`, so
+   * connections are pooled in both modes and `connection` is used as the pool
+   * configuration either way. When `true`, the pool is created from the `pg`
+   * package imported by this module, and a missing `pg` install fails with
+   * `DrizzleMissingDependencyError`. When `false` or `undefined`, drizzle
+   * creates the pool.
    *
    * @default false
    */
   pool?: boolean;
+  /**
+   * Optional drizzle configuration, including the postgres specific `codecs`.
+   *
+   * @see {@linkcode DrizzleOrmBaseConnectionOptions.drizzle}
+   */
+  drizzle?: DrizzlePgConfig<AnyRelations>;
 }
 
 /**
@@ -272,6 +300,19 @@ export type DrizzleOrmModuleOptions =
   | DrizzleOrmConnectionOptions[];
 
 /**
+ * Module-level settings of {@linkcode DrizzleOrmModule.register}.
+ */
+export interface DrizzleOrmRegisterOptions {
+  /**
+   * When `true`, `DrizzleService` can be injected in every module without
+   * importing the Drizzle module there.
+   *
+   * @default false
+   */
+  global?: boolean;
+}
+
+/**
  * Asynchronous module configuration options for dynamic Drizzle ORM setup.
  *
  * Used when connection options need to be determined at runtime, such as
@@ -281,6 +322,7 @@ export type DrizzleOrmModuleOptions =
  * @example Usage
  * ```ts
  * const asyncConfig: DrizzleOrmAsyncModuleOptions = {
+ *   imports: [ConfigModule],
  *   inject: [ConfigService],
  *   useFactory: async (config: ConfigService) => {
  *     const dbUrl = await config.get('DATABASE_URL');
@@ -293,7 +335,8 @@ export type DrizzleOrmModuleOptions =
  * };
  * ```
  */
-export interface DrizzleOrmAsyncModuleOptions {
+export interface DrizzleOrmAsyncModuleOptions
+  extends Pick<ModuleMetadata, "imports">, DrizzleOrmRegisterOptions {
   /**
    * Factory function that returns Drizzle ORM module configuration.
    *
@@ -312,10 +355,12 @@ export interface DrizzleOrmAsyncModuleOptions {
    * Optional array of injection tokens for dependencies needed by useFactory.
    *
    * These tokens will be resolved and passed as arguments to the useFactory function
-   * in the same order they appear in this array.
+   * in the same order they appear in this array. Tokens that are not global
+   * must be exported by a module listed in `imports`.
    *
    * @example
    * ```ts
+   * imports: [ConfigModule, LoggerModule],
    * inject: [ConfigService, LoggerService]
    * // useFactory will receive: (config: ConfigService, logger: LoggerService)
    * ```

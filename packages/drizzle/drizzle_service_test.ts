@@ -1,4 +1,9 @@
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import { assertSpyCalls, spy, type Stub, stub } from "@std/testing/mock";
 import { pgTable } from "drizzle-orm/pg-core";
 import { sqliteTable } from "drizzle-orm/sqlite-core";
@@ -132,11 +137,13 @@ describe("DrizzleService", () => {
       useService();
 
       it("should create pooled connection with string connection", async () => {
+        const drizzleOpts = { logger: true, relations: {} };
         setOptions({
           type: "postgres",
           name: "pooled",
           connection: "postgresql://localhost/test",
           pool: true,
+          drizzle: drizzleOpts,
         });
         stubImport({
           "drizzle-orm/node-postgres": { drizzle: mockDrizzle },
@@ -145,15 +152,21 @@ describe("DrizzleService", () => {
 
         await service.onModuleInit();
 
-        assertSpyCalls(mockDrizzle, 1);
+        assertEquals(mockDrizzle.calls[0].args, [{
+          ...drizzleOpts,
+          client: new MockPool({
+            connectionString: "postgresql://localhost/test",
+          }),
+        }]);
         assertEquals(service.pg("pooled") as unknown, MOCKED_CONNECTION);
       });
 
       it("should create pooled connection with object config", async () => {
+        const connection = { host: "localhost", port: 5432 };
         setOptions({
           type: "postgres",
           name: "pooled",
-          connection: { host: "localhost", port: 5432 },
+          connection,
           pool: true,
         });
         stubImport({
@@ -163,7 +176,9 @@ describe("DrizzleService", () => {
 
         await service.onModuleInit();
 
-        assertSpyCalls(mockDrizzle, 1);
+        assertEquals(mockDrizzle.calls[0].args, [{
+          client: new MockPool(connection),
+        }]);
       });
 
       it("should reuse Pool class for multiple pooled connections", async () => {
@@ -202,19 +217,45 @@ describe("DrizzleService", () => {
           "pg": {},
         });
 
-        await assertRejects(
+        const error = await assertRejects(
           () => service.onModuleInit(),
           DrizzleMissingDependencyError,
         );
 
+        assertEquals(error.cause, undefined);
         assertEquals(service.pg("no-pool", { noThrow: true }), undefined);
+      });
+
+      it("should keep the pg import error as cause", async () => {
+        const importError = new Error("Cannot find module 'pg'");
+        setOptions({
+          type: "postgres",
+          connection: "pg://test",
+          pool: true,
+        });
+        importStub = stub(
+          service,
+          // @ts-ignore - seems dirty but otherwise TS doesn't allow us accessing privat methods for stubbing
+          "import",
+          (name: string) =>
+            name === "pg"
+              ? Promise.reject(importError)
+              : Promise.resolve({ drizzle: mockDrizzle }),
+        );
+
+        const error = await assertRejects(
+          () => service.onModuleInit(),
+          DrizzleMissingDependencyError,
+        );
+
+        assertStrictEquals(error.cause, importError);
       });
     });
 
     describe("postgres without pool", () => {
       useService();
 
-      it("should pass drizzle options", async () => {
+      it("should pass drizzle options next to a connection string", async () => {
         const drizzleOpts = { logger: true };
         setOptions({
           type: "postgres",
@@ -226,7 +267,25 @@ describe("DrizzleService", () => {
 
         await service.onModuleInit();
 
-        assertEquals(mockDrizzle.calls[0].args, ["pg://test", drizzleOpts]);
+        assertEquals(mockDrizzle.calls[0].args, [{
+          logger: true,
+          connection: "pg://test",
+        }]);
+      });
+
+      it("should pass an object connection as connection config", async () => {
+        const connection = { host: "db.prod.internal", port: 6543 };
+        setOptions({
+          type: "postgres",
+          connection,
+          pool: false,
+          drizzle: { logger: true },
+        });
+        stubImport({ "drizzle-orm/node-postgres": { drizzle: mockDrizzle } });
+
+        await service.onModuleInit();
+
+        assertEquals(mockDrizzle.calls[0].args, [{ logger: true, connection }]);
       });
     });
 
@@ -238,15 +297,39 @@ describe("DrizzleService", () => {
         setOptions({
           type: "sqlite",
           name: "opts",
-          database: ":memory:",
+          database: "libsql://db.turso.io",
           drizzle: drizzleOpts,
         });
         stubImport({ "drizzle-orm/libsql": { drizzle: mockDrizzle } });
 
         await service.onModuleInit();
 
-        assertEquals(mockDrizzle.calls[0].args, [":memory:", drizzleOpts]);
+        assertEquals(mockDrizzle.calls[0].args, [
+          "libsql://db.turso.io",
+          drizzleOpts,
+        ]);
       });
+
+      for (
+        const [database, url] of [
+          ["./local.db", "file:./local.db"],
+          ["/var/data/app.db", "file:/var/data/app.db"],
+          ["C:\\data\\app.db", "file:C:\\data\\app.db"],
+          ["./a#b%c?.db", "file:./a%23b%25c%3F.db"],
+          [":memory:", "file::memory:"],
+          ["file:./local.db", "file:./local.db"],
+          ["http://127.0.0.1:8080", "http://127.0.0.1:8080"],
+        ]
+      ) {
+        it(`should open "${database}" as "${url}"`, async () => {
+          setOptions({ type: "sqlite", database });
+          stubImport({ "drizzle-orm/libsql": { drizzle: mockDrizzle } });
+
+          await service.onModuleInit();
+
+          assertEquals(mockDrizzle.calls[0].args, [url, undefined]);
+        });
+      }
     });
 
     describe("factory caching", () => {
@@ -281,10 +364,31 @@ describe("DrizzleService", () => {
         setOptions({ type: "postgres", name: "fail", connection: "pg://x" });
         stubImport({});
 
-        await assertRejects(
+        const error = await assertRejects(
           () => service.onModuleInit(),
           DrizzleFactoryNotFoundError,
         );
+
+        assertEquals(error.cause, undefined);
+      });
+
+      it("should keep the driver import error as cause", async () => {
+        const importError = new Error("Cannot find module '@libsql/client'");
+        setOptions({ type: "sqlite", database: ":memory:" });
+        importStub = stub(
+          service,
+          // @ts-ignore - seems dirty but otherwise TS doesn't allow us accessing privat methods for stubbing
+          "import",
+          () => Promise.reject(importError),
+        );
+
+        const error = await assertRejects(
+          () => service.onModuleInit(),
+          DrizzleFactoryNotFoundError,
+          "drizzle-orm/libsql",
+        );
+
+        assertStrictEquals(error.cause, importError);
       });
     });
   });
@@ -338,7 +442,7 @@ describe("DrizzleService", () => {
 
     it("should throw for missing default", () => {
       const empty = new DrizzleService();
-      assertThrows(() => empty.pg()), DrizzleConnectionNotFoundError;
+      assertThrows(() => empty.pg(), DrizzleConnectionNotFoundError);
     });
   });
 
@@ -397,6 +501,111 @@ describe("DrizzleService", () => {
       const service = new DrizzleService();
 
       assertThrows(() => service.sqlite(), DrizzleConnectionNotFoundError);
+    });
+  });
+
+  describe("[Symbol.asyncDispose]", () => {
+    useService();
+
+    it("should end postgres pools and close sqlite clients", async () => {
+      const pool = { end: spy(() => Promise.resolve()) };
+      const client = { close: spy(() => {}) };
+      setOptions([
+        { type: "postgres", name: "main", connection: "pg://main" },
+        { type: "sqlite", name: "cache", database: ":memory:" },
+      ]);
+      stubImport({
+        "drizzle-orm/node-postgres": { drizzle: () => ({ $client: pool }) },
+        "drizzle-orm/libsql": { drizzle: () => ({ $client: client }) },
+      });
+      await service.onModuleInit();
+
+      await service[Symbol.asyncDispose]();
+
+      assertSpyCalls(pool.end, 1);
+      assertSpyCalls(client.close, 1);
+      assertEquals(service.pg("main", { noThrow: true }), undefined);
+      assertEquals(service.sqlite("cache", { noThrow: true }), undefined);
+    });
+
+    it("should close every connection only once when disposed twice", async () => {
+      const pool = { end: spy(() => Promise.resolve()) };
+      setOptions({ type: "postgres", connection: "pg://main" });
+      stubImport({
+        "drizzle-orm/node-postgres": { drizzle: () => ({ $client: pool }) },
+      });
+      await service.onModuleInit();
+
+      await service[Symbol.asyncDispose]();
+      await service[Symbol.asyncDispose]();
+
+      assertSpyCalls(pool.end, 1);
+    });
+
+    it("should close the remaining connections and aggregate every failure", async () => {
+      const endError = new Error("end failed");
+      const closeError = new Error("close failed");
+      const healthy = { end: spy(() => Promise.resolve()) };
+      const pools: Record<string, { end(): Promise<void> }> = {
+        "pg://broken": { end: () => Promise.reject(endError) },
+        "pg://healthy": healthy,
+      };
+      setOptions([
+        { type: "postgres", name: "broken", connection: "pg://broken" },
+        { type: "postgres", name: "healthy", connection: "pg://healthy" },
+        { type: "sqlite", name: "cache", database: ":memory:" },
+      ]);
+      stubImport({
+        "drizzle-orm/node-postgres": {
+          drizzle: ({ connection }: { connection: string }) => ({
+            $client: pools[connection],
+          }),
+        },
+        "drizzle-orm/libsql": {
+          drizzle: () => ({
+            $client: {
+              close: (): void => {
+                throw closeError;
+              },
+            },
+          }),
+        },
+      });
+      await service.onModuleInit();
+
+      const error = await assertRejects(
+        () => service[Symbol.asyncDispose](),
+        AggregateError,
+      );
+
+      assertSpyCalls(healthy.end, 1);
+      assertEquals(
+        error.errors.map((entry: Error) => [entry.message, entry.cause]),
+        [
+          ["Failed to close postgres connection: broken", endError],
+          ["Failed to close sqlite connection: cache", closeError],
+        ],
+      );
+    });
+
+    it("should close the connections opened before onModuleInit failed", async () => {
+      const pool = { end: spy(() => Promise.resolve()) };
+      setOptions([
+        { type: "postgres", name: "main", connection: "pg://main" },
+        { type: "postgres", name: "pooled", connection: "pg://p", pool: true },
+      ]);
+      stubImport({
+        "drizzle-orm/node-postgres": { drizzle: () => ({ $client: pool }) },
+        "pg": {},
+      });
+      await assertRejects(
+        () => service.onModuleInit(),
+        DrizzleMissingDependencyError,
+      );
+
+      await service[Symbol.asyncDispose]();
+
+      assertSpyCalls(pool.end, 1);
     });
   });
 

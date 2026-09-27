@@ -24,14 +24,17 @@ export class DrizzleFactoryNotFoundError extends Error {
    * Creates a new DrizzleFactoryNotFoundError.
    *
    * @param {string} packageName - The name of the package where the drizzle factory was not found
+   * @param {ErrorOptions} [options] - Optional error options, `cause` carries
+   *   the error thrown while importing the package
    *
    * @example Usage
    * ```ts
    * new DrizzleFactoryNotFoundError("drizzle-orm/node-postgres");
+   * new DrizzleFactoryNotFoundError("drizzle-orm/libsql", { cause: importError });
    * ```
    */
-  public constructor(packageName: string) {
-    super(`Failed to get the drizzle factory from ${packageName}`);
+  public constructor(packageName: string, options?: ErrorOptions) {
+    super(`Failed to get the drizzle factory from ${packageName}`, options);
   }
 }
 
@@ -110,15 +113,23 @@ export class DrizzleMissingDependencyError extends Error {
    *
    * @param {DrizzleDrivers} type - The database driver type (e.g., "postgres", "sqlite", "mysql")
    * @param {string} packageName - The npm package name that needs to be installed
+   * @param {ErrorOptions} [options] - Optional error options, `cause` carries
+   *   the error thrown while importing the package
    *
    * @example
    * ```ts
    * new DrizzleMissingDependencyError("postgres", "pg");
+   * new DrizzleMissingDependencyError("postgres", "pg", { cause: importError });
    * ```
    */
-  public constructor(type: string, packageName: string) {
+  public constructor(
+    type: string,
+    packageName: string,
+    options?: ErrorOptions,
+  ) {
     super(
       `Unable to establish ${type} connection because of a missing dependency. Please install ${packageName}`,
+      options,
     );
   }
 }

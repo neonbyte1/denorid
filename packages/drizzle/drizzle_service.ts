@@ -5,6 +5,7 @@ import {
   type OnModuleInit,
   type Type,
 } from "@denorid/injector";
+import type { AnyRelations, EmptyRelations } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
@@ -27,119 +28,81 @@ import type {
 } from "./module_options.ts";
 
 /**
- * Type representing a Drizzle ORM schema object containing table and relation definitions.
+ * Matches a leading URL scheme (at least two characters, so Windows drive
+ * letters such as `C:` are not mistaken for one), using the scheme grammar of
+ * the libsql client.
+ */
+const URL_SCHEME = /^[a-z][a-z.+-]+:/i;
+
+/**
+ * Drizzle database instance as kept in the connection registry. drizzle
+ * exposes the driver client it queries through as `$client`: a `pg.Pool` for
+ * postgres, a libsql `Client` for sqlite.
+ */
+interface DrizzleConnection {
+  readonly $client: { end(): Promise<void> } | { close(): void };
+}
+
+/**
+ * The `drizzle()` factory exported by a driver package.
+ */
+type DrizzleFactory = GenericFunction<DrizzleConnection>;
+
+/**
+ * Type representing a bag of Drizzle ORM table definitions, usually the
+ * namespace import of your schema module.
  *
- * A Drizzle schema is a collection of table definitions, relations, indexes, and other
- * database structure elements exported from your schema files. This type is used to
- * provide type-safe database queries and enable features like relational queries.
- *
- * The schema is typically created by exporting all table definitions from a schema file
- * and passing them to Drizzle's configuration. It enables TypeScript to infer the correct
- * types for your queries based on your database structure.
+ * With drizzle-orm v1 the schema bag is no longer passed to drizzle directly.
+ * Hand it to `defineRelations` and register the resulting relations through
+ * the `drizzle.relations` connection option; the relations type is what
+ * {@linkcode DrizzleService.pg} / {@linkcode DrizzleService.sqlite} take as
+ * type argument.
  *
  * @example Define your schema in a file (e.g., schema.ts)
  * ```ts
- * import { pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
+ * import { integer, pgTable, serial, text } from "drizzle-orm/pg-core";
  *
- * export const users = pgTable('users', {
- *   id: serial('id').primaryKey(),
- *   name: text('name').notNull(),
- *   email: text('email').notNull().unique(),
- *   createdAt: timestamp('created_at').defaultNow()
- * });
- *
- * export const posts = pgTable('posts', {
- *   id: serial('id').primaryKey(),
- *   title: text('title').notNull(),
- *   content: text('content'),
- *   authorId: integer('author_id').references(() => users.id)
- * });
- *
- * // The schema is the collection of all exports
- * // Type: DrizzleSchema = { users: typeof users, posts: typeof posts }
- * ```
- *
- * @example Using schema with module registration
- * ```ts
- * import * as schema from "./db/schema.ts";
- *
- * DrizzleOrmModule.register({
- *   type: "postgres",
- *   connection: "postgresql://localhost/mydb",
- *   pool: true,
- *   drizzle: { schema } // Pass the schema for type-safe queries
- * })
- * ```
- *
- * @example Using typed database with schema
- * ```ts
- * import * as schema from "./db/schema.ts";
- *
- * type MyDb = DrizzlePgDatabase<typeof schema>;
- *
- * async function getUsers(db: MyDb) {
- *   // TypeScript knows about all tables and their columns
- *   return db.select().from(schema.users);
- * }
- * ```
- *
- * @example Schema with relations for relational queries
- * ```ts
- * import { relations } from "drizzle-orm";
- *
- * export const users = pgTable('users', {
- *   id: serial('id').primaryKey(),
- *   name: text('name').notNull()
+ * export const users = pgTable("users", {
+ *   id: serial("id").primaryKey(),
+ *   name: text("name").notNull(),
  * });
  *
  * export const posts = pgTable("posts", {
  *   id: serial("id").primaryKey(),
- *   authorId: integer("author_id").references(() => users.id)
+ *   authorId: integer("author_id").references(() => users.id),
  * });
- *
- * export const usersRelations = relations(users, ({ many }) => ({
- *   posts: many(posts)
- * }));
- *
- * export const postsRelations = relations(posts, ({ one }) => ({
- *   author: one(users, {
- *     fields: [posts.authorId],
- *     references: [users.id]
- *   })
- * }));
- *
- * // Full schema includes tables and relations
- * // Type: DrizzleSchema = { users, posts, usersRelations, postsRelations }
  * ```
  *
- * @example Multiple schema files can be combined
+ * @example Define the relations (e.g., relations.ts)
  * ```ts
- * import * as userSchema from "./db/schema/users.ts";
- * import * as postSchema from "./db/schema/posts.ts";
+ * import { defineRelations } from "drizzle-orm";
+ * import * as schema from "./schema.ts";
  *
- * const schema: DrizzleSchema = {
- *   ...userSchema,
- *   ...postSchema
- * };
+ * export const relations = defineRelations(schema, (r) => ({
+ *   users: {
+ *     posts: r.many.posts(),
+ *   },
+ *   posts: {
+ *     author: r.one.users({
+ *       from: r.posts.authorId,
+ *       to: r.users.id,
+ *     }),
+ *   },
+ * }));
+ * ```
+ *
+ * @example Register the relations and query through them
+ * ```ts
+ * import { relations } from "./relations.ts";
  *
  * DrizzleOrmModule.register({
  *   type: "postgres",
- *   connection: process.env.DATABASE_URL,
- *   drizzle: { schema }
- * })
- * ```
- *
- * @example SQLite schema example
- * ```ts
- * import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
- *
- * export const tasks = sqliteTable('tasks', {
- *   id: integer("id").primaryKey(),
- *   title: text("title").notNull(),
- *   completed: integer("completed", { mode: "boolean" }).default(false)
+ *   connection: "postgresql://localhost/mydb",
+ *   drizzle: { relations },
  * });
  *
- * // Type: DrizzleSchema = { tasks: typeof tasks }
+ * const db = drizzle.pg<typeof relations>();
+ * await db.query.users.findMany({ with: { posts: true } });
  * ```
  */
 // deno-lint-ignore no-explicit-any
@@ -284,13 +247,17 @@ export interface NoThrowOption<T extends boolean = boolean> {
  * union in the column type:
  *
  * ```ts
- * import type { DrizzleEnum } from "@hags/core";
- * import { ProjectType } from "@hags/contracts";
+ * import type { DrizzleEnum } from "@denorid/drizzle";
+ * import { z } from "zod";
+ *
+ * const ProjectType = z.enum(["internal", "external"]);
+ * type ProjectType = z.infer<typeof ProjectType>;
+ *
  * text({ enum: ProjectType.options as DrizzleEnum<ProjectType> })
  * ```
  *
- * Import it with `import type` so it stays erased — schema modules are executed
- * by drizzle-kit and must not pull in `core`'s runtime graph.
+ * Import it with `import type` so it stays erased: schema modules are executed
+ * by drizzle-kit and must not pull in this package's runtime graph.
  */
 export type DrizzleEnum<T extends string = string> = [T, ...T[]];
 
@@ -306,20 +273,21 @@ export type DrizzleEnum<T extends string = string> = [T, ...T[]];
  * - Typing return values from connection methods
  * - Defining service dependencies
  *
- * @template T - Optional Drizzle schema type for type-safe queries (defaults to DrizzleSchema)
+ * @template TRelations - Relations created with `defineRelations`, enables the
+ *   typed relational query API (`db.query`); defaults to no relations
  *
  * @see {@link https://orm.drizzle.team/docs/get-started-postgresql | Drizzle PostgreSQL Documentation}
  *
- * @example
- * ```ts Using in a service with dependency injection with a typed schema
+ * @example Using in a service with dependency injection with typed relations
+ * ```ts
+ * import { relations } from "./db/relations.ts";
+ *
  * export class UserService {
  *   @Inject(DrizzleService)
  *   private readonly drizzle!: DrizzleService;
  *
- *   private _db: DrizzlePgDatabase<typeof schema>;
- *
- *   private get db(): DrizzlePgDatabase<typeof schema> {
- *     return (this._db ??= this.drizzle.pg<typeof schema>());
+ *   private get db(): DrizzlePgDatabase<typeof relations> {
+ *     return this.drizzle.pg<typeof relations>();
  *   }
  *
  *   public async findUsers(): Promise<User[]> {
@@ -328,19 +296,18 @@ export type DrizzleEnum<T extends string = string> = [T, ...T[]];
  * }
  * ```
  *
- * @example
+ * @example Using the query builder
  * ```ts
- * // With a typed schema
  * import * as schema from "./db/schema.ts";
  *
- * type MyDatabase = DrizzlePgDatabase<typeof schema>;
- *
- * function queryUsers(db: MyDatabase) {
+ * function queryUsers(db: DrizzlePgDatabase) {
  *   return db.select().from(schema.users);
  * }
  * ```
  */
-export type DrizzlePgDatabase = NodePgDatabase;
+export type DrizzlePgDatabase<
+  TRelations extends AnyRelations = EmptyRelations,
+> = NodePgDatabase<TRelations>;
 
 /**
  * Type alias for a Drizzle ORM SQLite/LibSQL database instance.
@@ -355,7 +322,8 @@ export type DrizzlePgDatabase = NodePgDatabase;
  * - Typing local or cloud SQLite connections
  * - Defining service methods that operate on SQLite databases
  *
- * @template T - Optional Drizzle schema type for type-safe queries (defaults to DrizzleSchema)
+ * @template TRelations - Relations created with `defineRelations`, enables the
+ *   typed relational query API (`db.query`); defaults to no relations
  *
  * @see {@link https://orm.drizzle.team/docs/get-started-sqlite | Drizzle SQLite Documentation}
  * @see {@link https://docs.turso.tech/libsql | LibSQL Documentation}
@@ -379,15 +347,14 @@ export type DrizzlePgDatabase = NodePgDatabase;
  * }
  * ```
  *
- * @example
- * ```ts With a typed schema
- * import * as schema from './schema';
+ * @example With typed relations
+ * ```ts
+ * import { relations } from "./relations.ts";
  *
- * type MyCacheDb = DrizzleSqliteDatabase<typeof schema>;
+ * type MyCacheDb = DrizzleSqliteDatabase<typeof relations>;
  *
- * async function cleanExpired(db: MyCacheDb) {
- *   await db.delete(schema.cache)
- *     .where(lt(schema.cache.expiresAt, new Date()));
+ * async function findEntries(db: MyCacheDb) {
+ *   return db.query.cache.findMany();
  * }
  * ```
  *
@@ -403,12 +370,20 @@ export type DrizzlePgDatabase = NodePgDatabase;
  * const users = await db.select().from(schema.users);
  * ```
  */
-export type DrizzleSqliteDatabase = LibSQLDatabase;
+export type DrizzleSqliteDatabase<
+  TRelations extends AnyRelations = EmptyRelations,
+> = LibSQLDatabase<TRelations>;
 
 /**
  * Core service for managing and accessing Drizzle ORM database connections.
  *
+ * Connections are opened in {@linkcode DrizzleService.onModuleInit} and
+ * released when the service is disposed (`InjectorContext.close()` disposes it
+ * after every shutdown hook ran), so other providers can still query in their
+ * `onModuleDestroy` / `onApplicationShutdown` hooks.
+ *
  * @implements {OnModuleInit}
+ * @implements {AsyncDisposable}
  *
  * @example Basic injection and usage
  * ```ts
@@ -444,9 +419,9 @@ export type DrizzleSqliteDatabase = LibSQLDatabase;
  * }
  * ```
  *
- * @example With typed schema
+ * @example With typed relations
  * ```ts
- * import * as schema from "./schema";
+ * import { relations } from "./relations.ts";
  *
  * \@Injectable()
  * export class ProductService {
@@ -454,9 +429,9 @@ export type DrizzleSqliteDatabase = LibSQLDatabase;
  *   private readonly drizzle!: DrizzleService;
  *
  *   public async getProducts() {
- *     const db = this.drizzle.pg<typeof schema>();
+ *     const db = this.drizzle.pg<typeof relations>();
  *
- *     return db.query.products.getMany();
+ *     return db.query.products.findMany();
  *   }
  * }
  * ```
@@ -486,7 +461,7 @@ export type DrizzleSqliteDatabase = LibSQLDatabase;
  *   private readonly drizzle!: DrizzleService;
  *
  *   public async trackEvent(event: string) {
- *     const analyticsDb = this.drizzle.pg<typeof schema>("analytics", { noThrow: true });
+ *     const analyticsDb = this.drizzle.pg("analytics", { noThrow: true });
  *
  *     if (analyticsDb) {
  *       await analyticsDb.insert(events).values({ event });
@@ -519,7 +494,7 @@ export type DrizzleSqliteDatabase = LibSQLDatabase;
  * ```
  */
 @Injectable()
-export class DrizzleService implements OnModuleInit {
+export class DrizzleService implements OnModuleInit, AsyncDisposable {
   /**
    * Module configuration options injected during initialization.
    *
@@ -545,7 +520,7 @@ export class DrizzleService implements OnModuleInit {
    * organized by database driver type and then by connection name. Each driver
    * type (e.g., "postgres", "sqlite") has its own Map of named connections.
    *
-   * Connections are stored as `unknown` and cast to the appropriate type
+   * Connections are stored as {@linkcode DrizzleConnection} and cast to the appropriate type
    * ({@linkcode DrizzlePgDatabase}, {@linkcode DrizzleSqliteDatabase}) when retrieved via `pg()` or `sqlite()` methods.
    *
    * @private
@@ -553,7 +528,7 @@ export class DrizzleService implements OnModuleInit {
    */
   private readonly connections = {} as Record<
     DrizzleDrivers,
-    Map<string, unknown>
+    Map<string, DrizzleConnection>
   >;
 
   /**
@@ -566,8 +541,8 @@ export class DrizzleService implements OnModuleInit {
       ? this[MODULE_OPTIONS]
       : [{ name: "default", ...this[MODULE_OPTIONS] }];
 
-    const drizzleFactories: Map<DrizzleDrivers, GenericFunction> = new Map();
-    const postgresMetdata = {} as { drizzle: GenericFunction; Pool?: Type };
+    const drizzleFactories: Map<DrizzleDrivers, DrizzleFactory> = new Map();
+    const postgresMetdata = {} as { drizzle: DrizzleFactory; Pool?: Type };
 
     for (const option of options) {
       const factory = await this.getDrizzleFactory(
@@ -597,58 +572,102 @@ export class DrizzleService implements OnModuleInit {
   }
 
   /**
+   * Releases every connection opened by {@linkcode DrizzleService.onModuleInit}:
+   * ends the `pg.Pool` of postgres connections and closes the libsql client of
+   * sqlite connections.
+   *
+   * Called by the injector when the application context is closed, after all
+   * shutdown hooks. Connections are removed from the registry before they are
+   * closed, so calling it again is a no-op and `pg()` / `sqlite()` report them
+   * as unknown afterwards.
+   *
+   * @returns {Promise<void>} Resolves once every connection is closed.
+   * @throws {AggregateError} When one or more connections fail to close; every
+   *   entry names the connection and carries the original error as `cause`.
+   */
+  public async [Symbol.asyncDispose](): Promise<void> {
+    const closing: Promise<void>[] = [];
+
+    for (
+      const [type, connections] of Object.entries(this.connections) as [
+        DrizzleDrivers,
+        Map<string, DrizzleConnection>,
+      ][]
+    ) {
+      for (const [name, db] of connections) {
+        closing.push(this.closeConnection(type, name, db));
+      }
+
+      connections.clear();
+    }
+
+    const errors = (await Promise.allSettled(closing))
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `Failed to close ${errors.length} drizzle connection(s)`,
+      );
+    }
+  }
+
+  /**
    * Get a PostgreSQL database connection with the default name.
    *
-   * @template T - The Drizzle schema type
+   * @template TRelations - Relations registered through `drizzle.relations`
    * @param {Partial<NoThrowOption<false>>} options - Connection options (throws on error by default)
-   * @returns A PostgreSQL database instance
+   * @returns {NodePgDatabase<TRelations>} A PostgreSQL database instance
    * @throws {DrizzleConnectionNotFoundError} If the connection cannot be established
    *
    * @example Basic usage
    * ```ts
-   * import * as schema from "./db/schema.ts";
+   * import { users } from "./db/schema.ts";
    *
-   * const db = drizzle.pg<typeof schema>();
+   * const db = drizzle.pg();
    * await db.select().from(users);
    * ```
    *
-   * @example Query language
-   * import * as schema from "./db/schema.ts";
+   * @example Relational queries
+   * ```ts
+   * import { relations } from "./db/relations.ts";
    *
-   * const db = drizzle.pg<typeof schema>();
+   * const db = drizzle.pg<typeof relations>();
    * await db.query.users.findMany();
+   * ```
    */
-  public pg<T extends DrizzleSchema = DrizzleSchema>(
+  public pg<TRelations extends AnyRelations = EmptyRelations>(
     options?: Partial<NoThrowOption<false>>,
-  ): NodePgDatabase<T>;
+  ): NodePgDatabase<TRelations>;
   /**
    * Get a PostgreSQL database connection with the default name.
    *
-   * @template T - The Drizzle schema type
+   * @template TRelations - Relations registered through `drizzle.relations`
    * @param {NoThrowOption<true>} options - Connection options with `noThrow` set to `true`
-   * @returns A PostgreSQL database instance, or `undefined` if connection fails.
+   * @returns {NodePgDatabase<TRelations> | undefined} A PostgreSQL database instance, or `undefined` if connection fails.
    *
    * @example Usage
    * ```ts
-   * import * as schema from "./db/schema.ts";
+   * import { relations } from "./db/relations.ts";
    *
-   * const db = drizzle.pg<typeof schema>({ noThrow: true });
+   * const db = drizzle.pg<typeof relations>({ noThrow: true });
    *
    * if (db) {
-   *   await db.select().from(users);
+   *   await db.query.users.findMany();
    * }
    * ```
    */
-  public pg<T extends DrizzleSchema = DrizzleSchema>(
+  public pg<TRelations extends AnyRelations = EmptyRelations>(
     options: NoThrowOption<true>,
-  ): NodePgDatabase<T> | undefined;
+  ): NodePgDatabase<TRelations> | undefined;
   /**
    * Get a named PostgreSQL database connection.
    *
-   * @template T - The Drizzle schema type
+   * @template TRelations - Relations registered through `drizzle.relations`
    * @param {string} name - The connection name
    * @param {Partial<NoThrowOption<false>>} options - Connection options (throws on error by default)
-   * @returns A PostgreSQL database instance
+   * @returns {NodePgDatabase<TRelations>} A PostgreSQL database instance
    * @throws {DrizzleConnectionNotFoundError} If the connection cannot be established
    *
    * @example Usage
@@ -658,17 +677,17 @@ export class DrizzleService implements OnModuleInit {
    * await db.select().from(events);
    * ```
    */
-  public pg<T extends DrizzleSchema = DrizzleSchema>(
+  public pg<TRelations extends AnyRelations = EmptyRelations>(
     name: string,
     options?: Partial<NoThrowOption<false>>,
-  ): NodePgDatabase<T>;
+  ): NodePgDatabase<TRelations>;
   /**
    * Get a named PostgreSQL database connection.
    *
-   * @template T - The Drizzle schema type
+   * @template TRelations - Relations registered through `drizzle.relations`
    * @param {string} name - The connection name
    * @param {NoThrowOption<true>} options - Connection options with `noThrow` set to `true`
-   * @returns A PostgreSQL database instance, or `undefined` if connection fails
+   * @returns {NodePgDatabase<TRelations> | undefined} A PostgreSQL database instance, or `undefined` if connection fails
    *
    * @example
    * ```ts
@@ -678,20 +697,20 @@ export class DrizzleService implements OnModuleInit {
    * }
    * ```
    */
-  public pg<T extends DrizzleSchema = DrizzleSchema>(
+  public pg<TRelations extends AnyRelations = EmptyRelations>(
     name: string,
     options: NoThrowOption<true>,
-  ): NodePgDatabase<T> | undefined;
-  public pg<T extends DrizzleSchema>(
+  ): NodePgDatabase<TRelations> | undefined;
+  public pg<TRelations extends AnyRelations>(
     optionsOrName?: Partial<NoThrowOption> | string,
     optionalOptions?: Partial<NoThrowOption>,
-  ): NodePgDatabase<T> | undefined {
+  ): NodePgDatabase<TRelations> | undefined {
     const name = typeof optionsOrName === "string" ? optionsOrName : "default";
     const options = typeof optionsOrName === "object"
       ? optionsOrName
       : optionalOptions;
 
-    return this.getConnection<NodePgDatabase<T>>(
+    return this.getConnection<NodePgDatabase<TRelations>>(
       "postgres",
       name,
       options,
@@ -701,58 +720,58 @@ export class DrizzleService implements OnModuleInit {
   /**
    * Get a SQLite database connection with the default name.
    *
-   * @template T - The Drizzle schema type
+   * @template TRelations - Relations registered through `drizzle.relations`
    * @param {Partial<NoThrowOption<false>>} options - Connection options (throws on error by default)
-   * @returns A SQLite database instance
+   * @returns {LibSQLDatabase<TRelations>} A SQLite database instance
    * @throws {DrizzleConnectionNotFoundError} If the connection cannot be established
    *
    * @example Basic usage
    * ```ts
-   * import * as schema from "./db/schema.ts";
+   * import { users } from "./db/schema.ts";
    *
-   * const db = drizzle.sqlite<typeof schema>();
+   * const db = drizzle.sqlite();
    * await db.select().from(users);
    * ```
    *
-   * @example Query language
+   * @example Relational queries
    * ```ts
-   * import * as schema from "./db/schema.ts";
+   * import { relations } from "./db/relations.ts";
    *
-   * const db = drizzle.sqlite<typeof schema>();
+   * const db = drizzle.sqlite<typeof relations>();
    * await db.query.users.findMany();
    * ```
    */
-  public sqlite<T extends DrizzleSchema = DrizzleSchema>(
+  public sqlite<TRelations extends AnyRelations = EmptyRelations>(
     options?: Partial<NoThrowOption<false>>,
-  ): LibSQLDatabase<T>;
+  ): LibSQLDatabase<TRelations>;
   /**
    * Get a SQLite database connection with the default name.
    *
-   * @template T - The Drizzle schema type
+   * @template TRelations - Relations registered through `drizzle.relations`
    * @param {NoThrowOption<true>} options - Connection options with `noThrow` set to `true`
-   * @returns A SQLite database instance, or `undefined` if connection fails
+   * @returns {LibSQLDatabase<TRelations> | undefined} A SQLite database instance, or `undefined` if connection fails
    *
    * @example Usage
    * ```ts
-   * import * as schema from "./db/schema.ts";
+   * import { relations } from "./db/relations.ts";
    *
-   * const db = drizzle.sqlite<typeof schema>({ noThrow: true });
+   * const db = drizzle.sqlite<typeof relations>({ noThrow: true });
    *
    * if (db) {
-   *   await db.select().from(users);
+   *   await db.query.users.findMany();
    * }
    * ```
    */
-  public sqlite<T extends DrizzleSchema = DrizzleSchema>(
+  public sqlite<TRelations extends AnyRelations = EmptyRelations>(
     options: NoThrowOption<true>,
-  ): LibSQLDatabase<T> | undefined;
+  ): LibSQLDatabase<TRelations> | undefined;
   /**
    * Get a named SQLite database connection.
    *
-   * @template T - The Drizzle schema type
+   * @template TRelations - Relations registered through `drizzle.relations`
    * @param {string} name - The connection name
    * @param {Partial<NoThrowOption<false>>} options - Connection options (throws on error by default)
-   * @returns A SQLite database instance
+   * @returns {LibSQLDatabase<TRelations>} A SQLite database instance
    * @throws {DrizzleConnectionNotFoundError} If the connection cannot be established
    *
    * @example Usage
@@ -762,43 +781,43 @@ export class DrizzleService implements OnModuleInit {
    * await db.select().from(sessions);
    * ```
    */
-  public sqlite<T extends DrizzleSchema = DrizzleSchema>(
+  public sqlite<TRelations extends AnyRelations = EmptyRelations>(
     name: string,
     options?: Partial<NoThrowOption<false>>,
-  ): LibSQLDatabase<T>;
+  ): LibSQLDatabase<TRelations>;
   /**
    * Get a named SQLite database connection.
    *
-   * @template T - The Drizzle schema type
+   * @template TRelations - Relations registered through `drizzle.relations`
    * @param {string} name - The connection name
    * @param {NoThrowOption<true>} options - Connection options with `noThrow` set to `true`
-   * @returns A SQLite database instance, or `undefined` if connection fails
+   * @returns {LibSQLDatabase<TRelations> | undefined} A SQLite database instance, or `undefined` if connection fails
    *
    * @example
    * ```ts
-   * import * as schema from "./db/schema.ts";
+   * import { relations } from "./db/relations.ts";
    *
-   * const db = drizzle.sqlite<typeof schema>("cache", { noThrow: true });
+   * const db = drizzle.sqlite<typeof relations>("cache", { noThrow: true });
    *
    * if (db) {
-   *   await db.select().from(sessions);
+   *   await db.query.sessions.findMany();
    * }
    * ```
    */
-  public sqlite<T extends DrizzleSchema = DrizzleSchema>(
+  public sqlite<TRelations extends AnyRelations = EmptyRelations>(
     name: string,
     options: NoThrowOption<true>,
-  ): LibSQLDatabase<T> | undefined;
-  public sqlite<T extends DrizzleSchema>(
+  ): LibSQLDatabase<TRelations> | undefined;
+  public sqlite<TRelations extends AnyRelations>(
     optionsOrName?: Partial<NoThrowOption> | string,
     optionalOptions?: Partial<NoThrowOption>,
-  ): LibSQLDatabase<T> | undefined {
+  ): LibSQLDatabase<TRelations> | undefined {
     const name = typeof optionsOrName === "string" ? optionsOrName : "default";
     const options = typeof optionsOrName === "object"
       ? optionsOrName
       : optionalOptions;
 
-    return this.getConnection<LibSQLDatabase<T>>(
+    return this.getConnection<LibSQLDatabase<TRelations>>(
       "sqlite",
       name,
       options,
@@ -808,21 +827,24 @@ export class DrizzleService implements OnModuleInit {
   /**
    * Establishes a PostgreSQL database connection and stores it in the `connections` map.
    *
-   * This method handles two connection modes:
-   * - Pool mode: Creates a new pg.Pool instance using the provided connection options
-   * - Direct mode: Uses the provided connection object directly with drizzle
+   * drizzle's `node-postgres` driver always talks to PostgreSQL through a
+   * `pg.Pool`; `connection` is its configuration in both modes:
+   * - Pool mode: Creates the pg.Pool from this package's `pg` import and hands it to drizzle as `client`
+   * - Default mode: Hands `connection` to drizzle, which creates the pg.Pool itself
+   *
+   * The `drizzle` options (relations, logger, cache, codecs, ...) are forwarded in both modes.
    *
    * @private
-   * @param {{ drizzle: GenericFunction, Pool?: Type }} metadata - Object containing the Drizzle factory function and optional Pool constructor
-   * @param {GenericFunction} metadata.drizzle - The Drizzle ORM factory function for PostgreSQL
+   * @param {{ drizzle: DrizzleFactory, Pool?: Type }} metadata - Object containing the Drizzle factory function and optional Pool constructor
+   * @param {DrizzleFactory} metadata.drizzle - The Drizzle ORM factory function for PostgreSQL
    * @param {Pool} metadata.Pool - Optional pg.Pool constructor (will be imported if not provided)
    * @param {DrizzleOrmPostgresConnectionOptions} options - PostgreSQL connection configuration options
    * @param {DrizzleDrivers} options.type - The driver type (should be "postgres")
    * @param {string} options.name - The connection name for storage and retrieval
-   * @param {boolean} options.pool - Whether to use connection pooling
+   * @param {boolean} options.pool - Whether this package creates the pg.Pool
    * @param {string|DrizzlePostgresPoolOptions} options.connection - Connection string or configuration object
-   * @param {DrizzleConfig} options.drizzle - Additional Drizzle configuration options
-   * @returns A promise that resolves when the connection is established
+   * @param {DrizzlePgConfig} options.drizzle - Additional Drizzle configuration options
+   * @returns {Promise<void>} A promise that resolves when the connection is established
    * @throws {DrizzleMissingDependencyError} If pg.Pool cannot be imported when pool mode is enabled
    *
    * @example Usage
@@ -839,15 +861,21 @@ export class DrizzleService implements OnModuleInit {
    * ```
    */
   private async establishPostgresConnection(
-    metadata: { drizzle: GenericFunction; Pool?: Type },
+    metadata: { drizzle: DrizzleFactory; Pool?: Type },
     options: DrizzleOrmPostgresConnectionOptions,
   ): Promise<void> {
     if (options.pool) {
       if (!metadata.Pool) {
-        const { Pool } = await this.import<{ Pool: Type }>("pg");
+        const { module: { Pool }, errorOptions } = await this.tryImport<
+          { Pool: Type }
+        >("pg");
 
         if (!Pool) {
-          throw new DrizzleMissingDependencyError(options.type, "pg");
+          throw new DrizzleMissingDependencyError(
+            options.type,
+            "pg",
+            errorOptions,
+          );
         }
 
         metadata.Pool = Pool;
@@ -856,6 +884,7 @@ export class DrizzleService implements OnModuleInit {
       this.connections[options.type].set(
         options.name,
         metadata.drizzle({
+          ...options.drizzle,
           client: new metadata.Pool(
             typeof options.connection !== "string" ? options.connection : {
               connectionString: options.connection,
@@ -866,7 +895,10 @@ export class DrizzleService implements OnModuleInit {
     } else {
       this.connections[options.type].set(
         options.name,
-        metadata.drizzle(options.connection, options.drizzle),
+        metadata.drizzle({
+          ...options.drizzle,
+          connection: options.connection,
+        }),
       );
     }
   }
@@ -875,15 +907,17 @@ export class DrizzleService implements OnModuleInit {
    * Establishes a SQLite database connection and stores it in the connections map.
    *
    * Creates a new Drizzle SQLite instance using the provided database and configuration,
-   * then stores it under the specified name for later retrieval.
+   * then stores it under the specified name for later retrieval. A `database`
+   * without a URL scheme is a file path and is turned into a `file:` URL, the
+   * only form the libsql client accepts for local files.
    *
    * @private
-   * @param {GenericFunction} drizzle - The Drizzle ORM factory function for SQLite/LibSQL
+   * @param {DrizzleFactory} drizzle - The Drizzle ORM factory function for SQLite/LibSQL
    * @param {DrizzleOrmSqliteConnectionOptions} options - SQLite connection configuration options
    * @param {DrizzleDrivers} options.type - The driver type (should be "sqlite")
    * @param {string} options.name - The connection name for storage and retrieval
-   * @param {string} options.database - The database client or connection object
-   * @param {DrizzleConfig} options.drizzle - Additional Drizzle configuration options
+   * @param {string} options.database - The database file path or libsql URL
+   * @param {DrizzleSQLiteConfig} options.drizzle - Additional Drizzle configuration options
    *
    * @example Usage
    * ```ts
@@ -892,19 +926,24 @@ export class DrizzleService implements OnModuleInit {
    *   {
    *     type: "sqlite",
    *     name: "default",
-   *     database: sqliteClient,
-   *     drizzle: { schema }
+   *     database: "./local.db",
+   *     drizzle: { relations }
    *   }
    * );
    * ```
    */
   private establishSqliteConnection(
-    drizzle: GenericFunction,
+    drizzle: DrizzleFactory,
     options: DrizzleOrmSqliteConnectionOptions,
   ): void {
+    const url = URL_SCHEME.test(options.database)
+      ? options.database
+      // libsql percent-decodes the path, keep `%`, `?` and `#` literal
+      : `file:${options.database.replace(/[%?#]/g, encodeURIComponent)}`;
+
     this.connections[options.type].set(
       options.name,
-      drizzle(options.database, options.drizzle),
+      drizzle(url, options.drizzle),
     );
   }
 
@@ -916,10 +955,10 @@ export class DrizzleService implements OnModuleInit {
    * Otherwise, it dynamically imports the appropriate Drizzle package and caches the factory.
    *
    * @private
-   * @param {Map<DrizzleDrivers, GenericFunction>} factories - Map storing cached Drizzle factory functions by driver type
+   * @param {Map<DrizzleDrivers, DrizzleFactory>} factories - Map storing cached Drizzle factory functions by driver type
    * @param {DrizzleOrmBaseConnectionOptions} options - Connection options containing the driver type
    * @param {DrizzleDrivers} options.type - The database driver type (e.g., "postgres", "sqlite")
-   * @returns A promise that resolves to the Drizzle factory function
+   * @returns {Promise<DrizzleFactory>} A promise that resolves to the Drizzle factory function
    * @throws {DrizzleFactoryNotFoundError} If the drizzle export cannot be found in the package
    *
    * @example Usage
@@ -933,18 +972,19 @@ export class DrizzleService implements OnModuleInit {
    * ```
    */
   private async getDrizzleFactory(
-    factories: Map<DrizzleDrivers, GenericFunction>,
+    factories: Map<DrizzleDrivers, DrizzleFactory>,
     options: DrizzleOrmBaseConnectionOptions,
-  ): Promise<GenericFunction> {
+  ): Promise<DrizzleFactory> {
     let factory = factories.get(options.type);
 
     if (!factory) {
-      const { drizzle } = await this.import<{ drizzle: GenericFunction }>(
-        DRIVER_PACKAGES[options.type],
-      );
+      const packageName = DRIVER_PACKAGES[options.type];
+      const { module: { drizzle }, errorOptions } = await this.tryImport<
+        { drizzle: DrizzleFactory }
+      >(packageName);
 
       if (!drizzle) {
-        throw new DrizzleFactoryNotFoundError(DRIVER_PACKAGES[options.type]);
+        throw new DrizzleFactoryNotFoundError(packageName, errorOptions);
       }
 
       factory = drizzle;
@@ -1002,38 +1042,86 @@ export class DrizzleService implements OnModuleInit {
     return connection as T;
   }
 
+  /**
+   * Closes the driver client behind a drizzle database instance: ends a
+   * `pg.Pool`, closes a libsql `Client`.
+   *
+   * @private
+   * @param {DrizzleDrivers} type - The database driver type, used in the error message
+   * @param {string} name - The connection name, used in the error message
+   * @param {DrizzleConnection} db - The drizzle database instance holding the client in `$client`
+   * @returns {Promise<void>} Resolves once the client is closed.
+   * @throws {Error} Naming the connection, with the close failure as `cause`.
+   */
+  private async closeConnection(
+    type: DrizzleDrivers,
+    name: string,
+    db: DrizzleConnection,
+  ): Promise<void> {
+    const client = db.$client;
+
+    try {
+      if ("end" in client) {
+        await client.end();
+      } else {
+        client.close();
+      }
+    } catch (cause) {
+      throw new Error(`Failed to close ${type} connection: ${name}`, {
+        cause,
+      });
+    }
+  }
+
+  /**
+   * Imports a driver package, keeping the import failure instead of throwing.
+   *
+   * @private
+   * @template T - The expected module shape
+   * @param {string} name - The package specifier to import
+   * @returns {Promise<{ module: Partial<T>; errorOptions?: ErrorOptions }>}
+   *   The imported module, or an empty module plus the import error as
+   *   `cause` when the import failed.
+   */
+  private async tryImport<T>(
+    name: string,
+  ): Promise<{ module: Partial<T>; errorOptions?: ErrorOptions }> {
+    try {
+      return { module: await this.import<T>(name) };
+    } catch (cause) {
+      return { module: {}, errorOptions: { cause } };
+    }
+  }
+
   // deno-coverage-ignore-start
   /**
    * Dynamic driver loader kept as a switch over **string-literal** specifiers
    * rather than a variable-driven `import(name)`.
    *
    * When this package is consumed from JSR, the runtime dynamic import is
-   * evaluated in the module's own https://jsr.io/… scope, which has no
+   * evaluated in the module's own https://jsr.io/... scope, which has no
    * import map, and the consumer's `deno.json` `imports` does not propagate
    * there either (deno#26266). Only static-analyzable string-literal
    * specifiers get captured in the JSR module graph and rewritten to the
    * fully-qualified `npm:` URL at publish time. Using literals here keeps
-   * the peer-optional semantics (dynamic + try/catch) while making the
-   * dependencies visible to JSR's publish-time analyzer.
+   * the peer-optional semantics (dynamic import, failures handled by
+   * {@linkcode DrizzleService.tryImport}) while making the dependencies
+   * visible to JSR's publish-time analyzer.
    */
   private async import<T = Record<PropertyKey, unknown>>(
     name: string,
   ): Promise<Partial<T>> {
-    try {
-      switch (name) {
-        case "drizzle-orm/node-postgres":
-          return (await import(
-            "drizzle-orm/node-postgres"
-          )) as unknown as Partial<T>;
-        case "drizzle-orm/libsql":
-          return (await import("drizzle-orm/libsql")) as unknown as Partial<T>;
-        case "pg":
-          return (await import("pg")) as unknown as Partial<T>;
-        default:
-          return {};
-      }
-    } catch {
-      return {};
+    switch (name) {
+      case "drizzle-orm/node-postgres":
+        return (await import(
+          "drizzle-orm/node-postgres"
+        )) as unknown as Partial<T>;
+      case "drizzle-orm/libsql":
+        return (await import("drizzle-orm/libsql")) as unknown as Partial<T>;
+      case "pg":
+        return (await import("pg")) as unknown as Partial<T>;
+      default:
+        return {};
     }
   }
   // deno-coverage-ignore-stop
