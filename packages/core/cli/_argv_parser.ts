@@ -23,7 +23,15 @@ export class CommandParseError extends Error {
 interface IndexedOptions {
   byName: Map<string, InputOption>;
   byShortcut: Map<string, InputOption>;
+  /**
+   * Whether a shortcut is a digit: `-5` then selects that option instead of
+   * being read as a negative number.
+   */
+  hasDigitShortcut: boolean;
 }
+
+/** Matches tokens that are a negative number, e.g. `-5`, `-1.5` or `-1e3`. */
+const NEGATIVE_NUMBER = /^-(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
 
 /**
  * Pre-scan of an argv array that ignores option definitions.
@@ -105,7 +113,8 @@ export function preScanArgv(argv: string[]): PreScannedArgv {
  *  - `--name=value`, `--name value`, `-x value`, `-x=value`, `-xvz` (combined boolean shortcuts).
  *  - `--` ends option parsing; remaining tokens are appended to {@linkcode ParsedInput.args}.
  *  - Boolean options never take a value; non-boolean options always take exactly one.
- *  - A separate value may not start with `-`, except negative numbers of number options (`--offset -5`).
+ *  - A separate value may not start with `-`, except negative numbers (`--offset -5`).
+ *  - A negative number (`-5`) is a positional argument, unless a shortcut is a digit.
  *  - Array options accept repeated occurrences (collected in declaration order).
  *
  * Option definitions are expected to be valid (unique names and shortcuts);
@@ -144,6 +153,13 @@ export function parseCommandArgs(
     }
 
     if (parseFlags && token.startsWith("-") && token.length > 1) {
+      if (!index.hasDigitShortcut && NEGATIVE_NUMBER.test(token)) {
+        args.push(token);
+        i += 1;
+
+        continue;
+      }
+
       i = consumeShortOption(argv, i, index, options);
 
       continue;
@@ -161,16 +177,18 @@ export function parseCommandArgs(
 function indexOptions(optionDefs: InputOption[]): IndexedOptions {
   const byName: Map<string, InputOption> = new Map();
   const byShortcut: Map<string, InputOption> = new Map();
+  let hasDigitShortcut = false;
 
   for (const opt of optionDefs) {
     byName.set(opt.name, opt);
 
     if (opt.shortcut) {
       byShortcut.set(opt.shortcut, opt);
+      hasDigitShortcut ||= /^\d$/.test(opt.shortcut);
     }
   }
 
-  return { byName, byShortcut };
+  return { byName, byShortcut, hasDigitShortcut };
 }
 
 function consumeLongOption(
@@ -207,7 +225,7 @@ function consumeLongOption(
 
   const next = argv[index + 1];
 
-  if (!isSeparateValue(next, def)) {
+  if (!isSeparateValue(next, def, defs)) {
     throw new CommandParseError(
       `The "--${name}" option requires a value.`,
     );
@@ -260,7 +278,7 @@ function consumeShortOption(
     }
 
     const next = argv[index + 1];
-    if (!isSeparateValue(next, def)) {
+    if (!isSeparateValue(next, def, defs)) {
       throw new CommandParseError(
         `The "-${body}" option requires a value.`,
       );
@@ -316,15 +334,19 @@ function record(
 
 /**
  * Tells whether the token after a value-taking option is its value. Tokens
- * starting with `-` are options, except negative numbers of number options.
+ * starting with `-` are options, except negative numbers: they are the value
+ * of a number option, and of any other option as long as no shortcut is a
+ * digit.
  *
  * @param {string | undefined} token - Token following the option.
  * @param {InputOption} def - Definition of the option.
+ * @param {IndexedOptions} defs - All options of the command.
  * @returns {boolean} `true` when `token` is the value of the option.
  */
 function isSeparateValue(
   token: string | undefined,
   def: InputOption,
+  defs: IndexedOptions,
 ): token is string {
   if (token === undefined) {
     return false;
@@ -334,7 +356,8 @@ function isSeparateValue(
     return true;
   }
 
-  return def.type === "number" && Number.isFinite(Number(token));
+  return NEGATIVE_NUMBER.test(token) &&
+    (def.type === "number" || !defs.hasDigitShortcut);
 }
 
 function cast(raw: string, def: InputOption): InputOptionValue {

@@ -284,7 +284,7 @@ describe("parseCommandArgs()", () => {
       );
     });
 
-    it("does not take a flag or a negative number of a non-numeric option as value", () => {
+    it("does not take a flag as value", () => {
       const counter: InputOption = {
         name: "count",
         shortcut: "c",
@@ -301,10 +301,34 @@ describe("parseCommandArgs()", () => {
         CommandParseError,
         'The "-c" option requires a value.',
       );
+    });
+
+    it("takes a negative number after a string option as its value", () => {
+      assertEquals(
+        parseCommandArgs(["--scope", "-5"], [stringOpt]).options.scope,
+        "-5",
+      );
+    });
+
+    it("reads a negative number as a digit shortcut when one is declared", () => {
+      const five: InputOption = {
+        name: "five",
+        shortcut: "5",
+        type: "boolean",
+      };
+
       assertThrows(
-        () => parseCommandArgs(["--scope", "-5"], [stringOpt]),
+        () => parseCommandArgs(["--scope", "-5"], [stringOpt, five]),
         CommandParseError,
         'The "--scope" option requires a value.',
+      );
+      assertEquals(
+        parseCommandArgs(["-5", "-1"], [five, {
+          name: "one",
+          shortcut: "1",
+          type: "boolean",
+        }]),
+        { options: { five: true, one: true }, args: [] },
       );
     });
   });
@@ -329,6 +353,21 @@ describe("parseCommandArgs()", () => {
   });
 
   describe("positional args & --", () => {
+    it("collects negative numbers as positionals", () => {
+      assertEquals(
+        parseCommandArgs(["-5", "-1.5", "-.5", "-2e3"], [boolOpt]).args,
+        ["-5", "-1.5", "-.5", "-2e3"],
+      );
+    });
+
+    it("still rejects unknown shortcuts that only start with a digit", () => {
+      assertThrows(
+        () => parseCommandArgs(["-5x"], []),
+        CommandParseError,
+        'The "-5" option does not exist.',
+      );
+    });
+
     it("collects unknown positionals into args", () => {
       const result = parseCommandArgs(["alpha", "beta"], []);
 
