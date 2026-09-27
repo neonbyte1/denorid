@@ -10,7 +10,6 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
-  assertStringIncludes,
   assertThrows,
 } from "@std/assert";
 import { assertSpyCalls, spy, stub } from "@std/testing/mock";
