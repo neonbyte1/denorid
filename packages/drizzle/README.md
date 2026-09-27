@@ -22,17 +22,18 @@ deno add jsr:@denorid/drizzle
 
 ```ts
 import { DrizzleOrmModule, DrizzleService } from "@denorid/drizzle";
+import { defineRelations } from "drizzle-orm";
 import * as schema from "./db/schema.ts";
+
+// drizzle-orm v1 builds `db.query` from relations, not from the schema bag
+const relations = defineRelations(schema);
 
 @Module({
   imports: [
     DrizzleOrmModule.register({
       type: "sqlite",
-      database: ":memory:",
-      drizzle: {
-        schema,
-        casing: "snake_case", // defaults to camelCase iirc
-      },
+      database: "./local.db", // file path, `:memory:` or a libsql URL
+      drizzle: { relations },
     }),
   ],
 })
@@ -41,11 +42,36 @@ export class AppModule {}
 // inside your application main
 const drizzle = await ctx.resolve(DrizzleService);
 const users = await drizzle
-  .sqlite<typeof schema>()
+  .sqlite<typeof relations>()
   .query
   .users
   .findMany();
+
+// closes the connections after all shutdown hooks ran
+await ctx.close();
 ```
+
+Factories registered with `registerAsync` can inject providers of other modules;
+list those modules in `imports`:
+
+```ts
+DrizzleOrmModule.registerAsync({
+  imports: [ConfigModule],
+  inject: [ConfigService],
+  useFactory: (config: ConfigService) => ({
+    type: "postgres",
+    connection: config.get("DATABASE_URL"),
+    drizzle: { relations },
+  }),
+});
+```
+
+`DrizzleService` is available to modules that import the Drizzle module. Pass
+`global: true` (`register(options, { global: true })` or as a `registerAsync`
+option) to inject it in every module without importing it there.
+
+The `migrations:generate` and `migrations:migrate` commands run the
+`drizzle-kit` release matching the `drizzle-orm` version of this package.
 
 ## License
 
