@@ -8,9 +8,10 @@
     "./exceptions": "./exceptions/mod.ts",
     "./exceptions/http": "./exceptions/http/mod.ts",
     "./http": "./http/mod.ts",
-    "./pipes": "./pipes/mod.ts",
     "./microservices": "./microservices/mod.ts",
-    "./testing": "./testing/mod.ts"
+    "./pipes": "./pipes/mod.ts",
+    "./testing": "./testing/mod.ts",
+    "./websockets": "./websockets/mod.ts"
   },
   "imports": {
     "@denorid/logger": "jsr:@denorid/logger@^1.0.0-beta2",

@@ -40,3 +40,4 @@ export * from "./microservices/mod.ts";
 export * from "./pipes/mod.ts";
 export * from "./rpc_host_arguments.ts";
 export * from "./type_guards.ts";
+export * from "./websockets/mod.ts";
