@@ -20,12 +20,12 @@ function createRequestMapping(
 }
 
 /**
- * Route handler (method) decorator. Routes HTTP POST requests to the specified path.
+ * Route handler (method) decorator. Routes HTTP GET requests to the specified path.
  */
 export const Get: RouteDecoratorFactory = createRequestMapping(HttpMethod.GET);
 
 /**
- * Route handler (method) decorator. Routes HTTP GET requests to the specified path.
+ * Route handler (method) decorator. Routes HTTP POST requests to the specified path.
  */
 export const Post: RouteDecoratorFactory = createRequestMapping(
   HttpMethod.POST,
