@@ -8,6 +8,6 @@
     "drizzle-orm": "npm:drizzle-orm@^1.0.0-rc.4",
     "drizzle-orm/": "npm:/drizzle-orm@^1.0.0-rc.4/",
     "pg": "npm:pg@^8.23.0",
-    "@libsql/client": "npm:@libsql/client@^0.10.0"
+    "@libsql/client": "npm:@libsql/client@^0.18.0"
   }
 }
