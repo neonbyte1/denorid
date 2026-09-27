@@ -6,10 +6,10 @@ import {
 import { DrizzleCommand } from "./_base.ts";
 
 /**
- * `migrations:migrate` — wraps `drizzle-kit migrate` to apply pending SQL
+ * `migrations:migrate` wraps `drizzle-kit migrate` to apply pending SQL
  * migrations against the configured database.
  *
- * Only `--config` is forwarded explicitly; everything else is resolved by
+ * Forwards `--config` and `--ignore-conflicts`; everything else is resolved by
  * `drizzle-kit` from the loaded config file.
  *
  * @example Apply pending migrations via the Denorid CLI
@@ -24,6 +24,12 @@ import { DrizzleCommand } from "./_base.ts";
       name: "config",
       description: "Path to drizzle config file",
       type: "string",
+      required: false,
+    },
+    {
+      name: "ignore-conflicts",
+      description: "Skip commutativity conflict checks",
+      type: "boolean",
       required: false,
     },
   ],
@@ -46,6 +52,9 @@ export class DrizzleMigrateCommand extends DrizzleCommand {
 
     if (isString(input.options["config"])) {
       args.push("--config", input.options["config"]);
+    }
+    if (input.options["ignore-conflicts"]) {
+      args.push("--ignore-conflicts");
     }
 
     return args;

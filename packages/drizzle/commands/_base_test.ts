@@ -8,6 +8,8 @@ import childProcess, {
 import { EventEmitter } from "node:events";
 import process from "node:process";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import denoJson from "../deno.json" with { type: "json" };
+import { DRIZZLE_KIT_PACKAGE } from "../_internal.ts";
 import { DrizzleCommand, runDrizzleKit } from "./_base.ts";
 
 /**
@@ -132,7 +134,7 @@ describe("DrizzleCommand", () => {
           "run",
           "-A",
           "--node-modules-dir",
-          "npm:drizzle-kit",
+          `npm:${DRIZZLE_KIT_PACKAGE}`,
           "generate",
           "--config",
           "drizzle.config.ts",
@@ -216,7 +218,13 @@ describe("runDrizzleKit", () => {
     assertEquals(code, 0);
     assertEquals(harness.calls, [{
       command: process.execPath,
-      args: ["x", "drizzle-kit", "migrate", "--config", "drizzle.config.ts"],
+      args: [
+        "x",
+        DRIZZLE_KIT_PACKAGE,
+        "migrate",
+        "--config",
+        "drizzle.config.ts",
+      ],
       options: { stdio: "inherit", shell: false },
     }]);
   });
@@ -237,7 +245,7 @@ describe("runDrizzleKit", () => {
     assertEquals(code, 0);
     assertEquals(harness.calls, [{
       command: "npx",
-      args: ["--yes", "drizzle-kit", "generate", "--name", "init"],
+      args: ["--yes", DRIZZLE_KIT_PACKAGE, "generate", "--name", "init"],
       options: { stdio: "inherit", shell: false },
     }]);
   });
@@ -247,8 +255,19 @@ describe("runDrizzleKit", () => {
 
     assertEquals(harness.calls, [{
       command: "npx",
-      args: ["--yes", "drizzle-kit", "generate"],
+      args: ["--yes", DRIZZLE_KIT_PACKAGE, "generate"],
       options: { stdio: "inherit", shell: true },
     }]);
+  });
+});
+
+describe("DRIZZLE_KIT_PACKAGE", () => {
+  it("pins drizzle-kit to the drizzle-orm release declared in deno.json", () => {
+    const ormVersion = denoJson.imports["drizzle-orm"].replace(
+      /^npm:drizzle-orm@\^?/,
+      "",
+    );
+
+    assertEquals(DRIZZLE_KIT_PACKAGE, `drizzle-kit@${ormVersion}`);
   });
 });

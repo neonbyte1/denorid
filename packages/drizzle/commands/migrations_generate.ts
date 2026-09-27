@@ -6,13 +6,14 @@ import {
 import { DrizzleCommand } from "./_base.ts";
 
 /**
- * `migrations:generate` — wraps `drizzle-kit generate` to produce SQL migration
+ * `migrations:generate` wraps `drizzle-kit generate` to produce SQL migration
  * files from a Drizzle schema.
  *
- * Every option declared on the decorator maps 1:1 onto the corresponding
- * `drizzle-kit generate` flag, e.g. `--name`, `--config`, `--dialect`. String
- * options are only forwarded when explicitly provided; boolean flags
- * (`--breakpoints`, `--custom`) are only forwarded when truthy.
+ * Every option declared on the decorator maps 1:1 onto the `drizzle-kit
+ * generate` flag of the same name (`--config`, `--name`, `--dialect`,
+ * `--driver`, `--schema`, `--out`, `--breakpoints`, `--custom`,
+ * `--ignore-conflicts`, `--explain`). String options are only forwarded when
+ * explicitly provided; boolean flags are only forwarded when truthy.
  *
  * @example Generate a migration via the Denorid CLI
  * ```bash
@@ -40,20 +41,14 @@ import { DrizzleCommand } from "./_base.ts";
     {
       name: "dialect",
       description:
-        "Database dialect: 'gel', 'postgresql', 'mysql', 'sqlite', 'turso' or 'singlestore'",
+        "Database dialect: 'postgresql', 'mysql', 'sqlite', 'turso', 'singlestore', 'mssql', 'cockroach' or 'duckdb'",
       type: "string",
       required: false,
     },
     {
       name: "driver",
       description:
-        "Database driver: 'd1-http', 'expo', 'aws-data-pi', 'pglite' or 'durable-sqlite'",
-      type: "string",
-      required: false,
-    },
-    {
-      name: "casing",
-      description: "Casing for serialization: 'camelCase' or 'snake_case'",
+        "Database driver: 'd1-http', 'expo', 'aws-data-api', 'pglite', 'durable-sqlite' or 'sqlite-cloud'",
       type: "string",
       required: false,
     },
@@ -78,15 +73,20 @@ import { DrizzleCommand } from "./_base.ts";
     {
       name: "custom",
       description:
-        "Prepare empty migration file for custom SQL (default: false",
+        "Prepare empty migration file for custom SQL (default: false)",
       type: "boolean",
       required: false,
     },
     {
-      name: "prefix",
-      description:
-        "Default: 'index', available: 'index', 'timestamp', 'supabase', 'unix', 'none'",
-      type: "string",
+      name: "ignore-conflicts",
+      description: "Skip commutativity conflict checks",
+      type: "boolean",
+      required: false,
+    },
+    {
+      name: "explain",
+      description: "Print the planned SQL changes (dry run)",
+      type: "boolean",
       required: false,
     },
   ],
@@ -119,9 +119,6 @@ export class DrizzleGenerateCommand extends DrizzleCommand {
     if (isString(input.options["driver"])) {
       args.push("--driver", input.options["driver"]);
     }
-    if (isString(input.options["casing"])) {
-      args.push("--casing", input.options["casing"]);
-    }
     if (isString(input.options["schema"])) {
       args.push("--schema", input.options["schema"]);
     }
@@ -133,6 +130,12 @@ export class DrizzleGenerateCommand extends DrizzleCommand {
     }
     if (input.options["custom"]) {
       args.push("--custom");
+    }
+    if (input.options["ignore-conflicts"]) {
+      args.push("--ignore-conflicts");
+    }
+    if (input.options["explain"]) {
+      args.push("--explain");
     }
 
     return args;

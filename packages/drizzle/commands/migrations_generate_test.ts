@@ -37,7 +37,6 @@ describe("DrizzleGenerateCommand", () => {
           name: 42,
           dialect: false,
           driver: 0,
-          casing: undefined as unknown as string,
           schema: null as unknown as string,
           out: [] as unknown as string,
         }),
@@ -52,7 +51,6 @@ describe("DrizzleGenerateCommand", () => {
           name: "init",
           dialect: "postgresql",
           driver: "pglite",
-          casing: "snake_case",
           schema: "./db/schema.ts",
           out: "./drizzle",
         }),
@@ -65,8 +63,6 @@ describe("DrizzleGenerateCommand", () => {
           "postgresql",
           "--driver",
           "pglite",
-          "--casing",
-          "snake_case",
           "--schema",
           "./db/schema.ts",
           "--out",
@@ -76,11 +72,24 @@ describe("DrizzleGenerateCommand", () => {
     });
 
     it("emits boolean flags only when truthy", () => {
-      assertEquals(build({ breakpoints: true, custom: true }), [
-        "--breakpoints",
-        "--custom",
-      ]);
-      assertEquals(build({ breakpoints: false, custom: false }), []);
+      assertEquals(
+        build({
+          breakpoints: true,
+          custom: true,
+          "ignore-conflicts": true,
+          explain: true,
+        }),
+        ["--breakpoints", "--custom", "--ignore-conflicts", "--explain"],
+      );
+      assertEquals(
+        build({
+          breakpoints: false,
+          custom: false,
+          "ignore-conflicts": false,
+          explain: false,
+        }),
+        [],
+      );
     });
 
     it("combines string and boolean options together", () => {

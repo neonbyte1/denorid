@@ -4,6 +4,7 @@ import type {
 } from "@denorid/core";
 import childProcess from "node:child_process";
 import process from "node:process";
+import { DRIZZLE_KIT_PACKAGE } from "../_internal.ts";
 
 /**
  * Minimal view of the runtime globals inspected to decide how `drizzle-kit`
@@ -46,7 +47,13 @@ function resolveLauncher(
   if (runtime.Deno !== undefined) {
     return {
       command: "deno",
-      args: ["run", "-A", "--node-modules-dir", "npm:drizzle-kit", ...kitArgs],
+      args: [
+        "run",
+        "-A",
+        "--node-modules-dir",
+        `npm:${DRIZZLE_KIT_PACKAGE}`,
+        ...kitArgs,
+      ],
       shell: false,
     };
   }
@@ -54,14 +61,14 @@ function resolveLauncher(
   if (runtime.Bun !== undefined) {
     return {
       command: process.execPath,
-      args: ["x", "drizzle-kit", ...kitArgs],
+      args: ["x", DRIZZLE_KIT_PACKAGE, ...kitArgs],
       shell: false,
     };
   }
 
   return {
     command: "npx",
-    args: ["--yes", "drizzle-kit", ...kitArgs],
+    args: ["--yes", DRIZZLE_KIT_PACKAGE, ...kitArgs],
     // `npx` is a `.cmd` shim on Windows, which Node.js refuses to spawn
     // without a shell.
     shell: platform === "win32",
@@ -72,9 +79,13 @@ function resolveLauncher(
  * Spawns `drizzle-kit` with inherited stdio through the launcher of the
  * current runtime and resolves to its exit code.
  *
- * - Deno: `deno run -A --node-modules-dir npm:drizzle-kit <args>`
- * - Bun: `<bun executable> x drizzle-kit <args>`
- * - Node.js: `npx --yes drizzle-kit <args>` (through the shell on Windows)
+ * - Deno: `deno run -A --node-modules-dir npm:drizzle-kit@<version> <args>`
+ * - Bun: `<bun executable> x drizzle-kit@<version> <args>`
+ * - Node.js: `npx --yes drizzle-kit@<version> <args>` (through the shell on
+ *   Windows)
+ *
+ * `<version>` is the `drizzle-kit` release paired with the `drizzle-orm`
+ * version this package depends on.
  *
  * @param {string[]} kitArgs - `drizzle-kit` subcommand followed by its flags.
  * @param {DrizzleKitRuntimeGlobals} [runtime] - Runtime globals used to detect
@@ -148,9 +159,13 @@ export abstract class DrizzleCommand implements ConsoleCommandInterface {
    * to its exit code.
    *
    * The launcher depends on the runtime executing the command:
-   * - Deno: `deno run -A --node-modules-dir npm:drizzle-kit <command> ...`
-   * - Bun: `bun x drizzle-kit <command> ...` (using the running executable)
-   * - Node.js: `npx --yes drizzle-kit <command> ...`
+   * - Deno: `deno run -A --node-modules-dir npm:drizzle-kit@<version> <command> ...`
+   * - Bun: `bun x drizzle-kit@<version> <command> ...` (using the running
+   *   executable)
+   * - Node.js: `npx --yes drizzle-kit@<version> <command> ...`
+   *
+   * `<version>` is pinned to the release matching the `drizzle-orm` version
+   * this package depends on.
    *
    * Flags produced by {@linkcode DrizzleCommand.buildCommandArguments} are
    * appended after the subcommand name.

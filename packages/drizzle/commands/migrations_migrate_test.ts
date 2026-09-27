@@ -37,5 +37,13 @@ describe("DrizzleMigrateCommand", () => {
         "drizzle.config.ts",
       ]);
     });
+
+    it("appends --ignore-conflicts only when truthy", () => {
+      assertEquals(
+        build({ config: "drizzle.config.ts", "ignore-conflicts": true }),
+        ["--config", "drizzle.config.ts", "--ignore-conflicts"],
+      );
+      assertEquals(build({ "ignore-conflicts": false }), []);
+    });
   });
 });
