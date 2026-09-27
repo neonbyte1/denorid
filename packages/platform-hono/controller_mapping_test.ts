@@ -7,7 +7,7 @@ import type {
 } from "@denorid/core";
 import { BadRequestException, HttpMethod, StatusCode } from "@denorid/core";
 import type { InjectorContext, Type } from "@denorid/injector";
-import type { Context, Hono } from "@hono/hono";
+import { type Context, Hono } from "@hono/hono";
 import {
   assertEquals,
   assertInstanceOf,
@@ -17,6 +17,7 @@ import {
 import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
 import { describe, it } from "node:test";
 import { z } from "zod";
+import type { HonoAdapterOptions } from "./adapter.ts";
 import { HonoControllerMapping } from "./controller_mapping.ts";
 import { HonoRequestContext } from "./request_context.ts";
 
@@ -181,6 +182,57 @@ describe(HonoControllerMapping.name, () => {
 
     return { capturedRoutes, runInRequestScopeAsync, resolveInternal };
   }
+
+  /**
+   * Registers one `/test` controller route on a real Hono app, so the client
+   * address resolution runs end to end.
+   */
+  async function registerOnHono(opts: {
+    route: RequestMappingMetadata;
+    controller: HttpController;
+    adapterOptions?: HonoAdapterOptions;
+    basePath?: string;
+  }): Promise<Hono> {
+    class FakeController {}
+    setControllerMetadata(FakeController, { path: "/test" }, [opts.route]);
+
+    const app = new Hono();
+    const { injectorCtx } = makeInjectorContext({
+      tokens: [FakeController],
+      controller: opts.controller,
+    });
+    const mapping = new HonoControllerMapping(
+      app,
+      {
+        ctx: injectorCtx,
+        exceptionHandler: makeExceptionHandler().exHandler,
+        globalGuards: [],
+        cors: undefined,
+      },
+      opts.adapterOptions,
+    );
+
+    await mapping.register(opts.basePath);
+
+    return app;
+  }
+
+  describe("register()", () => {
+    it("resolves client addresses with the client IP options", async () => {
+      const app = await registerOnHono({
+        route: { name: "ip", path: "ip" },
+        controller: { ip: (ctx) => ctx.ip },
+        adapterOptions: { clientIp: { trustProxy: ["loopback"] } },
+      });
+      const response = await app.request(
+        "/test/ip",
+        { headers: { "x-forwarded-for": "6.6.6.6, 203.0.113.9" } },
+        { remoteAddr: { hostname: "127.0.0.1" } },
+      );
+
+      assertEquals(await response.text(), "203.0.113.9");
+    });
+  });
 
   describe("registerRoute()", () => {
     it("registers a GET route by default when method is not specified", async () => {

@@ -19,6 +19,8 @@ import type { Type } from "@denorid/injector";
 import type { Context, Hono, MiddlewareHandler } from "@hono/hono";
 import { cors } from "@hono/hono/cors";
 import type { ZodType } from "zod";
+import { createClientIpResolver } from "./_client_ip.ts";
+import type { HonoAdapterOptions } from "./adapter.ts";
 import { HonoExecutionContext } from "./execution_context.ts";
 import { HonoHostArguments } from "./host_arguments.ts";
 import { HonoRequestContext } from "./request_context.ts";
@@ -26,11 +28,23 @@ import { HonoRequestContext } from "./request_context.ts";
 cors();
 
 export class HonoControllerMapping extends ControllerMapping {
+  private readonly resolveIp: (ctx: Context) => string;
+
+  /**
+   * @param {Hono} app - Hono app every route is registered on.
+   * @param {ControllerMappingOptions} options - Configuration for the controller mapping.
+   * @param {HonoAdapterOptions} [adapterOptions] - Client address resolution.
+   * @throws {RangeError} When `adapterOptions.clientIp.trustProxy` is an invalid hop count.
+   * @throws {TypeError} When `adapterOptions.clientIp` lists an invalid proxy or header.
+   */
   public constructor(
     private readonly app: Hono,
     options: ControllerMappingOptions,
+    adapterOptions: HonoAdapterOptions = {},
   ) {
     super(options);
+
+    this.resolveIp = createClientIpResolver(adapterOptions.clientIp);
   }
 
   /**
@@ -63,7 +77,12 @@ export class HonoControllerMapping extends ControllerMapping {
       return await this.options.ctx.runInRequestScopeAsync(
         requestId,
         async () => {
-          const context = new HonoRequestContext<unknown>(c, requestId, null);
+          const context = new HonoRequestContext<unknown>(
+            c,
+            requestId,
+            null,
+            this.resolveIp,
+          );
           const hostArguments = new HonoHostArguments(c, context);
 
           try {

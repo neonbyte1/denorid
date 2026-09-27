@@ -40,6 +40,31 @@ const app = await DenoridFactory.create(AppModule, new HonoAdapter());
 await app.listen();
 ```
 
+## Client IP
+
+`RequestContext.ip` is the socket peer address by default; forwarding headers
+are ignored because any client can send them. Behind a reverse proxy, declare
+which proxies are trusted:
+
+```ts
+new HonoAdapter({
+  clientIp: {
+    // `true`, a hop count, addresses/CIDR ranges or `(address, hop) => boolean`
+    trustProxy: ["loopback", "10.0.0.0/8"],
+    // header carrying the forwarded addresses, default "x-forwarded-for"
+    header: "x-forwarded-for",
+  },
+});
+```
+
+Starting at the socket peer, the forwarded addresses are walked from right to
+left while the current address is a trusted proxy; the first untrusted address
+is the client. `loopback`, `linklocal` and `uniquelocal` expand to the matching
+IPv4 and IPv6 ranges. Addresses are returned in canonical form (IPv4-mapped IPv6
+addresses as IPv4, IPv6 compressed and lower case); `"0.0.0.0"` means the peer
+address is unknown. Use `header: "cf-connecting-ip"` or `header: "x-real-ip"`
+for proxies that set a single address.
+
 ## License
 
 The [@denorid/platform-hono](https://github.com/neonbyte1/denorid) package is

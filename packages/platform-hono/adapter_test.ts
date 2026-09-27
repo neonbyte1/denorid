@@ -3,7 +3,7 @@ import type { InjectorContext } from "@denorid/injector";
 import { assertEquals, assertRejects } from "@std/assert";
 import { assertSpyCalls, stub } from "@std/testing/mock";
 import { describe, it } from "node:test";
-import { HonoAdapter } from "./adapter.ts";
+import { HonoAdapter, type HonoAdapterOptions } from "./adapter.ts";
 
 describe(HonoAdapter.name, () => {
   function getFreePorts(count: number): number[] {
@@ -22,7 +22,9 @@ describe(HonoAdapter.name, () => {
    * Adapter with one controller mapped through `createControllerMapping`,
    * answering `GET /client/ip` with the resolved client IP.
    */
-  async function createAdapter(): Promise<HonoAdapter> {
+  async function createAdapter(
+    options?: HonoAdapterOptions,
+  ): Promise<HonoAdapter> {
     class ClientController {}
 
     Object.defineProperty(ClientController, Symbol.metadata, {
@@ -33,7 +35,7 @@ describe(HonoAdapter.name, () => {
     });
 
     const controller = { ip: (ctx: RequestContext): string => ctx.ip };
-    const adapter = new HonoAdapter();
+    const adapter = new HonoAdapter(options);
     const mapping = await adapter.createControllerMapping({
       ctx: {
         container: { getTokensByTag: () => [ClientController] },
@@ -52,8 +54,10 @@ describe(HonoAdapter.name, () => {
     return adapter;
   }
 
-  async function getIp(port: number): Promise<string> {
-    const response = await fetch(`http://127.0.0.1:${port}/client/ip`);
+  async function getIp(port: number, headers?: HeadersInit): Promise<string> {
+    const response = await fetch(`http://127.0.0.1:${port}/client/ip`, {
+      headers,
+    });
 
     return await response.text();
   }
@@ -149,6 +153,26 @@ describe(HonoAdapter.name, () => {
 
       assertSpyCalls(serve, 2);
       await assertRejects(() => adapter.close(), Error, "shutdown failed");
+    });
+  });
+
+  describe("options", () => {
+    it("resolves forwarded client addresses from trusted proxies", async () => {
+      const [port] = getFreePorts(1);
+      const adapter = await createAdapter({
+        clientIp: { trustProxy: ["loopback"] },
+      });
+
+      adapter.listen(port);
+
+      try {
+        assertEquals(
+          await getIp(port, { "x-forwarded-for": "6.6.6.6, 203.0.113.9" }),
+          "203.0.113.9",
+        );
+      } finally {
+        await adapter.close();
+      }
     });
   });
 });

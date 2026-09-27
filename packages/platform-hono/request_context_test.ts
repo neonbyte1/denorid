@@ -111,147 +111,30 @@ describe("HonoRequestContext", () => {
       param: () => ({}),
     };
 
-    it("returns the cf-connecting-ip header when present", () => {
-      const ctx = makeCtx(
-        {
-          ...noopReq,
-          header: makeHeaderFn({ "cf-connecting-ip": "203.0.113.1" }),
-        },
-        { remoteAddr: { hostname: "10.0.0.1", port: 80, transport: "tcp" } },
-      );
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "203.0.113.1");
-    });
-
-    it("returns the first IP from x-forwarded-for when cf-connecting-ip is absent", () => {
-      const ctx = makeCtx(
-        {
-          ...noopReq,
-          header: makeHeaderFn({ "x-forwarded-for": "10.0.0.2, 10.0.0.3" }),
-        },
-        { remoteAddr: { hostname: "10.0.0.1", port: 80, transport: "tcp" } },
-      );
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "10.0.0.2");
-    });
-
-    it("trims whitespace from each IP in x-forwarded-for", () => {
+    it("defaults to the socket peer address and ignores forwarding headers", () => {
       const ctx = makeCtx(
         {
           ...noopReq,
           header: makeHeaderFn({
-            "x-forwarded-for": "  172.16.0.5  ,  172.16.0.6  ",
+            "cf-connecting-ip": "203.0.113.1",
+            "x-forwarded-for": "203.0.113.2",
+            "x-real-ip": "203.0.113.3",
           }),
         },
         { remoteAddr: { hostname: "10.0.0.1", port: 80, transport: "tcp" } },
       );
       const requestCtx = new HonoRequestContext(ctx, "", undefined);
 
-      assertEquals(requestCtx.ip, "172.16.0.5");
+      assertEquals(requestCtx.ip, "10.0.0.1");
     });
 
-    it("returns x-real-ip when cf-connecting-ip and x-forwarded-for are both absent", () => {
-      const ctx = makeCtx(
-        { ...noopReq, header: makeHeaderFn({ "x-real-ip": "192.168.0.99" }) },
-        { remoteAddr: { hostname: "10.0.0.1", port: 80, transport: "tcp" } },
-      );
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
+    it("resolves the address with the given resolver", () => {
+      const ctx = makeCtx({ ...noopReq, header: () => undefined });
+      const resolveIp = spy((_ctx: Context) => "203.0.113.9");
+      const requestCtx = new HonoRequestContext(ctx, "", undefined, resolveIp);
 
-      assertEquals(requestCtx.ip, "192.168.0.99");
-    });
-
-    it("returns remoteAddr.hostname from the Deno.serve handler info when all proxy headers are absent", () => {
-      const ctx = makeCtx(
-        { ...noopReq, header: () => undefined },
-        {
-          remoteAddr: { hostname: "192.168.1.42", port: 443, transport: "tcp" },
-        },
-      );
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "192.168.1.42");
-    });
-
-    it("returns '0.0.0.0' when the Deno.serve remoteAddr carries no hostname", () => {
-      const ctx = makeCtx(
-        { ...noopReq, header: () => undefined },
-        { remoteAddr: { transport: "unix", path: "/tmp/app.sock" } },
-      );
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "0.0.0.0");
-    });
-
-    it("asks the Bun.serve server for the address of the original request", () => {
-      const raw = new Request("http://localhost/");
-      const server = {
-        requestIP: spy((_request: Request) => ({
-          address: "198.51.100.7",
-          family: "IPv4",
-          port: 54321,
-        })),
-      };
-      const ctx = makeCtx(
-        { ...noopReq, header: () => undefined, raw },
-        server,
-      );
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "198.51.100.7");
-      assertSpyCall(server.requestIP, 0, { args: [raw], self: server });
-    });
-
-    it("returns '0.0.0.0' when the Bun.serve server cannot resolve the request address", () => {
-      const ctx = makeCtx(
-        {
-          ...noopReq,
-          header: () => undefined,
-          raw: new Request("http://localhost/"),
-        },
-        { requestIP: () => null },
-      );
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "0.0.0.0");
-    });
-
-    it("returns the socket remoteAddress from the @hono/node-server bindings", () => {
-      const ctx = makeCtx(
-        { ...noopReq, header: () => undefined },
-        {
-          incoming: { socket: { remoteAddress: "::ffff:127.0.0.1" } },
-          outgoing: {},
-        },
-      );
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "::ffff:127.0.0.1");
-    });
-
-    it("returns '0.0.0.0' when the @hono/node-server socket is already gone", () => {
-      const ctx = makeCtx(
-        { ...noopReq, header: () => undefined },
-        { incoming: {}, outgoing: {} },
-      );
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "0.0.0.0");
-    });
-
-    it("returns '0.0.0.0' for unrecognized bindings", () => {
-      const ctx = makeCtx({ ...noopReq, header: () => undefined }, {});
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "0.0.0.0");
-    });
-
-    it("returns '0.0.0.0' when the app was invoked without bindings", () => {
-      const ctx = makeCtx({ ...noopReq, header: () => undefined }, undefined);
-      const requestCtx = new HonoRequestContext(ctx, "", undefined);
-
-      assertEquals(requestCtx.ip, "0.0.0.0");
+      assertEquals(requestCtx.ip, "203.0.113.9");
+      assertSpyCall(resolveIp, 0, { args: [ctx] });
     });
   });
 

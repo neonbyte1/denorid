@@ -5,77 +5,36 @@ import {
   RequestContext,
 } from "@denorid/core";
 import type { Context, HonoRequest } from "@hono/hono";
+import { createClientIpResolver } from "./_client_ip.ts";
 
-/**
- * Superset of the `c.env` bindings passed by the servers `HonoAdapter` starts:
- * the `Deno.serve` handler info (`remoteAddr`), the `Bun.serve` server
- * (`requestIP`) and the `@hono/node-server` bindings (`incoming`).
- */
-interface ServeBindings {
-  /** Peer address of the connection (Deno). */
-  remoteAddr?: { hostname?: string };
-  /** Resolves the peer address of the original request (Bun). */
-  requestIP?(request: Request): { address: string } | null;
-  /** Raw `node:http` request exposing the socket (Node.js). */
-  incoming?: { socket?: { remoteAddress?: string } };
-}
-
-/**
- * Reads the socket peer address from the runtime specific `c.env` bindings.
- *
- * @param {Context} ctx - Hono context of the current request.
- * @return {string | undefined} The peer address, or `undefined` when unknown.
- */
-function getRemoteAddress(ctx: Context): string | undefined {
-  // Hono types `c.env` per app; the adapter serves an untyped app, so the shape
-  // is only known from the serving runtime and every field is checked below.
-  const env = ctx.env as ServeBindings | null | undefined;
-
-  if (env?.remoteAddr) {
-    return env.remoteAddr.hostname;
-  }
-
-  if (typeof env?.requestIP === "function") {
-    return env.requestIP(ctx.req.raw)?.address;
-  }
-
-  return env?.incoming?.socket?.remoteAddress;
-}
+/** Resolves the socket peer address, ignoring forwarding headers. */
+const resolveSocketIp = createClientIpResolver();
 
 export class HonoRequestContext<Dto = unknown> extends RequestContext<Dto> {
+  /**
+   * @param {Context} ctx - Hono context of the current request.
+   * @param {string} contextId - Identifier of the request scope.
+   * @param {Dto} dto - Validated request body.
+   * @param {(ctx: Context) => string} [resolveIp] - Resolves the client
+   * address; defaults to the socket peer address, ignoring forwarding headers.
+   */
   public constructor(
     private readonly ctx: Context,
     contextId: string,
     dto: Dto,
+    private readonly resolveIp: (ctx: Context) => string = resolveSocketIp,
   ) {
     super(contextId, dto as InferIfZod<Dto>);
   }
 
   /**
-   * @inheritdoc
+   * Canonical client address as configured by `ClientIpOptions`, or
+   * `"0.0.0.0"` when the socket peer is unknown.
+   *
+   * @return {string} The client IP address.
    */
   public override get ip(): string {
-    const cfIp = this.header("cf-connecting-ip");
-    if (cfIp) {
-      return cfIp;
-    }
-
-    const xff = this.header("x-forwarded-for");
-    if (xff) {
-      const ips = xff.split(",").map((ip) => ip.trim());
-
-      if (ips.length > 0) {
-        return ips[0];
-      }
-    }
-
-    const realIp = this.header("x-real-ip");
-
-    if (realIp) {
-      return realIp;
-    }
-
-    return getRemoteAddress(this.ctx) ?? "0.0.0.0";
+    return this.resolveIp(this.ctx);
   }
 
   /**
