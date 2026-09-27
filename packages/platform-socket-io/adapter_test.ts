@@ -14,7 +14,7 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { Namespace, Server, type Socket } from "socket.io";
+import { Namespace, Server, type ServerOptions, type Socket } from "socket.io";
 import {
   io as connectClient,
   type ManagerOptions,
@@ -22,6 +22,18 @@ import {
   type SocketOptions,
 } from "socket.io-client";
 import { SocketIoAdapter } from "./adapter.ts";
+
+/** Room adapter of a namespace (socket.io-adapter `Adapter`). */
+type RoomAdapter = Namespace["adapter"];
+
+/** Room adapter class (socket.io-adapter `typeof Adapter`). */
+type AdapterClass = Extract<
+  ServerOptions["adapter"],
+  new (nsp: Namespace) => RoomAdapter
+>;
+
+/** Options a room adapter receives in `disconnectSockets`. */
+type DisconnectOptions = Parameters<RoomAdapter["disconnectSockets"]>[0];
 
 describe(SocketIoAdapter.name, () => {
   let http: NodeHttpServer;
@@ -488,6 +500,40 @@ describe(SocketIoAdapter.name, () => {
 
       assertEquals(await response.text(), "ok");
       assertEquals(await otherClient.emitWithAck("ping"), "pong");
+    });
+
+    it("leaves the clients of other cluster nodes connected", async () => {
+      // A cluster adapter (e.g. Redis) asks every node to disconnect its
+      // clients unless the request is flagged local.
+      const remote = spy((_opts: DisconnectOptions) => {});
+      const InMemoryAdapter = (adapter.create({}) as Server)
+        .adapter() as AdapterClass;
+
+      class ClusterAdapter extends InMemoryAdapter {
+        public override disconnectSockets(
+          opts: DisconnectOptions,
+          close: boolean,
+        ): void {
+          if (!opts.flags?.local) {
+            remote(opts);
+          }
+
+          super.disconnectSockets(opts, close);
+        }
+      }
+
+      const cluster = new SocketIoAdapter({ getHttpServer: () => http }, {
+        path: "/cluster",
+        adapter: ClusterAdapter,
+      });
+      const server = cluster.create({});
+      const client = await connect("/", { path: "/cluster" });
+      const reason = nextEvent(client, "disconnect");
+
+      await cluster.close(server);
+
+      assertEquals(await reason, "io server disconnect");
+      assertSpyCalls(remote, 0);
     });
 
     it("ignores servers it did not create", async () => {

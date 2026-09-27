@@ -178,8 +178,10 @@ export class SocketIoAdapter
   /**
    * Disconnects the clients of the gateway namespaces of `server` and closes
    * its engine.io server, once per socket.io `Server` (closing further
-   * namespaces of the same server is a no-op). The HTTP server keeps running;
-   * socket.io's own `close()` is not used because it closes the HTTP server.
+   * namespaces of the same server is a no-op). Only the clients of this node
+   * are disconnected, also with a cluster adapter (e.g. Redis). The HTTP
+   * server keeps running; socket.io's own `close()` is not used because it
+   * closes the HTTP server.
    *
    * @param {Server | Namespace} server - Server returned by {@link create}.
    * @return {Promise<void>} Resolves once the server is closed.
@@ -195,7 +197,7 @@ export class SocketIoAdapter
     this.open.delete(io);
 
     for (const nsp of namespaces) {
-      nsp.disconnectSockets(true);
+      nsp.local.disconnectSockets(true);
       await nsp.adapter.close();
     }
 

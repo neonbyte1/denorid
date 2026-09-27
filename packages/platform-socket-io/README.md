@@ -177,8 +177,10 @@ export class AdminGateway {}
 
 When the application closes, the adapter disconnects the clients of every
 gateway namespace (`io server disconnect`, clients do not reconnect) and closes
-the engine.io server. It never calls socket.io's `io.close()`, because that
-would close the HTTP server, which belongs to the HTTP adapter.
+the engine.io server. With a cluster adapter (e.g. Redis) only the clients
+connected to the closing instance are disconnected. It never calls socket.io's
+`io.close()`, because that would close the HTTP server, which belongs to the
+HTTP adapter.
 
 ## License
 
