@@ -45,7 +45,9 @@ export class ClientsModule {
    * Registers a set of named client proxies as DI providers.
    *
    * Each client's `connect()` is called eagerly during module initialisation
-   * so connection failures surface at bootstrap time.
+   * so connection failures surface at bootstrap time. The container disposes
+   * (closes) every client on application shutdown, after all shutdown hooks
+   * ran, so other providers can still use them in their own hooks.
    *
    * @param {ClientRegistrationEntry[]} entries - The clients to register.
    * @return {DynamicModule} The configured dynamic module.

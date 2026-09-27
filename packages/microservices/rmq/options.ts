@@ -90,7 +90,10 @@ export interface RmqOptions {
   replyQueue?: string;
   /** Persist messages to disk when `true`. */
   persistent?: boolean;
-  /** Additional headers attached to every published message. */
+  /**
+   * Additional headers attached to every message published by the client. The
+   * `pattern` header is reserved: the client always sets it itself.
+   */
   headers?: Record<string, string>;
   /** Skip queue and exchange assertion on connect when `true`. */
   noAssert?: boolean;
@@ -100,8 +103,19 @@ export interface RmqOptions {
   exchangeType?: "direct" | "fanout" | "topic" | "headers";
   /** Routing key used when publishing to an exchange. */
   routingKey?: string;
-  /** Maximum number of connection attempts before giving up. */
+  /**
+   * Maximum number of connection attempts before giving up. Values below `1`
+   * mean a single attempt.
+   *
+   * @default 1
+   */
   maxConnectionAttempts?: number;
+  /**
+   * Delay in milliseconds between connection attempts.
+   *
+   * @default 1000
+   */
+  retryDelay?: number;
 }
 
 export type RmqTransportOptions = TransportOptions<Transport.RMQ, RmqOptions>;

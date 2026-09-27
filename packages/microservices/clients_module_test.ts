@@ -3,7 +3,7 @@ import { InjectorContext, Module } from "@denorid/injector";
 import { assertEquals, assertInstanceOf } from "@std/assert";
 import { stub } from "@std/testing/mock";
 import amqplib from "amqplib";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import net, { type AddressInfo, type Socket } from "node:net";
 import process from "node:process";
 import { after, before, describe, it } from "node:test";
@@ -45,32 +45,28 @@ async function startLoopback(): Promise<Loopback> {
   };
 }
 
+/** A fake amqplib `ChannelModel` whose channel supports RmqClient's setup. */
+function makeRmqConnection(): EventEmitter {
+  const channel = Object.assign(new EventEmitter(), {
+    assertQueue: (name: string) => Promise.resolve({ queue: name || "reply" }),
+    consume: () => Promise.resolve({ consumerTag: "tag" }),
+    sendToQueue: () => true,
+    close: () => Promise.resolve(),
+  });
+
+  return Object.assign(new EventEmitter(), {
+    createChannel: () => Promise.resolve(channel),
+    close: () => Promise.resolve(),
+  });
+}
+
 describe(ClientsModule.name, () => {
   let restoreStdout: RestoreFn;
   let restoreStderr: RestoreFn;
-  let rmqConn: {
-    createChannel(): Promise<unknown>;
-    close(): Promise<void>;
-    on(): void;
-  };
 
   before(() => {
     restoreStdout = mockStdWrite(process.stdout);
     restoreStderr = mockStdWrite(process.stderr);
-
-    const ch = {
-      assertQueue: (name: string) =>
-        Promise.resolve({ queue: name || "reply" }),
-      consume: async (_q: string, _fn: (msg: unknown) => void) => {},
-      sendToQueue: () => true,
-      close: () => Promise.resolve(),
-    };
-
-    rmqConn = {
-      createChannel: () => Promise.resolve(ch),
-      close: () => Promise.resolve(),
-      on: () => {},
-    };
   });
 
   after(() => {
@@ -158,7 +154,7 @@ describe(ClientsModule.name, () => {
       using _s = stub(
         amqplib,
         "connect",
-        () => Promise.resolve(rmqConn as never),
+        () => Promise.resolve(makeRmqConnection() as never),
       );
 
       @Module({
@@ -183,7 +179,7 @@ describe(ClientsModule.name, () => {
       using _s = stub(
         amqplib,
         "connect",
-        () => Promise.resolve(rmqConn as never),
+        () => Promise.resolve(makeRmqConnection() as never),
       );
 
       @Module({
