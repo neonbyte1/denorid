@@ -1,482 +1,379 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { stub } from "@std/testing/mock";
-import { after, before, describe, it } from "node:test";
-import { mockStdWrite, type RestoreFn } from "../_test_utils.ts";
-import { encodeFrame } from "./_codec.ts";
+import { spy, stub } from "@std/testing/mock";
+import { once } from "node:events";
+import net, { type AddressInfo, type Socket } from "node:net";
+import { afterEach, describe, it } from "node:test";
+import { decodeFrame, encodeFrame, readFrames } from "./_codec.ts";
 import { TcpClient } from "./client.ts";
+import { TcpDeserializer } from "./deserializer.ts";
+import type { TcpOptions } from "./options.ts";
 import { TcpSerializer } from "./serializer.ts";
 
 const serializer = new TcpSerializer();
+const deserializer = new TcpDeserializer();
 
-function buildResponseFrame(id: string, response: unknown): Uint8Array {
-  return encodeFrame({ id, isDisposed: true, response }, serializer);
+interface RequestFrame {
+  pattern: string;
+  data: unknown;
+  id?: string;
 }
 
-function buildErrFrame(id: string, err: string): Uint8Array {
-  return encodeFrame({ id, isDisposed: true, err }, serializer);
+type Reply = (socket: Socket, frame: RequestFrame) => void;
+
+/** Loopback stand-in for a `TcpServer` whose replies are scripted per test. */
+interface Peer {
+  port: number;
+  /** Server side of every connection accepted so far. */
+  sockets: Socket[];
+  /** Resolves with the server side of the next accepted connection. */
+  nextConnection: () => Promise<Socket>;
+  close: () => Promise<void>;
 }
 
-/**
- * Creates a mock TcpConn backed by a preloaded queue of read chunks.
- * No polling timers - reads resolve immediately from the queue.
- */
-function makeMockConn(opts: {
-  readChunks?: Array<Uint8Array | null | Error>;
-  onWrite?: (buf: Uint8Array) => Promise<void> | void;
-} = {}): Deno.TcpConn {
-  const chunks = opts.readChunks ?? [null];
-  let readIdx = 0;
+const peers: Peer[] = [];
+const clients: TcpClient[] = [];
 
-  return {
-    read: (p: Uint8Array): Promise<number | null> => {
-      if (readIdx >= chunks.length) return Promise.resolve(null);
-      const chunk = chunks[readIdx++];
-      if (chunk instanceof Error) return Promise.reject(chunk);
-      if (chunk === null) return Promise.resolve(null);
-      const n = Math.min(chunk.length, p.length);
-      p.set(chunk.subarray(0, n));
-      return Promise.resolve(n);
-    },
-    write: async (buf: Uint8Array): Promise<number> => {
-      await opts.onWrite?.(buf);
-      return buf.byteLength;
-    },
-    close: () => {},
-  } as unknown as Deno.TcpConn;
-}
+async function startPeer(reply: Reply = () => {}): Promise<Peer> {
+  const sockets: Socket[] = [];
+  const server = net.createServer(async (socket: Socket) => {
+    sockets.push(socket);
 
-describe("TcpClient", () => {
-  let restoreStdout: RestoreFn;
-  let restoreStderr: RestoreFn;
-
-  before(() => {
-    restoreStdout = mockStdWrite(Deno.stdout);
-    restoreStderr = mockStdWrite(Deno.stderr);
+    for await (const body of readFrames(socket)) {
+      reply(socket, decodeFrame(body, deserializer) as RequestFrame);
+    }
   });
 
-  after(() => {
-    restoreStdout();
-    restoreStderr();
-  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
 
+  const peer: Peer = {
+    port: (server.address() as AddressInfo).port,
+    sockets,
+    nextConnection: async () => {
+      const [socket] = await once(server, "connection");
+      return socket as Socket;
+    },
+    close: async () => {
+      const closed = once(server, "close");
+
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+
+      server.close();
+      await closed;
+    },
+  };
+
+  peers.push(peer);
+
+  return peer;
+}
+
+function createClient(options: TcpOptions): TcpClient {
+  const client = new TcpClient(options);
+
+  clients.push(client);
+
+  return client;
+}
+
+function respond(socket: Socket, frame: Record<string, unknown>): void {
+  socket.write(encodeFrame({ isDisposed: true, ...frame }, serializer));
+}
+
+async function closedPort(): Promise<number> {
+  const server = net.createServer();
+
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  const { port } = server.address() as AddressInfo;
+
+  server.close();
+  await once(server, "close");
+
+  return port;
+}
+
+function registerCleanup(): void {
+  afterEach(async () => {
+    await Promise.all(clients.splice(0).map((client) => client.close()));
+    await Promise.all(peers.splice(0).map((peer) => peer.close()));
+  });
+}
+
+describe(TcpClient.name, () => {
   describe("connect()", () => {
-    it("connects successfully", async () => {
-      const conn = makeMockConn();
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
+    registerCleanup();
 
-      const client = new TcpClient({ host: "127.0.0.1", port: 9999 });
+    it("opens a connection to the configured host and port", async () => {
+      const peer = await startPeer();
+      const client = createClient({ host: "127.0.0.1", port: peer.port });
+      const accepted = peer.nextConnection();
+
       await client.connect();
-      await client.close();
+
+      assertEquals((await accepted).remotePort, client["socket"]!.localPort);
     });
 
-    it("concurrent connect() calls resolve to the same connection", async () => {
-      let connectCalls = 0;
-      const conn = makeMockConn();
-      using _s = stub(
-        Deno,
-        "connect",
-        (() => {
-          connectCalls++;
-          return Promise.resolve(conn);
-        }) as never,
-      );
+    it("shares a single connection between concurrent calls", async () => {
+      const peer = await startPeer();
+      const client = createClient({ port: peer.port });
+      using connectSpy = spy(net, "connect");
 
-      const client = new TcpClient({});
       await Promise.all([client.connect(), client.connect()]);
-      assertEquals(connectCalls, 1);
-      await client.close();
+
+      assertEquals(connectSpy.calls.length, 1);
     });
 
-    it("retries on failure and eventually throws", async () => {
-      let attempts = 0;
-      using _s = stub(
-        Deno,
+    it("retries on failure and eventually throws the last error", async () => {
+      const port = await closedPort();
+      const client = createClient({ port, retryAttempts: 2, retryDelay: 1 });
+      using connectSpy = spy(net, "connect");
+
+      const err = await assertRejects(() => client.connect());
+
+      assertEquals((err as { code?: string }).code, "ECONNREFUSED");
+      assertEquals(connectSpy.calls.length, 3);
+    });
+
+    it("defaults to 127.0.0.1:3000", async () => {
+      const peer = await startPeer();
+      const realConnect = net.connect;
+      let captured: unknown;
+      using _connect = stub(
+        net,
         "connect",
-        (() => {
-          attempts++;
-          return Promise.reject(new Error("refused"));
+        ((options: net.TcpNetConnectOpts) => {
+          captured = options;
+          return realConnect({ host: "127.0.0.1", port: peer.port });
         }) as never,
       );
 
-      const client = new TcpClient({ retryAttempts: 2, retryDelay: 1 });
-      await assertRejects(() => client.connect(), Error, "refused");
-      assertEquals(attempts, 3); // 1 initial + 2 retries
-    });
+      await createClient({}).connect();
 
-    it("uses default host and port when options are empty", async () => {
-      let capturedOpts!: Deno.ConnectOptions;
-      const conn = makeMockConn();
-      using _s = stub(
-        Deno,
-        "connect",
-        ((opts: Deno.ConnectOptions) => {
-          capturedOpts = opts;
-          return Promise.resolve(conn);
-        }) as never,
-      );
-
-      const client = new TcpClient({});
-      await client.connect();
-      await client.close();
-
-      assertEquals(capturedOpts.hostname, "127.0.0.1");
-      assertEquals(capturedOpts.port, 3000);
+      assertEquals(captured, { host: "127.0.0.1", port: 3000 });
     });
   });
 
   describe("close()", () => {
+    registerCleanup();
+
     it("is a no-op when not connected", async () => {
-      const client = new TcpClient({});
-      await client.close();
+      await new TcpClient({}).close();
     });
 
-    it("swallows conn.close() error", async () => {
-      let unblock!: () => void;
-      const blockPromise = new Promise<void>((r) => {
-        unblock = r;
-      });
-      const conn = {
-        read: (): Promise<number | null> => blockPromise.then(() => null),
-        write: (buf: Uint8Array): Promise<number> =>
-          Promise.resolve(buf.byteLength),
-        close: () => {
-          unblock();
-          throw new Error("already closed");
-        },
-      } as unknown as Deno.TcpConn;
+    it("rejects pending requests and closes the socket", async () => {
+      const received = Promise.withResolvers<Socket>();
+      const peer = await startPeer((socket) => received.resolve(socket));
+      const client = createClient({ port: peer.port });
 
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
+      const pending = assertRejects(
+        () => client.send("never.answered", null),
+        Error,
+        "Connection closed",
+      );
+      const serverSide = await received.promise;
+      const serverSideClosed = once(serverSide, "close");
 
-      const client = new TcpClient({});
+      await client.close();
+      await pending;
+      await serverSideClosed;
+    });
+
+    it("reconnects on first use after closing", async () => {
+      const peer = await startPeer((socket, frame) =>
+        respond(socket, { id: frame.id, response: frame.data })
+      );
+      const client = createClient({ port: peer.port });
+
       await client.connect();
-      await client.close(); // must not throw despite conn.close() throwing
+      await client.close();
+
+      assertEquals(await client.send("echo", "again"), "again");
+      assertEquals(peer.sockets.length, 2);
     });
   });
 
   describe("send()", () => {
-    it("rejects when write fails", async () => {
-      let unblock!: () => void;
-      const blockPromise = new Promise<void>((r) => {
-        unblock = r;
-      });
-      const conn = {
-        read: (): Promise<number | null> => blockPromise.then(() => null),
-        write: (): Promise<number> => Promise.reject(new Error("write failed")),
-        close: () => {
-          unblock();
-        },
-      } as unknown as Deno.TcpConn;
+    registerCleanup();
 
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
+    it("connects on first use and resolves with the response", async () => {
+      const peer = await startPeer((socket, frame) =>
+        respond(socket, { id: frame.id, response: `pong:${frame.data}` })
+      );
+      const client = createClient({ port: peer.port });
 
-      const client = new TcpClient({});
-      await client.connect();
-      await assertRejects(() => client.send("pat", {}), Error, "write failed");
-      await client.close();
+      assertEquals(await client.send<string>("ping", "world"), "pong:world");
     });
 
-    it("auto-connects when not yet connected before sending", async () => {
-      let connectCalled = false;
-      const conn = makeMockConn();
-      using _s = stub(
-        Deno,
-        "connect",
-        (() => {
-          connectCalled = true;
-          return Promise.resolve(conn);
+    it("sends the serialized pattern, the payload and a correlation id", async () => {
+      const received = Promise.withResolvers<RequestFrame>();
+      const peer = await startPeer((socket, frame) => {
+        received.resolve(frame);
+        respond(socket, { id: frame.id, response: null });
+      });
+      const client = createClient({ port: peer.port });
+
+      await client.send({ cmd: "sum" }, [1, 2]);
+
+      const frame = await received.promise;
+
+      assertEquals(frame.pattern, '{"cmd":"sum"}');
+      assertEquals(frame.data, [1, 2]);
+      assertEquals(typeof frame.id, "string");
+    });
+
+    it("routes out-of-order responses by correlation id", async () => {
+      const requests: Array<{ socket: Socket; frame: RequestFrame }> = [];
+      const peer = await startPeer((socket, frame) => {
+        requests.push({ socket, frame });
+
+        if (requests.length === 2) {
+          for (const request of requests.toReversed()) {
+            respond(request.socket, {
+              id: request.frame.id,
+              response: `re:${request.frame.data}`,
+            });
+          }
+        }
+      });
+      const client = createClient({ port: peer.port });
+
+      await client.connect();
+
+      assertEquals(
+        await Promise.all([client.send("a", 1), client.send("b", 2)]),
+        ["re:1", "re:2"],
+      );
+    });
+
+    it("rejects with the error message returned by the server", async () => {
+      const peer = await startPeer((socket, frame) =>
+        respond(socket, { id: frame.id, err: "server exploded" })
+      );
+      const client = createClient({ port: peer.port });
+
+      await assertRejects(
+        () => client.send("op", {}),
+        Error,
+        "server exploded",
+      );
+    });
+
+    it("rejects when the request cannot be written", async () => {
+      const peer = await startPeer();
+      const client = createClient({ port: peer.port });
+
+      await client.connect();
+
+      using _write = stub(
+        client["socket"]!,
+        "write",
+        ((_data: Uint8Array, callback: (err: Error) => void) => {
+          callback(new Error("write failed"));
+          return false;
         }) as never,
       );
 
-      const client = new TcpClient({});
-      const p = client.send("x", null).catch(() => {});
-      await new Promise<void>((r) => setTimeout(r, 5));
-      await client.close();
-      await p;
-      assertEquals(connectCalled, true);
+      await assertRejects(() => client.send("pat", {}), Error, "write failed");
     });
   });
 
   describe("emit()", () => {
-    it("writes an event frame without waiting for a response", async () => {
-      let written = false;
-      let unblock!: () => void;
-      const blockPromise = new Promise<void>((r) => {
-        unblock = r;
-      });
-      const conn = {
-        read: (): Promise<number | null> => blockPromise.then(() => null),
-        write: (buf: Uint8Array): Promise<number> => {
-          written = true;
-          return Promise.resolve(buf.byteLength);
-        },
-        close: () => {
-          unblock();
-        },
-      } as unknown as Deno.TcpConn;
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
+    registerCleanup();
 
-      const client = new TcpClient({});
-      await client.connect();
+    it("connects on first use and writes an event frame without id", async () => {
+      const received = Promise.withResolvers<RequestFrame>();
+      const peer = await startPeer((_socket, frame) => received.resolve(frame));
+      const client = createClient({ port: peer.port });
+
       await client.emit("event.fired", { payload: 1 });
-      await client.close();
 
-      assertEquals(written, true);
-    });
-
-    it("auto-connects when not yet connected for emit", async () => {
-      let unblock!: () => void;
-      const blockPromise = new Promise<void>((r) => {
-        unblock = r;
+      assertEquals(await received.promise, {
+        pattern: "event.fired",
+        data: { payload: 1 },
       });
-      const conn = {
-        read: (): Promise<number | null> => blockPromise.then(() => null),
-        write: (buf: Uint8Array): Promise<number> =>
-          Promise.resolve(buf.byteLength),
-        close: () => {
-          unblock();
-        },
-      } as unknown as Deno.TcpConn;
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
-
-      const client = new TcpClient({});
-      await client.emit("evt", {});
-      await client.close();
     });
   });
 
   describe("onBeforeApplicationShutdown()", () => {
-    it("calls close()", async () => {
-      const conn = makeMockConn();
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
+    registerCleanup();
 
-      const client = new TcpClient({});
+    it("closes the connection", async () => {
+      const peer = await startPeer();
+      const client = createClient({ port: peer.port });
+      const accepted = peer.nextConnection();
+
       await client.connect();
-      await (client as unknown as {
-        onBeforeApplicationShutdown(): Promise<void>;
-      })
-        .onBeforeApplicationShutdown();
+
+      const serverSideClosed = once(await accepted, "close");
+
+      await client.onBeforeApplicationShutdown();
+      await serverSideClosed;
     });
   });
 
-  describe("readLoop - response frame routing", () => {
-    it("resolves pending send when matching response arrives", async () => {
-      let capturedId = "";
-      const pendingReads: Array<(p: Uint8Array) => void> = [];
+  describe("response handling", () => {
+    registerCleanup();
 
-      const conn: Deno.TcpConn = {
-        write: async (buf: Uint8Array): Promise<number> => {
-          const { decode } = await import("@std/msgpack");
-          const msg = decode(buf.subarray(4)) as { id: string };
-          capturedId = msg.id;
-          return buf.byteLength;
-        },
-        close: () => {},
-        read: (p: Uint8Array): Promise<number | null> => {
-          return new Promise((resolve) => {
-            pendingReads.push((chunk: Uint8Array | null) => {
-              if (chunk === null) {
-                resolve(null);
-                return;
-              }
-              const n = Math.min(chunk.length, p.length);
-              p.set(chunk.subarray(0, n));
-              resolve(n);
-            });
-          });
-        },
-      } as unknown as Deno.TcpConn;
+    it("ignores undecodable frames and keeps reading", async () => {
+      const peer = await startPeer((socket, frame) => {
+        socket.write(new Uint8Array([0, 0, 0, 1, 0xc1]));
+        respond(socket, { id: frame.id, response: "after-garbage" });
+      });
+      const client = createClient({ port: peer.port });
 
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
-
-      const client = new TcpClient({});
-      await client.connect();
-
-      const sendPromise = client.send<string>("greet", "world");
-
-      // Wait for write to be captured
-      await new Promise<void>((r) => setTimeout(r, 10));
-
-      const responseFrame = buildResponseFrame(capturedId, "hello!");
-      const header = responseFrame.subarray(0, 4);
-      const body = responseFrame.subarray(4);
-
-      // Feed: header → body → EOF
-      const pop = () => pendingReads.shift()!;
-      pop()(header);
-      await new Promise<void>((r) => setTimeout(r, 5));
-      pop()(body);
-      await new Promise<void>((r) => setTimeout(r, 5));
-      pop()(null as unknown as Uint8Array); // EOF terminates loop
-
-      const result = await sendPromise;
-      assertEquals(result, "hello!");
-      await client.close();
+      assertEquals(await client.send("x", null), "after-garbage");
     });
 
-    it("rejects pending send when response has err field", async () => {
-      let capturedId = "";
-      const pendingReads: Array<(chunk: Uint8Array | null) => void> = [];
+    it("ignores responses with an unknown correlation id", async () => {
+      const peer = await startPeer((socket, frame) => {
+        respond(socket, { id: "unknown-id", response: "ignored" });
+        respond(socket, { id: frame.id, response: "matched" });
+      });
+      const client = createClient({ port: peer.port });
 
-      const conn: Deno.TcpConn = {
-        write: async (buf: Uint8Array): Promise<number> => {
-          const { decode } = await import("@std/msgpack");
-          capturedId = (decode(buf.subarray(4)) as { id: string }).id;
-          return buf.byteLength;
-        },
-        close: () => {},
-        read: (p: Uint8Array): Promise<number | null> => {
-          return new Promise((resolve) => {
-            pendingReads.push((chunk) => {
-              if (chunk === null) {
-                resolve(null);
-                return;
-              }
-              const n = Math.min(chunk.length, p.length);
-              p.set(chunk.subarray(0, n));
-              resolve(n);
-            });
-          });
-        },
-      } as unknown as Deno.TcpConn;
+      assertEquals(await client.send("x", null), "matched");
+    });
 
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
+    it("rejects pending requests when the server drops the connection", async () => {
+      let requests = 0;
+      const peer = await startPeer((socket, frame) => {
+        requests++;
 
-      const client = new TcpClient({});
-      await client.connect();
+        if (requests === 1) {
+          socket.destroy();
+        } else {
+          respond(socket, { id: frame.id, response: "recovered" });
+        }
+      });
+      const client = createClient({ port: peer.port });
 
-      const sendPromise = client.send<string>("op", {});
-      await new Promise<void>((r) => setTimeout(r, 10));
-
-      const errFrame = buildErrFrame(capturedId, "server exploded");
-      const pop = () => pendingReads.shift()!;
-      pop()(errFrame.subarray(0, 4));
-      await new Promise<void>((r) => setTimeout(r, 5));
-      pop()(errFrame.subarray(4));
-      // Attach the rejection handler BEFORE yielding to microtasks that process the frame.
-      const assertPromise = assertRejects(
-        () => sendPromise,
+      await assertRejects(
+        () => client.send("x", null),
         Error,
-        "server exploded",
+        "Connection closed",
       );
-      await new Promise<void>((r) => setTimeout(r, 5));
-      pop()(null as unknown as Uint8Array);
-      await assertPromise;
-      await client.close();
+      assertEquals(await client.send("x", null), "recovered");
+      assertEquals(peer.sockets.length, 2);
     });
 
-    it("skips corrupt frames (decode failure) and continues", async () => {
-      const pendingReads: Array<(chunk: Uint8Array | null) => void> = [];
+    it("drops the connection when the server sends an oversized frame", async () => {
+      const received = Promise.withResolvers<Socket>();
+      const peer = await startPeer((socket) => {
+        received.resolve(socket);
+        socket.write(new Uint8Array([0x04, 0x00, 0x00, 0x01]));
+      });
+      const client = createClient({ port: peer.port });
 
-      const conn: Deno.TcpConn = {
-        write: (buf: Uint8Array): Promise<number> =>
-          Promise.resolve(buf.byteLength),
-        close: () => {},
-        read: (p: Uint8Array): Promise<number | null> => {
-          return new Promise((resolve) => {
-            pendingReads.push((chunk) => {
-              if (chunk === null) {
-                resolve(null);
-                return;
-              }
-              const n = Math.min(chunk.length, p.length);
-              p.set(chunk.subarray(0, n));
-              resolve(n);
-            });
-          });
-        },
-      } as unknown as Deno.TcpConn;
-
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
-
-      const client = new TcpClient({});
-      await client.connect();
-
-      // Invalid msgpack body
-      const invalidBody = new Uint8Array([0xff, 0xff, 0xff]);
-      const header = new Uint8Array(4);
-      new DataView(header.buffer).setUint32(0, invalidBody.length, false);
-
-      const pop = () => pendingReads.shift()!;
-      pop()(header);
-      await new Promise<void>((r) => setTimeout(r, 5));
-      pop()(invalidBody);
-      await new Promise<void>((r) => setTimeout(r, 5));
-      pop()(null as unknown as Uint8Array); // EOF
-
-      await client.close();
-    });
-
-    it("skips response frames with unknown correlation id", async () => {
-      const pendingReads: Array<(chunk: Uint8Array | null) => void> = [];
-
-      const conn: Deno.TcpConn = {
-        write: (buf: Uint8Array): Promise<number> =>
-          Promise.resolve(buf.byteLength),
-        close: () => {},
-        read: (p: Uint8Array): Promise<number | null> => {
-          return new Promise((resolve) => {
-            pendingReads.push((chunk) => {
-              if (chunk === null) {
-                resolve(null);
-                return;
-              }
-              const n = Math.min(chunk.length, p.length);
-              p.set(chunk.subarray(0, n));
-              resolve(n);
-            });
-          });
-        },
-      } as unknown as Deno.TcpConn;
-
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
-
-      const client = new TcpClient({});
-      await client.connect();
-
-      const frame = buildResponseFrame("unknown-id-12345", "ignored");
-      const pop = () => pendingReads.shift()!;
-      pop()(frame.subarray(0, 4));
-      await new Promise<void>((r) => setTimeout(r, 5));
-      pop()(frame.subarray(4));
-      await new Promise<void>((r) => setTimeout(r, 5));
-      pop()(null as unknown as Uint8Array);
-
-      await client.close();
-    });
-
-    it("rejects pending sends when connection drops (EOF in readLoop)", async () => {
-      // Use deferred reads so the readLoop stays alive until we explicitly trigger EOF.
-      // Without this, the readLoop exits (setting this.conn=undefined) before send()
-      // can call write(), causing a TypeError instead of "Connection closed".
-      const pendingReads: Array<() => void> = [];
-
-      const conn: Deno.TcpConn = {
-        write: (buf: Uint8Array): Promise<number> =>
-          Promise.resolve(buf.byteLength),
-        close: () => {},
-        read: (_p: Uint8Array): Promise<number | null> =>
-          new Promise((resolve) => {
-            pendingReads.push(() => resolve(null));
-          }),
-      } as unknown as Deno.TcpConn;
-
-      using _s = stub(Deno, "connect", (() => Promise.resolve(conn)) as never);
-
-      const client = new TcpClient({});
-      await client.connect();
-
-      const p = client.send<string>("x", null).catch((e) =>
-        (e as Error).message
+      await assertRejects(
+        () => client.send("x", null),
+        Error,
+        "Connection closed",
       );
-      await new Promise<void>((r) => setTimeout(r, 10));
-
-      // Trigger EOF - readLoop is suspended waiting for the header read
-      pendingReads.shift()!();
-
-      await new Promise<void>((r) => setTimeout(r, 10));
-      const msg = await p;
-      assertEquals(msg, "Connection closed");
-      await client.close();
+      await once(await received.promise, "close");
     });
   });
 });

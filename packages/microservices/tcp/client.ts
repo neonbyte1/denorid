@@ -1,6 +1,7 @@
 import type { Pattern } from "@denorid/core/microservices";
 import { ClientProxy, serializePattern } from "@denorid/core/microservices";
-import { decodeFrame, encodeFrame, readFrame } from "./_codec.ts";
+import net, { type Socket } from "node:net";
+import { decodeFrame, encodeFrame, readFrames, writeFrame } from "./_codec.ts";
 import { TcpDeserializer } from "./deserializer.ts";
 import type { TcpOptions } from "./options.ts";
 import { TcpSerializer } from "./serializer.ts";
@@ -18,13 +19,14 @@ interface PendingEntry {
 }
 
 /**
- * Microservice client proxy using Deno-native TCP (`Deno.connect`).
+ * Microservice client proxy using TCP sockets from `node:net`, which works
+ * on Deno, Bun and Node.js.
  *
  * Maintains a single persistent connection and multiplexes concurrent requests
  * via a correlation-ID map. Reconnects automatically on first use after closure.
  */
 export class TcpClient extends ClientProxy {
-  private conn?: Deno.TcpConn;
+  private socket?: Socket;
   private readLoopPromise?: Promise<void>;
   private readonly pending: Map<string, PendingEntry> = new Map();
   private connecting?: Promise<void>;
@@ -66,17 +68,11 @@ export class TcpClient extends ClientProxy {
     }
 
     this.pending.clear();
-
-    try {
-      this.conn?.close();
-    } catch {
-      // already closed
-    }
-
-    this.conn = undefined;
+    this.socket?.destroy();
+    this.socket = undefined;
 
     if (this.readLoopPromise) {
-      await this.readLoopPromise.catch(() => {});
+      await this.readLoopPromise;
       this.readLoopPromise = undefined;
     }
   }
@@ -104,7 +100,8 @@ export class TcpClient extends ClientProxy {
         reject,
       });
 
-      this.conn!.write(
+      writeFrame(
+        this.socket!,
         encodeFrame({ pattern: serialized, data, id }, this.serializer),
       ).catch(
         (err) => {
@@ -120,7 +117,8 @@ export class TcpClient extends ClientProxy {
    */
   public override async emit(pattern: Pattern, data: unknown): Promise<void> {
     await this.ensureConnected();
-    await this.conn!.write(
+    await writeFrame(
+      this.socket!,
       encodeFrame(
         { pattern: serializePattern(pattern), data },
         this.serializer,
@@ -129,7 +127,7 @@ export class TcpClient extends ClientProxy {
   }
 
   private async doConnect(): Promise<void> {
-    const hostname = this.options.host ?? "127.0.0.1";
+    const host = this.options.host ?? "127.0.0.1";
     const port = this.options.port ?? 3000;
     const attempts = this.options.retryAttempts ?? 0;
     const delay = this.options.retryDelay ?? 1000;
@@ -138,7 +136,15 @@ export class TcpClient extends ClientProxy {
 
     for (let i = 0; i <= attempts; i++) {
       try {
-        this.conn = await Deno.connect({ hostname, port });
+        const connected = Promise.withResolvers<Socket>();
+        const socket = net.connect({ host, port });
+
+        // Stays attached after connecting: later socket errors surface
+        // through `readFrames` / `writeFrame`, this listener only keeps an
+        // unhandled `error` event from crashing the process.
+        socket.on("error", connected.reject);
+        socket.once("connect", () => connected.resolve(socket));
+        this.socket = await connected.promise;
         this.readLoopPromise = this.readLoop();
         return;
       } catch (err) {
@@ -153,22 +159,16 @@ export class TcpClient extends ClientProxy {
   }
 
   private async ensureConnected(): Promise<void> {
-    if (!this.conn) {
+    if (!this.socket) {
       await this.connect();
     }
   }
 
   private async readLoop(): Promise<void> {
-    const conn = this.conn!;
+    const socket = this.socket!;
 
     try {
-      while (true) {
-        const body = await readFrame(conn);
-
-        if (body === null) {
-          break;
-        }
-
+      for await (const body of readFrames(socket)) {
         let frame: TcpResponseFrame;
 
         try {
@@ -191,6 +191,8 @@ export class TcpClient extends ClientProxy {
           entry.resolve(frame.response);
         }
       }
+    } catch {
+      // Oversized frame: the byte stream cannot be resynchronised.
     } finally {
       const err = new Error("Connection closed");
 
@@ -199,7 +201,8 @@ export class TcpClient extends ClientProxy {
       }
 
       this.pending.clear();
-      this.conn = undefined;
+      socket.destroy();
+      this.socket = undefined;
     }
   }
 }

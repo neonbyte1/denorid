@@ -3,16 +3,51 @@ import { InjectorContext, Module } from "@denorid/injector";
 import { assertEquals, assertInstanceOf } from "@std/assert";
 import { stub } from "@std/testing/mock";
 import amqplib from "amqplib";
+import { once } from "node:events";
+import net, { type AddressInfo, type Socket } from "node:net";
+import process from "node:process";
 import { after, before, describe, it } from "node:test";
 import { mockStdWrite, type RestoreFn } from "./_test_utils.ts";
 import { ClientsModule } from "./clients_module.ts";
 import { RmqClient } from "./rmq/client.ts";
 import { TcpClient } from "./tcp/client.ts";
 
+interface Loopback {
+  port: number;
+  /** Resolves on the next accepted connection. */
+  accepted: Promise<unknown>;
+  close: () => Promise<void>;
+}
+
+async function startLoopback(): Promise<Loopback> {
+  const sockets: Socket[] = [];
+  const server = net.createServer((socket: Socket) => {
+    sockets.push(socket);
+  });
+  const accepted = once(server, "connection");
+
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  return {
+    port: (server.address() as AddressInfo).port,
+    accepted,
+    close: async () => {
+      const closed = once(server, "close");
+
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+
+      server.close();
+      await closed;
+    },
+  };
+}
+
 describe(ClientsModule.name, () => {
   let restoreStdout: RestoreFn;
   let restoreStderr: RestoreFn;
-  let tcpConn: Deno.TcpConn;
   let rmqConn: {
     createChannel(): Promise<unknown>;
     close(): Promise<void>;
@@ -20,13 +55,8 @@ describe(ClientsModule.name, () => {
   };
 
   before(() => {
-    restoreStdout = mockStdWrite(Deno.stdout);
-    restoreStderr = mockStdWrite(Deno.stderr);
-    tcpConn = {
-      read: () => Promise.resolve(null),
-      write: (buf: Uint8Array) => Promise.resolve(buf.byteLength),
-      close: () => {},
-    } as unknown as Deno.TcpConn;
+    restoreStdout = mockStdWrite(process.stdout);
+    restoreStderr = mockStdWrite(process.stderr);
 
     const ch = {
       assertQueue: (name: string) =>
@@ -65,12 +95,8 @@ describe(ClientsModule.name, () => {
       assertEquals((mod.exports as string[]).includes("B"), true);
     });
 
-    it("creates a TcpClient for TCP transport", async () => {
-      using _s = stub(
-        Deno,
-        "connect",
-        (() => Promise.resolve(tcpConn)) as never,
-      );
+    it("creates and connects a TcpClient for TCP transport", async () => {
+      const loopback = await startLoopback();
 
       @Module({
         imports: [
@@ -78,7 +104,7 @@ describe(ClientsModule.name, () => {
             {
               name: "TCP_SVC",
               transport: Transport.TCP,
-              options: { host: "127.0.0.1", port: 4001 },
+              options: { host: "127.0.0.1", port: loopback.port },
             },
           ]),
         ],
@@ -87,14 +113,24 @@ describe(ClientsModule.name, () => {
 
       const ctx = await InjectorContext.create(AppModule);
       const client = await ctx.resolve("TCP_SVC");
-      assertInstanceOf(client, TcpClient);
+
+      try {
+        assertInstanceOf(client, TcpClient);
+        await loopback.accepted;
+      } finally {
+        await (client as TcpClient).close();
+        await loopback.close();
+      }
     });
 
     it("creates a TcpClient with no options (defaults)", async () => {
+      const loopback = await startLoopback();
+      const realConnect = net.connect;
       using _s = stub(
-        Deno,
+        net,
         "connect",
-        (() => Promise.resolve(tcpConn)) as never,
+        (() =>
+          realConnect({ host: "127.0.0.1", port: loopback.port })) as never,
       );
 
       @Module({
@@ -108,7 +144,14 @@ describe(ClientsModule.name, () => {
       class AppModule {}
 
       const ctx = await InjectorContext.create(AppModule);
-      assertInstanceOf(await ctx.resolve("TCP_DEF"), TcpClient);
+      const client = await ctx.resolve("TCP_DEF");
+
+      try {
+        assertInstanceOf(client, TcpClient);
+      } finally {
+        await (client as TcpClient).close();
+        await loopback.close();
+      }
     });
 
     it("creates an RmqClient for RMQ transport", async () => {

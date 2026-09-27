@@ -1,28 +1,63 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { once } from "node:events";
+import net, { type AddressInfo, type Socket } from "node:net";
 import { describe, it } from "node:test";
-import { decodeFrame, encodeFrame, readFrame } from "./_codec.ts";
+import {
+  decodeFrame,
+  encodeFrame,
+  FrameDecoder,
+  readFrames,
+  writeFrame,
+} from "./_codec.ts";
 import { TcpDeserializer } from "./deserializer.ts";
 import { TcpSerializer } from "./serializer.ts";
 
-function makeMockConn(
-  chunks: Array<Uint8Array | null | Error>,
-): Deno.TcpConn {
-  let idx = 0;
-  return {
-    read: (p: Uint8Array): Promise<number | null> => {
-      if (idx >= chunks.length) return Promise.resolve(null);
-      const chunk = chunks[idx++];
-      if (chunk instanceof Error) return Promise.reject(chunk);
-      if (chunk === null) return Promise.resolve(null);
-      const n = Math.min(chunk.length, p.length);
-      p.set(chunk.subarray(0, n));
-      return Promise.resolve(n);
-    },
-  } as unknown as Deno.TcpConn;
-}
-
 const serializer = new TcpSerializer();
 const deserializer = new TcpDeserializer();
+
+function header(length: number): Uint8Array {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, length, false);
+  return bytes;
+}
+
+function concat(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(
+    parts.reduce((sum, part) => sum + part.byteLength, 0),
+  );
+  let offset = 0;
+
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+
+  return out;
+}
+
+async function* chunksOf(
+  items: Array<Uint8Array | Error>,
+): AsyncGenerator<Uint8Array, void, undefined> {
+  for (const item of items) {
+    if (item instanceof Error) {
+      throw item;
+    }
+
+    yield item;
+  }
+}
+
+async function collect(
+  frames: AsyncIterable<Uint8Array>,
+): Promise<unknown[]> {
+  const values: unknown[] = [];
+
+  for await (const body of frames) {
+    values.push(decodeFrame(body, deserializer));
+  }
+
+  return values;
+}
 
 describe("encodeFrame", () => {
   it("produces a 4-byte length prefix followed by the serialized body", () => {
@@ -41,69 +76,168 @@ describe("decodeFrame", () => {
   });
 });
 
-describe("readFrame", () => {
-  it("returns null on immediate EOF", async () => {
-    assertEquals(await readFrame(makeMockConn([null])), null);
+describe(FrameDecoder.name, () => {
+  it("emits nothing until the header and body are complete", () => {
+    const encoded = encodeFrame({ test: 123 }, serializer);
+    const decoder = new FrameDecoder();
+
+    assertEquals(decoder.push(encoded.subarray(0, 2)), []);
+    assertEquals(decoder.push(encoded.subarray(2, 6)), []);
+
+    const frames = decoder.push(encoded.subarray(6));
+
+    assertEquals(frames.length, 1);
+    assertEquals(decodeFrame(frames[0], deserializer), { test: 123 });
   });
 
-  it("returns null when header read throws", async () => {
+  it("reassembles a body delivered byte-by-byte", () => {
+    const encoded = encodeFrame({ test: 456 }, serializer);
+    const decoder = new FrameDecoder();
+    const frames = Array.from(encoded).flatMap((byte) =>
+      decoder.push(new Uint8Array([byte]))
+    );
+
+    assertEquals(frames.length, 1);
+    assertEquals(decodeFrame(frames[0], deserializer), { test: 456 });
+  });
+
+  it("splits several frames delivered in one chunk and keeps the remainder", () => {
+    const a = encodeFrame("a", serializer);
+    const b = encodeFrame("b", serializer);
+    const c = encodeFrame("c", serializer);
+    const decoder = new FrameDecoder();
+
+    const first = decoder.push(concat(a, b, c.subarray(0, 5)));
+    const second = decoder.push(c.subarray(5));
+
     assertEquals(
-      await readFrame(makeMockConn([new Error("connection reset")])),
-      null,
+      first.map((body) => decodeFrame(body, deserializer)),
+      ["a", "b"],
+    );
+    assertEquals(
+      second.map((body) => decodeFrame(body, deserializer)),
+      ["c"],
     );
   });
 
-  it("returns null on partial header then EOF", async () => {
+  it("emits an empty body for a zero-length frame", () => {
+    const next = encodeFrame("next", serializer);
+    const frames = new FrameDecoder().push(concat(header(0), next));
+
+    assertEquals(frames.length, 2);
+    assertEquals(frames[0], new Uint8Array(0));
+    assertEquals(decodeFrame(frames[1], deserializer), "next");
+  });
+
+  it("copies bodies so reusing the source chunk does not corrupt them", () => {
+    const chunk = encodeFrame("stable", serializer);
+    const [body] = new FrameDecoder().push(chunk);
+
+    chunk.fill(0);
+
+    assertEquals(decodeFrame(body, deserializer), "stable");
+  });
+
+  it("accepts a declared length of exactly 64 MiB", () => {
+    assertEquals(new FrameDecoder().push(header(64 * 1024 * 1024)), []);
+  });
+
+  it("throws RangeError when declared length exceeds 64 MiB", () => {
+    assertThrows(
+      () => new FrameDecoder().push(header(64 * 1024 * 1024 + 1)),
+      RangeError,
+      "Frame too large: 67108865 bytes",
+    );
+  });
+});
+
+describe(readFrames.name, () => {
+  it("yields every frame regardless of chunk boundaries until EOF", async () => {
+    const stream = concat(
+      encodeFrame({ n: 1 }, serializer),
+      encodeFrame({ n: 2 }, serializer),
+      encodeFrame({ n: 3 }, serializer),
+    );
+
     assertEquals(
-      await readFrame(makeMockConn([new Uint8Array([0, 0]), null])),
-      null,
+      await collect(
+        readFrames(
+          chunksOf([
+            stream.subarray(0, 3),
+            stream.subarray(3, 20),
+            stream.subarray(20),
+          ]),
+        ),
+      ),
+      [{ n: 1 }, { n: 2 }, { n: 3 }],
     );
   });
 
-  it("throws RangeError when declared length exceeds 64 MiB", async () => {
-    const header = new Uint8Array(4);
-    new DataView(header.buffer).setUint32(0, 64 * 1024 * 1024 + 1, false);
+  it("discards a trailing partial frame at EOF", async () => {
+    const complete = encodeFrame("done", serializer);
+
+    assertEquals(
+      await collect(
+        readFrames(chunksOf([complete, header(10), new Uint8Array([1, 2])])),
+      ),
+      ["done"],
+    );
+  });
+
+  it("ends like EOF when the source fails", async () => {
+    const complete = encodeFrame("before", serializer);
+
+    assertEquals(
+      await collect(
+        readFrames(chunksOf([complete, new Error("connection reset")])),
+      ),
+      ["before"],
+    );
+  });
+
+  it("propagates RangeError for oversized frames", async () => {
     await assertRejects(
-      () => readFrame(makeMockConn([header])),
+      () => collect(readFrames(chunksOf([header(64 * 1024 * 1024 + 1)]))),
       RangeError,
       "Frame too large",
     );
   });
+});
 
-  it("reads a complete frame delivered in two chunks", async () => {
-    const value = { test: 123 };
-    const encoded = encodeFrame(value, serializer);
-    const conn = makeMockConn([encoded.subarray(0, 4), encoded.subarray(4)]);
-    const body = await readFrame(conn);
-    assertEquals(decodeFrame(body!, deserializer), value);
+describe(writeFrame.name, () => {
+  it("delivers frames over a real socket that readFrames decodes", async () => {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = net.createServer(accepted.resolve);
+
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const { port } = server.address() as AddressInfo;
+    const client = net.connect({ host: "127.0.0.1", port });
+    const peer = await accepted.promise;
+
+    try {
+      await writeFrame(client, encodeFrame({ n: 1 }, serializer));
+      await writeFrame(client, encodeFrame({ n: 2 }, serializer));
+      client.end();
+
+      assertEquals(await collect(readFrames(peer)), [{ n: 1 }, { n: 2 }]);
+    } finally {
+      client.destroy();
+      peer.destroy();
+      server.close();
+      await once(server, "close");
+    }
   });
 
-  it("reassembles body delivered byte-by-byte", async () => {
-    const value = { test: 456 };
-    const encoded = encodeFrame(value, serializer);
-    const header = encoded.subarray(0, 4);
-    const bodyChunks = Array.from(encoded.subarray(4)).map(
-      (b) => new Uint8Array([b]),
-    );
-    const body = await readFrame(makeMockConn([header, ...bodyChunks]));
-    assertEquals(decodeFrame(body!, deserializer), value);
-  });
+  it("rejects when the socket cannot be written to", async () => {
+    const socket = new net.Socket();
 
-  it("returns null when body read returns null (partial body)", async () => {
-    const header = new Uint8Array(4);
-    new DataView(header.buffer).setUint32(0, 10, false);
-    assertEquals(
-      await readFrame(makeMockConn([header, new Uint8Array([1, 2]), null])),
-      null,
-    );
-  });
+    socket.destroy();
 
-  it("returns null when body read throws (connection error mid-body)", async () => {
-    const header = new Uint8Array(4);
-    new DataView(header.buffer).setUint32(0, 10, false);
-    assertEquals(
-      await readFrame(makeMockConn([header, new Error("mid-body error")])),
-      null,
+    await assertRejects(
+      () => writeFrame(socket, encodeFrame("lost", serializer)),
+      Error,
     );
   });
 });
