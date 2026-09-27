@@ -1,13 +1,17 @@
 import { isNil } from "../type_guards.ts";
 import { BaseParsePipe, type ParsePipeOptions } from "./base.ts";
 
+/** Matches a plain decimal number string (`"1"`, `"-2"`, `"1.5"`). */
+const NUMERIC_PATTERN = /^-?\d+(?:\.\d+)?$/;
+
 /**
  * Pipe that validates a route argument against a TypeScript enum.
  *
- * The pipe accepts both string and numeric enum members. When the incoming
- * value matches a numeric enum member as a numeric string it is coerced to the
- * corresponding number before being returned. Unrecognised values throw a
- * validation exception.
+ * The pipe accepts the values of string and numeric enum members. A plain
+ * decimal string (`"1"`, `"-2"`, `"1.5"`) that equals a numeric member is
+ * coerced to that number. Member names (`"Red"` for `enum Color { Red = 0 }`),
+ * empty or padded strings, hex or exponent notation and nil values are
+ * rejected with a validation exception.
  * When `options.optional` is `true`, `null` and `undefined` are passed
  * through unchanged.
  *
@@ -22,6 +26,9 @@ import { BaseParsePipe, type ParsePipeOptions } from "./base.ts";
  * ```
  */
 export class ParseEnumPipe<T> extends BaseParsePipe<T, string> {
+  /** Member values of the enum, without the reverse mappings of numeric members. */
+  private readonly enumValues: ReadonlySet<unknown>;
+
   /**
    * @param {object} enumType The enum object to validate values against.
    * @param {ParsePipeOptions} [options] Configuration options for this pipe instance.
@@ -33,11 +40,24 @@ export class ParseEnumPipe<T> extends BaseParsePipe<T, string> {
   ) {
     if (!enumType) {
       throw new Error(
-        `"ParseEnumPipe requries "enumType" argument specified (to validate input values).`,
+        `"ParseEnumPipe" requires the "enumType" argument (to validate input values).`,
       );
     }
 
     super(options);
+
+    const members = enumType as Record<string, unknown>;
+
+    // A numeric member `Red = 0` also creates the reverse mapping `"0": "Red"`.
+    this.enumValues = new Set(
+      Object.keys(members)
+        .filter((key) => {
+          const value = members[key];
+
+          return !(typeof value === "string" && members[value] === Number(key));
+        })
+        .map((key) => members[key]),
+    );
   }
 
   /**
@@ -54,7 +74,7 @@ export class ParseEnumPipe<T> extends BaseParsePipe<T, string> {
 
     if (val === undefined) {
       throw this.exceptionFactory(
-        "Validation failed (enum number or enum string is expected.",
+        "Validation failed (enum number or enum string is expected).",
       );
     }
 
@@ -62,25 +82,23 @@ export class ParseEnumPipe<T> extends BaseParsePipe<T, string> {
   }
 
   /**
-   * Looks up `value` in the enum's values, performing a numeric coercion
-   * when a direct string match is not found.
+   * Looks up `value` in the enum's member values. A plain decimal string is
+   * coerced to a number when it does not match a member directly.
    *
    * @param {unknown} value The raw value to look up.
    * @returns {T | undefined} The matched enum member, or `undefined` when not found.
    */
   protected parseEnumValue(value: unknown): T | undefined {
-    const enumValues = Object.keys(this.enumType as object).map((item) =>
-      (this.enumType as Record<string | number, unknown>)[item]
-    );
-
-    if (enumValues.includes(value)) {
+    if (this.enumValues.has(value)) {
       return value as T;
     }
 
-    const parsedValue = Number(value);
+    if (typeof value === "string" && NUMERIC_PATTERN.test(value)) {
+      const parsedValue = Number(value);
 
-    if (!isNaN(parsedValue) && enumValues.includes(parsedValue)) {
-      return parsedValue as T;
+      if (this.enumValues.has(parsedValue)) {
+        return parsedValue as T;
+      }
     }
 
     return undefined;
