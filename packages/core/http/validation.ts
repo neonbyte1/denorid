@@ -1,15 +1,16 @@
 import type { MethodDecorator } from "@denorid/injector";
+import type { ZodType } from "zod";
 import {
   createRequestMappingDecorator,
   type RequestMappingValidationMetadata,
 } from "./_request_mapping.ts";
 
-type RequestValidationDecoratorFactory = (dto: unknown) => MethodDecorator;
+type RequestValidationDecoratorFactory = (dto: ZodType) => MethodDecorator;
 
 function createRequestValidationDecorator(
   type: RequestMappingValidationMetadata["type"],
 ): RequestValidationDecoratorFactory {
-  return (dto: unknown): MethodDecorator => {
+  return (dto: ZodType): MethodDecorator => {
     return createRequestMappingDecorator({
       name: type === "json" ? "Body" : "Form",
       initializer: (entry): void => {
@@ -20,20 +21,21 @@ function createRequestValidationDecorator(
 }
 
 /**
- * Decorator that parses and validates the request body as JSON, binding it to
- * the route handler's DTO parameter.
+ * Decorator that parses the request body as JSON and validates it against a
+ * Zod schema, binding the result to the route handler's DTO parameter.
  *
- * @param {unknown} dto - The Zod schema or class used to validate the parsed JSON body.
+ * @param {ZodType} dto - The Zod schema the parsed JSON body is validated against.
  * @return {MethodDecorator} A method decorator that registers JSON body validation for the route.
  */
 export const Body: RequestValidationDecoratorFactory =
   createRequestValidationDecorator("json");
 
 /**
- * Decorator that parses and validates the request body as form data, binding it
- * to the route handler's DTO parameter.
+ * Decorator that parses the request body as form data and validates it
+ * against a Zod schema, binding the result to the route handler's DTO
+ * parameter.
  *
- * @param {unknown} dto - The Zod schema or class used to validate the parsed form data.
+ * @param {ZodType} dto - The Zod schema the parsed form data is validated against.
  * @return {MethodDecorator} A method decorator that registers form data validation for the route.
  */
 export const Form: RequestValidationDecoratorFactory =

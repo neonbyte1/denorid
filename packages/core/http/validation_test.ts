@@ -1,19 +1,12 @@
 import { assertEquals, assertExists, assertThrows } from "@std/assert";
 import { describe, it } from "node:test";
-import { CONTROLLER_REQUEST_MAPPING } from "../_constants.ts";
-import type { RequestMappingMetadata } from "./_request_mapping.ts";
+import { z } from "zod";
+import { getRequestMappingMetadata as getMetadata } from "./_request_mapping.ts";
 import { Body, Form } from "./validation.ts";
-
-const getMetadata = (
-  target: object,
-): RequestMappingMetadata[] | undefined =>
-  (target as { [Symbol.metadata]: Record<symbol | string, unknown> })[
-    Symbol.metadata
-  ]?.[CONTROLLER_REQUEST_MAPPING] as RequestMappingMetadata[] | undefined;
 
 describe("HTTP: Body decorator", () => {
   it("should throw when decorating a static method", () => {
-    const dto = {};
+    const dto = z.object({});
     assertThrows(() => {
       class _ {
         @Body(dto)
@@ -23,7 +16,7 @@ describe("HTTP: Body decorator", () => {
   });
 
   it("should set validation type to 'json'", () => {
-    const dto = {};
+    const dto = z.object({});
 
     class ExampleController {
       @Body(dto)
@@ -36,7 +29,7 @@ describe("HTTP: Body decorator", () => {
   });
 
   it("should set the dto on the metadata entry", () => {
-    const dto = { parse: () => {} };
+    const dto = z.object({ name: z.string() });
 
     class ExampleController {
       @Body(dto)
@@ -49,7 +42,7 @@ describe("HTTP: Body decorator", () => {
   });
 
   it("should register metadata under the correct method name", () => {
-    const dto = {};
+    const dto = z.object({});
 
     class ExampleController {
       @Body(dto)
@@ -64,7 +57,7 @@ describe("HTTP: Body decorator", () => {
 
 describe("HTTP: Form decorator", () => {
   it("should throw when decorating a static method", () => {
-    const dto = {};
+    const dto = z.object({});
     assertThrows(() => {
       class _ {
         @Form(dto)
@@ -74,7 +67,7 @@ describe("HTTP: Form decorator", () => {
   });
 
   it("should set validation type to 'form'", () => {
-    const dto = {};
+    const dto = z.object({});
 
     class ExampleController {
       @Form(dto)
@@ -87,7 +80,7 @@ describe("HTTP: Form decorator", () => {
   });
 
   it("should set the dto on the metadata entry", () => {
-    const dto = { parse: () => {} };
+    const dto = z.object({ file: z.string() });
 
     class ExampleController {
       @Form(dto)
@@ -100,7 +93,7 @@ describe("HTTP: Form decorator", () => {
   });
 
   it("should register metadata under the correct method name", () => {
-    const dto = {};
+    const dto = z.object({});
 
     class ExampleController {
       @Form(dto)
