@@ -5,8 +5,10 @@ import type { HttpExceptionOptions } from "./base.ts";
 /**
  * Specialization of {@linkcode BadRequestException} for Zod schema validation failures.
  *
- * Extracts all issue messages from a {@linkcode ZodError} and forwards them as the
- * `message` array in the 400 Bad Request response body.
+ * Maps every issue of a {@linkcode ZodError} to one entry of the `message`
+ * array in the 400 Bad Request response body. Issues with a path are
+ * prefixed with it (`"address.zip: Invalid input"`), so clients can tell
+ * which field failed.
  *
  * @example
  * ```ts
@@ -26,6 +28,13 @@ export class ZodValidationException extends BadRequestException {
     error: ZodError,
     descriptionOrOptions?: string | HttpExceptionOptions,
   ) {
-    super(error.issues.map((issue) => issue.message), descriptionOrOptions);
+    super(
+      error.issues.map((issue) =>
+        issue.path.length > 0
+          ? `${issue.path.map(String).join(".")}: ${issue.message}`
+          : issue.message
+      ),
+      descriptionOrOptions,
+    );
   }
 }
