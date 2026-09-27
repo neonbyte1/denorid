@@ -5,7 +5,42 @@ import {
   RequestContext,
 } from "@denorid/core";
 import type { Context, HonoRequest } from "@hono/hono";
-import { getConnInfo } from "@hono/hono/deno";
+
+/**
+ * Superset of the `c.env` bindings passed by the servers `HonoAdapter` starts:
+ * the `Deno.serve` handler info (`remoteAddr`), the `Bun.serve` server
+ * (`requestIP`) and the `@hono/node-server` bindings (`incoming`).
+ */
+interface ServeBindings {
+  /** Peer address of the connection (Deno). */
+  remoteAddr?: { hostname?: string };
+  /** Resolves the peer address of the original request (Bun). */
+  requestIP?(request: Request): { address: string } | null;
+  /** Raw `node:http` request exposing the socket (Node.js). */
+  incoming?: { socket?: { remoteAddress?: string } };
+}
+
+/**
+ * Reads the socket peer address from the runtime specific `c.env` bindings.
+ *
+ * @param {Context} ctx - Hono context of the current request.
+ * @return {string | undefined} The peer address, or `undefined` when unknown.
+ */
+function getRemoteAddress(ctx: Context): string | undefined {
+  // Hono types `c.env` per app; the adapter serves an untyped app, so the shape
+  // is only known from the serving runtime and every field is checked below.
+  const env = ctx.env as ServeBindings | null | undefined;
+
+  if (env?.remoteAddr) {
+    return env.remoteAddr.hostname;
+  }
+
+  if (typeof env?.requestIP === "function") {
+    return env.requestIP(ctx.req.raw)?.address;
+  }
+
+  return env?.incoming?.socket?.remoteAddress;
+}
 
 export class HonoRequestContext<Dto = unknown> extends RequestContext<Dto> {
   public constructor(
@@ -40,9 +75,7 @@ export class HonoRequestContext<Dto = unknown> extends RequestContext<Dto> {
       return realIp;
     }
 
-    const conn = getConnInfo(this.ctx);
-
-    return conn?.remote?.address ?? "0.0.0.0";
+    return getRemoteAddress(this.ctx) ?? "0.0.0.0";
   }
 
   /**
