@@ -1,6 +1,6 @@
 {
   "name": "@denorid/injector",
-  "version": "1.0.0-beta1",
+  "version": "1.0.0-beta2",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -12,6 +12,6 @@
     "./providers": "./provider.ts"
   },
   "imports": {
-    "@denorid/logger": "jsr:@denorid/logger@^1.0.0-beta1"
+    "@denorid/logger": "jsr:@denorid/logger@^1.0.0-beta2"
   }
 }
