@@ -2,6 +2,7 @@ import { assertEquals, assertRejects } from "@std/assert";
 import { stub } from "@std/testing/mock";
 import amqplib from "amqplib";
 import { Buffer } from "node:buffer";
+import process from "node:process";
 import { after, before, describe, it } from "node:test";
 import { mockStdWrite, type RestoreFn } from "../_test_utils.ts";
 import { RmqClient } from "./client.ts";
@@ -80,8 +81,8 @@ describe(RmqClient.name, () => {
   let restoreStderr: RestoreFn;
 
   before(() => {
-    restoreStdout = mockStdWrite(Deno.stdout);
-    restoreStderr = mockStdWrite(Deno.stderr);
+    restoreStdout = mockStdWrite(process.stdout);
+    restoreStderr = mockStdWrite(process.stderr);
   });
 
   after(() => {
