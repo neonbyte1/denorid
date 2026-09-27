@@ -6,16 +6,27 @@ describe("JwkService", () => {
   const service = new JwkService();
 
   describe("getPublicMetadata", () => {
-    it("merges JWK fields with enforced kid/use/alg", () => {
+    it("returns the public RSA members with enforced kid/use/alg", () => {
       const publicJwk = { kty: "RSA", n: "abc", e: "AQAB" };
       const result = service.getPublicMetadata("test-kid", publicJwk);
 
-      assertEquals(result.kid, "test-kid");
-      assertEquals(result.use, "sig");
-      assertEquals(result.alg, "RS256");
-      assertEquals(result.kty, "RSA");
-      assertEquals(result.n, "abc");
-      assertEquals(result.e, "AQAB");
+      assertEquals(result, {
+        kty: "RSA",
+        n: "abc",
+        e: "AQAB",
+        kid: "test-kid",
+        use: "sig",
+        alg: "RS256",
+      });
+    });
+
+    it("never exposes private members, even for a private JWK", async () => {
+      const { kid, publicJwk, privateJwk } = await service.generateKeys();
+
+      assertEquals(
+        service.getPublicMetadata(kid, privateJwk),
+        service.getPublicMetadata(kid, publicJwk),
+      );
     });
   });
 

@@ -16,12 +16,13 @@ export interface JwkMetadata {
 }
 
 /**
- * Safe-to-expose public JWK representation with enforced `kid`, `use`, and `alg` fields.
+ * Safe-to-expose public RSA JWK representation with enforced `kid`, `use`, and `alg` fields.
  *
- * Intended for publishing via a JWKS endpoint - the private key fields are never included.
+ * Intended for publishing via a JWKS endpoint - only the public members `kty`, `n` and `e` are
+ * included, never the private key fields.
  */
 export type PublicJwkMetadata =
-  & Omit<JWK, "kid" | "use" | "alg">
+  & Pick<JWK, "kty" | "n" | "e">
   & { kid: string; use: "sig"; alg: "RS256" };
 
 /**
@@ -34,7 +35,9 @@ export class JwkService {
   /**
    * Builds a safe public JWK metadata object suitable for a JWKS endpoint response.
    *
-   * Merges the raw JWK fields with enforced `kid`, `use: "sig"`, and `alg: "RS256"` values.
+   * Copies only the public RSA members (`kty`, `n`, `e`) and adds the enforced `kid`,
+   * `use: "sig"`, and `alg: "RS256"` values, so passing a private JWK by mistake never leaks
+   * private key material.
    *
    * @param {string} kid - The key ID to embed in the metadata.
    * @param {JWK} publicJwk - The public JWK to annotate.
@@ -44,12 +47,9 @@ export class JwkService {
     kid: string,
     publicJwk: JWK,
   ): PublicJwkMetadata {
-    return {
-      ...publicJwk,
-      kid,
-      use: "sig",
-      alg: "RS256",
-    };
+    const { kty, n, e } = publicJwk;
+
+    return { kty, n, e, kid, use: "sig", alg: "RS256" };
   }
 
   /**
