@@ -447,7 +447,7 @@ export class InjectorContext implements InjectorContextLifecycle {
    * @note Should be called by your program / framework before cleanup begins.
    *
    * @async
-   * @param {Deno.Signal|string} signal - Optional shutdown signal (e.g., "SIGTERM")
+   * @param {string} signal - Optional shutdown signal (e.g., "SIGTERM")
    *
    * @example Usage
    * ```ts
@@ -530,7 +530,7 @@ export class InjectorContext implements InjectorContextLifecycle {
    * Performs the full shutdown sequence.
    *
    * @async
-   * @param {Deno.Signal|string} signal - Optional the signal received for termination
+   * @param {string} signal - Optional the signal received for termination
    */
   public async close(signal?: string): Promise<void> {
     await this.onBeforeApplicationShutdown(signal);

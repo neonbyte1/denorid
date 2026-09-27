@@ -112,7 +112,7 @@ export interface OnBeforeApplicationShutdown {
  */
 export interface OnApplicationShutdown {
   /**
-   * @param {string|Deno.Signal|undefined} signal
+   * @param {string|undefined} signal - Optional shutdown signal (e.g., "SIGTERM")
    */
   onApplicationShutdown(signal?: string): Promise<void> | void;
 }
