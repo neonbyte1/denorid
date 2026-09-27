@@ -153,12 +153,19 @@ export async function loadWebSocketModules(
  * Creates a `node:http` server handling requests with `fetch` through
  * `@hono/node-server`. It does not listen yet.
  *
+ * The global `Request` and `Response` stay untouched: by default
+ * `@hono/node-server` replaces them with its own classes, and native
+ * responses (e.g. from `fetch()`) then fail `instanceof Response`.
+ *
  * @param {FetchHandler} fetch - Handler invoked for every incoming request.
  * @return {NodeHttpServer} The server.
  */
 export function createNodeServer(fetch: FetchHandler): NodeHttpServer {
   // Without `createServer` option @hono/node-server creates a node:http server.
-  return createAdaptorServer({ fetch }) as NodeHttpServer;
+  return createAdaptorServer({
+    fetch,
+    overrideGlobalObjects: false,
+  }) as NodeHttpServer;
 }
 
 /**

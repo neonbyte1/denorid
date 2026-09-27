@@ -3,6 +3,7 @@ import type {
   RequestContext,
   WsMessageHandler,
 } from "@denorid/core";
+import { HttpMethod } from "@denorid/core";
 import type { InjectorContext } from "@denorid/injector";
 import {
   assertEquals,
@@ -15,11 +16,7 @@ import { assertSpyCalls, stub } from "@std/testing/mock";
 import { Server as NodeHttpServer } from "node:http";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import {
-  getFreePort,
-  registerGlobalRestore,
-  TestWebSocket,
-} from "./_test_utils.ts";
+import { getFreePort, TestWebSocket } from "./_test_utils.ts";
 import { HonoAdapter, type HonoAdapterOptions } from "./adapter.ts";
 import { WsAdapter } from "./ws_adapter.ts";
 
@@ -38,7 +35,8 @@ describe(HonoAdapter.name, () => {
 
   /**
    * Adapter with one controller mapped through `createControllerMapping`,
-   * answering `GET /client/ip` with the resolved client IP.
+   * answering `GET /client/ip` with the resolved client IP and
+   * `GET /client/upstream` with a `fetch()` response.
    */
   async function createAdapter(
     options?: HonoAdapterOptions,
@@ -49,11 +47,17 @@ describe(HonoAdapter.name, () => {
     Object.defineProperty(ClientController, Symbol.metadata, {
       value: {
         [Symbol.for("denorid.controller")]: { path: "/client" },
-        [Symbol.for("denorid.request_mapping")]: [{ name: "ip", path: "ip" }],
+        [Symbol.for("denorid.request_mapping")]: [
+          { name: "ip", path: "ip", method: HttpMethod.GET },
+          { name: "upstream", path: "upstream", method: HttpMethod.GET },
+        ],
       },
     });
 
-    const controller = { ip: (ctx: RequestContext): string => ctx.ip };
+    const controller = {
+      ip: (ctx: RequestContext): string => ctx.ip,
+      upstream: (): Promise<Response> => fetch("data:text/plain,upstream"),
+    };
     const adapter = new HonoAdapter(options);
     const mapping = await adapter.createControllerMapping({
       ctx: {
@@ -293,8 +297,6 @@ describe(HonoAdapter.name, () => {
   });
 
   describe("getHttpServer()", () => {
-    registerGlobalRestore();
-
     it("returns the node:http server listen() and close() use", async () => {
       const port = getFreePort();
       const adapter = await createAdapter();
@@ -316,6 +318,24 @@ describe(HonoAdapter.name, () => {
       }
 
       assertEquals(server.listening, false);
+    });
+
+    it("passes Response objects of controllers through", async () => {
+      const port = getFreePort();
+      const adapter = await createAdapter();
+
+      adapter.getHttpServer();
+      adapter.listen(port);
+
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:${port}/client/upstream`,
+        );
+
+        assertEquals(await response.text(), "upstream");
+      } finally {
+        await adapter.close();
+      }
     });
 
     it("throws once the adapter listens through the native server", async () => {

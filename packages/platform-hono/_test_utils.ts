@@ -1,6 +1,5 @@
 import type { WSEvents, WSReadyState } from "@hono/hono/ws";
 import { WSContext } from "@hono/hono/ws";
-import { afterEach, beforeEach } from "node:test";
 import type { UpgradeWebSocket } from "./_serve.ts";
 
 /**
@@ -15,28 +14,6 @@ export function getFreePort(): number {
   listener.close();
 
   return port;
-}
-
-/**
- * Restores the global `Request` and `Response` after every test of the
- * calling `describe`: `@hono/node-server` swaps them for its own lightweight
- * classes, which `Deno.serve` would reject in later tests.
- *
- * @return {void}
- */
-export function registerGlobalRestore(): void {
-  let request: PropertyDescriptor | undefined;
-  let response: PropertyDescriptor | undefined;
-
-  beforeEach(() => {
-    request = Object.getOwnPropertyDescriptor(globalThis, "Request");
-    response = Object.getOwnPropertyDescriptor(globalThis, "Response");
-  });
-
-  afterEach(() => {
-    Object.defineProperty(globalThis, "Request", request!);
-    Object.defineProperty(globalThis, "Response", response!);
-  });
 }
 
 /**

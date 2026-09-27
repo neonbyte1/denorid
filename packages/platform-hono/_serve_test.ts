@@ -19,11 +19,7 @@ import {
   startServer,
   type WebSocketModules,
 } from "./_serve.ts";
-import {
-  getFreePort,
-  registerGlobalRestore,
-  TestWebSocket,
-} from "./_test_utils.ts";
+import { getFreePort, TestWebSocket } from "./_test_utils.ts";
 
 async function get(port: number): Promise<string> {
   const response = await fetch(`http://127.0.0.1:${port}/`);
@@ -157,8 +153,6 @@ describe(loadWebSocketModules.name, () => {
 });
 
 describe(createNodeServer.name, () => {
-  registerGlobalRestore();
-
   it("creates a node:http server that is not listening yet", async () => {
     const port = getFreePort();
     const server = createNodeServer(() => new Response("ok"));
@@ -169,6 +163,25 @@ describe(createNodeServer.name, () => {
 
     try {
       assertEquals(await get(port), "ok");
+    } finally {
+      const closed = Promise.withResolvers<void>();
+
+      server.close(() => closed.resolve());
+      await closed.promise;
+    }
+  });
+
+  it("keeps the global Request and Response", async () => {
+    const { Request, Response } = globalThis;
+    const port = getFreePort();
+    const server = createNodeServer(() => fetch("data:text/plain,upstream"));
+
+    server.listen(port);
+
+    try {
+      assertEquals(await get(port), "upstream");
+      assertStrictEquals(globalThis.Request, Request);
+      assertStrictEquals(globalThis.Response, Response);
     } finally {
       const closed = Promise.withResolvers<void>();
 
@@ -331,8 +344,6 @@ describe(startServer.name, () => {
   });
 
   describe("on Node.js", () => {
-    registerGlobalRestore();
-
     it("serves through @hono/node-server, passing the node:http bindings", async () => {
       const port = getFreePort();
       const server = startServer(
