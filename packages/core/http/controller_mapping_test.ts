@@ -496,6 +496,56 @@ describe("ControllerMapping", () => {
         [globalGuard, sharedGuard, controllerGuard],
       ]);
     });
+
+    it("lists the host option of host-restricted controllers and no host otherwise", async () => {
+      const tenantHost = /^(.+)\.example\.com$/;
+      const apiHosts = ["api.example.com", /^api\./];
+      const controllers: ControllerOptions[] = [
+        { path: "admin", host: "admin.example.com" },
+        { path: "tenant", host: tenantHost },
+        { path: "api", host: apiHosts },
+        { path: "public" },
+      ];
+      const tokens = controllers.map((options) => {
+        class FakeController {}
+        setControllerMetadata(FakeController, options, [
+          { name: "index", method: HttpMethod.GET },
+          { name: "alias", method: HttpMethod.GET, path: "alias" },
+        ]);
+
+        return FakeController;
+      });
+
+      const { ctx } = createMockContext(tokens);
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
+
+      const routes = await mapping.register();
+
+      assertEquals(
+        routes.map(({ path, host }) => [path, host]),
+        [
+          ["/admin", "admin.example.com"],
+          ["/admin/alias", "admin.example.com"],
+          ["/tenant", tenantHost],
+          ["/tenant/alias", tenantHost],
+          ["/api", apiHosts],
+          ["/api/alias", apiHosts],
+          ["/public", undefined],
+          ["/public/alias", undefined],
+        ],
+      );
+      assertStrictEquals(routes[2].host, tenantHost);
+      assertStrictEquals(routes[4].host, apiHosts);
+      assertEquals(routes.slice(6).map((route) => "host" in route), [
+        false,
+        false,
+      ]);
+    });
   });
 
   describe("validateRequest()", () => {

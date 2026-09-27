@@ -148,7 +148,8 @@ export abstract class ControllerMapping {
    * @param {Type<HttpController>} controllerClass - The controller class to register.
    * @param {string} basePath - The global path prefix to prepend.
    * @return {Promise<HttpRoute[]>} The registered routes, one per controller
-   *   path and entry of the route path.
+   *   path and entry of the route path, with the `host` option of the
+   *   controller when it has one.
    */
   protected async registerController(
     controllerClass: Type<HttpController>,
@@ -169,6 +170,7 @@ export abstract class ControllerMapping {
       | undefined;
     const controllerGuards = [...(controllerGuardSet ?? [])];
     const registered: HttpRoute[] = [];
+    const host = options.host !== undefined ? { host: options.host } : {};
 
     for (
       const controllerPath of controllerPaths.length > 0
@@ -199,6 +201,7 @@ export abstract class ControllerMapping {
             method: route.method,
             path: this.joinPaths(controllerBasePath, routePath),
             controller: controllerClass,
+            ...host,
             metadata: route,
             guards,
           });

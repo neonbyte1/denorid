@@ -2,6 +2,7 @@ import type { InjectorContext, Type } from "@denorid/injector";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
 import type { RequestMappingMetadata } from "./_request_mapping.ts";
 import { REGISTERED_HTTP_ROUTES } from "./_routes.ts";
+import type { ControllerOptions } from "./controller_options.ts";
 import type { HttpMethod } from "./method.ts";
 
 /**
@@ -19,8 +20,13 @@ export interface HttpRoute {
   /** Controller class declaring the route. */
   readonly controller: Type;
   /**
+   * Host restriction of the controller (`@Controller({ host })`); the
+   * property is absent when the route serves every host.
+   */
+  readonly host?: ControllerOptions["host"];
+  /**
    * Route entry of the controller method: method name, status code, body,
-   * query and path parameter schemas and method guards.
+   * query, path parameter and header schemas and method guards.
    */
   readonly metadata: Readonly<RequestMappingMetadata>;
   /**
