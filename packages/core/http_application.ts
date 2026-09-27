@@ -178,13 +178,10 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   }
 
   /**
-   * Initializes the application, then starts every connected microservice.
-   * A server whose `listen()` rejects right away is closed together with the
-   * servers started before it and the error is rethrown. `listen()` of a
-   * transport usually settles only when the server stops, so a failure that
-   * arrives later (e.g. a port in use or a refused broker connection) is
-   * logged and the failed server is closed. Nothing is started once
-   * {@link close} was called.
+   * Initializes the application, then starts every connected microservice,
+   * one after another. When a server fails to start, it is closed together
+   * with the servers started before it and the error is rethrown. Nothing is
+   * started once {@link close} was called.
    *
    * @returns {Promise<void>} Resolves when every server is listening.
    */
@@ -195,11 +192,6 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
 
     await this.init();
 
-    // `close()` may have been called while the application initialized.
-    if (this.closing) {
-      return;
-    }
-
     const tokens = this.ctx.container.getTokensByTag(
       MESSAGE_CONTROLLER_METADATA,
       true,
@@ -208,6 +200,11 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
     const started: MicroserviceServer<object>[] = [];
 
     for (const [server, options] of this.microservices) {
+      // `close()` may have been called while a server started.
+      if (this.closing) {
+        return;
+      }
+
       try {
         server.setExceptionHandler(this.exceptionHandler);
         server.setGlobalGuards(
@@ -215,7 +212,7 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
         );
         server.registerHandlers(types, this.ctx);
         started.push(server);
-        await this.startMicroservice(server);
+        await server.listen();
       } catch (error) {
         await Promise.all(started.map((s) => s.close().catch(() => {})));
         throw error;
@@ -264,46 +261,5 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
         throw error;
       },
     );
-  }
-
-  /**
-   * Calls `listen()` on `server` and waits one microtask for it to reject,
-   * because `listen()` usually settles only when the server stops. Later
-   * rejections are logged and close the server, unless the application is
-   * closing.
-   *
-   * @param {MicroserviceServer<object>} server - The server to start.
-   * @returns {Promise<void>} Resolves when `listen()` did not reject right away.
-   * @throws {unknown} The rejection of `listen()` when it rejected right away.
-   */
-  private async startMicroservice(
-    server: MicroserviceServer<object>,
-  ): Promise<void> {
-    const listening = server.listen();
-    const { promise: started, resolve, reject } = Promise.withResolvers<
-      void
-    >();
-    let running = false;
-
-    listening.then(resolve, (error: unknown): void => {
-      if (!running) {
-        reject(error);
-      } else if (!this.closing) {
-        const err = error instanceof Error ? error : new Error(String(error));
-
-        this.logger.error(
-          `Microservice ${server.constructor.name} stopped: ${err.message}`,
-          err.stack,
-        );
-        server.close().catch((): void => {});
-      }
-    });
-    // Runs after the rejection handler of a `listen()` that already rejected.
-    Promise.resolve().then((): void => {
-      running = true;
-      resolve();
-    });
-
-    await started;
   }
 }

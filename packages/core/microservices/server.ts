@@ -13,14 +13,18 @@ export abstract class MicroserviceServer<
   public constructor(protected readonly options: Options) {}
 
   /**
-   * Starts the server and begins accepting incoming messages.
+   * Starts the server. Resolves once it accepts messages and rejects when it
+   * cannot start, after releasing what it opened. Once started, the server
+   * keeps itself running (and handles later failures itself) until
+   * {@link close} is called.
    *
-   * @return {Promise<void>}
+   * @return {Promise<void>} Resolves when the server is ready.
    */
   public abstract listen(): Promise<void>;
 
   /**
-   * Stops the server and releases all held resources.
+   * Stops the server, waits for running handlers and releases all held
+   * resources. Safe to call before, during and after {@link listen}.
    *
    * @return {Promise<void>}
    */

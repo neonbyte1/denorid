@@ -43,15 +43,14 @@ app.listen();
 - `app.listen()` initializes the application first. An HTTP application starts
   its server only after the initialization succeeded; a failed initialization is
   rethrown as an unhandled rejection. A microservice application
-  (`DenoridFactory.create(AppModule, server)`) returns the server's `listen()`
-  promise; when the server fails to start it is closed and `listen()` can be
+  (`DenoridFactory.create(AppModule, server)`) resolves once the server accepts
+  messages; when the server fails to start it is closed and `listen()` can be
   called again.
 - `app.startAllMicroservices()` starts the servers added with
-  `app.connectMicroservice()`. A server whose `listen()` rejects right away is
-  closed together with the servers started before it and the error is rethrown.
-  A transport's `listen()` usually settles only when the server stops, so later
-  failures (a port in use, a refused broker connection) are logged and close the
-  failed server.
+  `app.connectMicroservice()` one after another and resolves once all of them
+  accept messages. When one fails to start (a port in use, a refused broker
+  connection), it is closed together with the servers started before it and the
+  error is rethrown. A server that is running handles later failures itself.
 - `app.close()` waits for a running initialization, stops the servers and closes
   the injector context, even when `init()` was never called. Nothing is started
   once it was called; later calls return the same promise.

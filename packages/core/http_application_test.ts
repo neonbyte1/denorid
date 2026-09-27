@@ -571,58 +571,46 @@ describe("HttpApplication", () => {
       assertEquals(failingCalls.close.length, 1);
     });
 
-    it("logs and closes a server that fails after it started", async () => {
+    it("waits until a server is ready before starting the next one", async () => {
       const app = makeApp();
-      using errorStub = stub(app["logger"], "error");
       const { server: tcp, calls: tcpCalls } = makeMockServer();
       const { server: rmq, calls: rmqCalls } = makeMockServer();
-      const tcpListening = Promise.withResolvers<void>();
-      const rmqListening = Promise.withResolvers<void>();
-      const error = new Error("EADDRINUSE");
+      const tcpReady = Promise.withResolvers<void>();
 
-      tcp.listen = (): Promise<void> => tcpListening.promise;
-      rmq.listen = (): Promise<void> => rmqListening.promise;
+      tcp.listen = (): Promise<void> => {
+        tcpCalls.listen.push(true);
+        return tcpReady.promise;
+      };
       app.connectMicroservice(tcp).connectMicroservice(rmq);
 
-      await app.startAllMicroservices();
-      tcpListening.reject(error);
-      rmqListening.reject("connection refused");
+      const started = app.startAllMicroservices();
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-      assertSpyCalls(errorStub, 2);
-      assertStringIncludes(
-        errorStub.calls[0].args[0] as string,
-        "stopped: EADDRINUSE",
-      );
-      assertStrictEquals(errorStub.calls[0].args[1], error.stack);
-      assertStringIncludes(
-        errorStub.calls[1].args[0] as string,
-        "stopped: connection refused",
-      );
-      assertEquals(tcpCalls.close.length, 1);
-      assertEquals(rmqCalls.close.length, 1);
+      assertEquals([tcpCalls.listen.length, rmqCalls.listen.length], [1, 0]);
+
+      tcpReady.resolve();
+      await started;
+
+      assertEquals(rmqCalls.listen.length, 1);
     });
 
-    it("neither logs nor closes again a server that fails while the application closes", async () => {
+    it("starts no further server when the application closes while one starts", async () => {
       const app = makeApp();
-      using errorStub = stub(app["logger"], "error");
-      const { server, calls } = makeMockServer();
-      const listening = Promise.withResolvers<void>();
+      const { server: tcp, calls: tcpCalls } = makeMockServer();
+      const { server: rmq, calls: rmqCalls } = makeMockServer();
+      const tcpReady = Promise.withResolvers<void>();
 
-      server.listen = (): Promise<void> => listening.promise;
-      server.close = (): Promise<void> => {
-        calls.close.push(true);
-        listening.reject(new Error("socket closed"));
-        return Promise.resolve();
-      };
-      app.connectMicroservice(server);
+      tcp.listen = (): Promise<void> => tcpReady.promise;
+      app.connectMicroservice(tcp).connectMicroservice(rmq);
 
-      await app.startAllMicroservices();
-      await app.close();
+      const started = app.startAllMicroservices();
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await app.close();
+      tcpReady.resolve();
+      await started;
 
-      assertSpyCalls(errorStub, 0);
-      assertEquals(calls.close.length, 1);
+      assertEquals(tcpCalls.close.length, 1);
+      assertEquals(rmqCalls.listen.length, 0);
     });
 
     it("starts no microservice once the application was closed", async () => {

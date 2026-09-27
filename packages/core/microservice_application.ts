@@ -47,11 +47,11 @@ export class MicroserviceApplication extends Application
    * Initializes the application (unless {@link init} already did), hands the
    * exception handler, the global guards and the message handlers to the
    * server and starts it. Concurrent and later calls share the same promise,
-   * which settles when the server stops. When starting the server fails, it
-   * is closed and the next call starts over. Nothing is started once
+   * which resolves once the server accepts messages. When starting the server
+   * fails, it is closed and the next call starts over. Nothing is started once
    * {@link close} was called.
    *
-   * @returns {Promise<void>} Settles like the server's `listen()`.
+   * @returns {Promise<void>} Resolves when the server is ready.
    */
   public listen(): Promise<void> {
     if (this.closing) {
@@ -82,7 +82,7 @@ export class MicroserviceApplication extends Application
   /**
    * Starts the server once the application is initialized.
    *
-   * @returns {Promise<void>} Settles like the server's `listen()`.
+   * @returns {Promise<void>} Resolves when the server is ready.
    */
   private async start(): Promise<void> {
     await this.init();
