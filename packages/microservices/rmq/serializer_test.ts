@@ -17,6 +17,14 @@ describe(RmqSerializer.name, () => {
     );
   });
 
+  it("serialize encodes values JSON cannot represent as null", () => {
+    const s = new RmqSerializer();
+
+    for (const value of [undefined, () => {}, Symbol("s")]) {
+      assertEquals(new TextDecoder().decode(s.serialize(value)), "null");
+    }
+  });
+
   it("contentTypeFor returns octet-stream for Uint8Array", () => {
     const s = new RmqSerializer();
     assertEquals(

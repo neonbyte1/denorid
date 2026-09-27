@@ -5,6 +5,8 @@ import type { Serializer } from "../serializer.ts";
  * Default RMQ-transport serializer.
  *
  * Encodes values as JSON buffers, with binary passthrough for `Uint8Array` payloads.
+ * Values JSON cannot represent (`undefined`, functions, symbols) encode as `null`,
+ * so a handler that returns nothing still produces a valid reply body.
  */
 export class RmqSerializer implements Serializer {
   /**
@@ -14,7 +16,7 @@ export class RmqSerializer implements Serializer {
     if (value instanceof Uint8Array) {
       return Buffer.from(value);
     }
-    return Buffer.from(JSON.stringify(value));
+    return Buffer.from(JSON.stringify(value) ?? "null");
   }
 
   /**
