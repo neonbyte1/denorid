@@ -1,35 +1,38 @@
+import type { CronSchedule } from "./cron_schedule.ts";
+
 /**
- * A handle representing a registered Deno cron job.
+ * A handle representing a registered cron job, backed by `Deno.cron()` when
+ * the runtime provides it and by croner otherwise.
  */
 export class CronJobRef {
   /** Registered name of the cron job. */
   public readonly name: string;
 
-  /** Cron schedule (cron string or structured schedule). */
-  public readonly schedule: string | Deno.CronSchedule;
+  /** Cron schedule (cron string or structured schedule), evaluated in UTC. */
+  public readonly schedule: string | CronSchedule;
 
-  /** The wrapped handler function passed to {@linkcode Deno.cron}. */
+  /** The handler invoked on every scheduled run. */
   public readonly handler: () => void | Promise<void>;
 
   /** Controller used to abort (cancel) the running cron job. */
   public readonly controller: AbortController;
 
   /**
-   * Custom backoff schedule for retries, forwarded to {@linkcode Deno.cron}.
+   * Custom retry delays (milliseconds) applied after a failed run.
    */
   public readonly backoffSchedule?: number[];
 
   /**
    * @param {object} params - Construction parameters.
    * @param {string} params.name - The cron job name.
-   * @param {string | Deno.CronSchedule} params.schedule - The schedule.
+   * @param {string | CronSchedule} params.schedule - The schedule.
    * @param {() => void | Promise<void>} params.handler - The handler.
    * @param {AbortController} params.controller - The abort controller.
    * @param {number[]} [params.backoffSchedule] - Optional backoff schedule.
    */
   public constructor(params: {
     name: string;
-    schedule: string | Deno.CronSchedule;
+    schedule: string | CronSchedule;
     handler: () => void | Promise<void>;
     controller: AbortController;
     backoffSchedule?: number[];
@@ -42,7 +45,7 @@ export class CronJobRef {
   }
 
   /**
-   * Aborts the underlying cron job by signalling its {@linkcode AbortController}.
+   * Stops the underlying cron job by signalling its {@linkcode AbortController}.
    *
    * @return {void}
    */

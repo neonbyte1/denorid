@@ -1,5 +1,7 @@
+import type { CronSchedule } from "./cron_schedule.ts";
+
 export interface CronMetadata {
-  schedule: string | Deno.CronSchedule;
+  schedule: string | CronSchedule;
   method: string | symbol;
   name?: string;
   backoffSchedule?: number[];

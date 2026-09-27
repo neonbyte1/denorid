@@ -1,15 +1,44 @@
 import { Test } from "@denorid/core/testing";
 import { Injectable } from "@denorid/injector";
 import { assertEquals, assertInstanceOf } from "@std/assert";
-import { stub } from "@std/testing/mock";
 import { describe, it } from "node:test";
+import { cronHost } from "./_cron_runtime.ts";
 import { Cron } from "./decorator.ts";
 import { ScheduleModule } from "./module.ts";
 import { SchedulerRegistry } from "./registry.ts";
 
+interface FakeDenoCron extends Disposable {
+  handlers: (() => void | Promise<void>)[];
+}
+
+/**
+ * Simulates a runtime whose `Deno.cron` records handlers instead of
+ * scheduling them.
+ */
+function useFakeDenoCron(): FakeDenoCron {
+  const originalScope = cronHost.scope;
+  const handlers: (() => void | Promise<void>)[] = [];
+
+  cronHost.scope = {
+    Deno: {
+      cron: (_name, _schedule, _options, handler): Promise<void> => {
+        handlers.push(handler);
+
+        return Promise.resolve();
+      },
+    },
+  };
+
+  return {
+    handlers,
+    [Symbol.dispose](): void {
+      cronHost.scope = originalScope;
+    },
+  };
+}
+
 describe(ScheduleModule.name, () => {
   it("exports SchedulerRegistry", async () => {
-    const cronStub = stub(Deno, "cron", () => Promise.resolve());
     const module = await Test.createTestingModule({
       imports: [ScheduleModule],
     })
@@ -20,7 +49,6 @@ describe(ScheduleModule.name, () => {
       assertInstanceOf(await module.get(SchedulerRegistry), SchedulerRegistry);
     } finally {
       await module.close();
-      cronStub.restore();
     }
   });
 
@@ -37,7 +65,7 @@ describe(ScheduleModule.name, () => {
       }
     }
 
-    const cronStub = stub(Deno, "cron", () => Promise.resolve());
+    using _cron = useFakeDenoCron();
     const module = await Test.createTestingModule({
       imports: [ScheduleModule],
       providers: [TaskService],
@@ -50,10 +78,9 @@ describe(ScheduleModule.name, () => {
 
       const registry = await module.get(SchedulerRegistry);
 
-      assertInstanceOf(registry.getCronJob("TaskService.run"), Object);
+      assertInstanceOf(registry.getCronJob("TaskService_run"), Object);
     } finally {
       await module.close();
-      cronStub.restore();
     }
   });
 
@@ -64,7 +91,7 @@ describe(ScheduleModule.name, () => {
       generate() {}
     }
 
-    const cronStub = stub(Deno, "cron", () => Promise.resolve());
+    using _cron = useFakeDenoCron();
     const module = await Test.createTestingModule({
       imports: [ScheduleModule],
       providers: [ReportService],
@@ -80,18 +107,17 @@ describe(ScheduleModule.name, () => {
       assertInstanceOf(registry.getCronJob("weekly-report"), Object);
     } finally {
       await module.close();
-      cronStub.restore();
     }
   });
 
-  it("falls back to ClassName.method when name is not specified", async () => {
+  it("falls back to ClassName_method when name is not specified", async () => {
     @Injectable()
     class CleanupService {
       @Cron("0 0 * * *")
       cleanup() {}
     }
 
-    const cronStub = stub(Deno, "cron", () => Promise.resolve());
+    using _cron = useFakeDenoCron();
     const module = await Test.createTestingModule({
       imports: [ScheduleModule],
       providers: [CleanupService],
@@ -104,10 +130,9 @@ describe(ScheduleModule.name, () => {
 
       const registry = await module.get(SchedulerRegistry);
 
-      assertInstanceOf(registry.getCronJob("CleanupService.cleanup"), Object);
+      assertInstanceOf(registry.getCronJob("CleanupService_cleanup"), Object);
     } finally {
       await module.close();
-      cronStub.restore();
     }
   });
 
@@ -124,27 +149,7 @@ describe(ScheduleModule.name, () => {
       }
     }
 
-    let capturedHandler: (() => void | Promise<void>) | undefined;
-
-    const cronStub = stub(
-      Deno,
-      "cron",
-      (
-        _name: string,
-        _schedule: string | Deno.CronSchedule,
-        optionsOrHandler:
-          | { signal?: AbortSignal }
-          | (() => void | Promise<void>),
-        handler?: () => void | Promise<void>,
-      ) => {
-        capturedHandler = typeof optionsOrHandler === "function"
-          ? optionsOrHandler
-          : handler!;
-
-        return Promise.resolve();
-      },
-    );
-
+    using cron = useFakeDenoCron();
     const module = await Test.createTestingModule({
       imports: [ScheduleModule],
       providers: [ScopedService],
@@ -154,12 +159,11 @@ describe(ScheduleModule.name, () => {
 
     try {
       await module.init();
-      await capturedHandler!();
+      await cron.handlers[0]();
 
       assertEquals(calls[0], 99);
     } finally {
       await module.close();
-      cronStub.restore();
     }
   });
 });

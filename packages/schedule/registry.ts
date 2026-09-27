@@ -28,25 +28,25 @@ export type TimeoutHandle = ReturnType<typeof setTimeout>;
  * constructor(private readonly scheduler: SchedulerRegistry) {}
  *
  * stopJob() {
- *   this.scheduler.deleteCronJob("MyService.runEveryMinute");
+ *   this.scheduler.deleteCronJob("MyService_runEveryMinute");
  * }
  * ```
  */
 @Injectable()
 export class SchedulerRegistry {
-  private readonly intervals = new Map<string, number>();
-  private readonly timeouts = new Map<string, number>();
+  private readonly intervals = new Map<string, IntervalHandle>();
+  private readonly timeouts = new Map<string, TimeoutHandle>();
   private readonly cronJobs = new Map<string, CronJobRef>();
 
   /**
    * Registers a named interval handle.
    *
    * @param {string} name - Unique name for the interval.
-   * @param {number} intervalRef - The return value of `setInterval`.
+   * @param {IntervalHandle} intervalRef - The return value of `setInterval`.
    * @return {void}
    * @throws {SchedulerItemAlreadyExistsException} When name is already taken.
    */
-  public addInterval(name: string, intervalRef: number): void {
+  public addInterval(name: string, intervalRef: IntervalHandle): void {
     if (this.intervals.has(name)) {
       throw new SchedulerItemAlreadyExistsException("Interval", name);
     }

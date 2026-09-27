@@ -8,17 +8,26 @@ import {
 import { CRON_METADATA, CRON_PROVIDER } from "./_constants.ts";
 import type { CronMetadata } from "./_metadata.ts";
 import type { CronOptions } from "./cron_options.ts";
+import type { CronSchedule } from "./cron_schedule.ts";
 
 /**
- * Marks a method as a Deno cron handler.
+ * Marks a method as a cron handler.
  *
  * The decorated method is discovered by {@linkcode ScheduleExplorer} on
- * application bootstrap and registered with `Deno.cron()`.
+ * application bootstrap and registered with `Deno.cron()` when the runtime
+ * provides it (Deno with `--unstable-cron`, Deno Deploy), or with croner
+ * otherwise (Bun, Node.js, Deno without the flag). Schedules are evaluated in
+ * UTC and runs never overlap on either backend.
  *
  * When `options.name` is omitted or empty the cron job name defaults to
- * `ClassName.methodName`.
+ * `ClassName_methodName`, with every character other than ASCII letters,
+ * digits, `_`, `-` and space replaced by `_` (symbol methods use
+ * `String(symbol)`, e.g. `ClassName_Symbol_tick_`). Names follow the
+ * `Deno.cron()` rules on every runtime: at most 64 bytes of ASCII letters,
+ * digits, whitespace, `-` and `_`; anything else throws a `TypeError` at
+ * bootstrap.
  *
- * @param {string | Deno.CronSchedule} schedule - Cron expression or structured schedule.
+ * @param {string | CronSchedule} schedule - Cron expression or structured schedule.
  * @param {CronOptions} [options] - Optional name and backoff schedule.
  * @return {MethodDecorator}
  *
@@ -31,7 +40,7 @@ import type { CronOptions } from "./cron_options.ts";
  * }
  * ```
  *
- * @example Default name (NotificationService.send)
+ * @example Default name (NotificationService_send)
  * ```ts
  * \@Injectable()
  * class NotificationService {
@@ -41,7 +50,7 @@ import type { CronOptions } from "./cron_options.ts";
  * ```
  */
 export function Cron(
-  schedule: string | Deno.CronSchedule,
+  schedule: string | CronSchedule,
   options?: CronOptions,
 ): MethodDecorator {
   return function <

@@ -6,6 +6,7 @@ import { assertEquals, assertThrows } from "@std/assert";
 import { describe, it } from "node:test";
 import { CRON_METADATA, CRON_PROVIDER } from "./_constants.ts";
 import type { CronMetadata } from "./_metadata.ts";
+import type { CronSchedule } from "./cron_schedule.ts";
 import { Cron } from "./decorator.ts";
 
 function getCronMetadata(target: object): CronMetadata[] {
@@ -37,8 +38,8 @@ describe(Cron.name, () => {
     ]);
   });
 
-  it("stores Deno.CronSchedule metadata", () => {
-    const schedule: Deno.CronSchedule = { minute: { every: 5 } };
+  it("stores CronSchedule metadata", () => {
+    const schedule: CronSchedule = { minute: { every: 5 } };
 
     class Service {
       @Cron(schedule)
@@ -96,7 +97,7 @@ describe(Cron.name, () => {
     assertEquals(getCronMetadata(Service)[0].name, undefined);
   });
 
-  it("leaves name undefined when not provided, deferring ClassName.method to bootstrap", () => {
+  it("leaves name undefined when not provided, deferring ClassName_method to bootstrap", () => {
     class Service {
       @Cron("* * * * *")
       run() {}

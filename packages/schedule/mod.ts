@@ -1,6 +1,14 @@
 /**
  * Denorid schedule module providing decorator-based cron job registration
- * backed by `Deno.cron()`.
+ * that runs on Deno, Bun and Node.js.
+ *
+ * Jobs are backed by `Deno.cron()` when the runtime provides it (Deno with
+ * `--unstable-cron` or the `"cron"` entry in the `unstable` array of
+ * `deno.json`, Deno Deploy) and by
+ * [croner](https://jsr.io/@hexagon/croner) otherwise. Both backends use the
+ * same cron dialect (5 fields, UTC, numeric weekdays `1`-`7` starting on
+ * Sunday), never overlap runs and retry failed runs according to
+ * `backoffSchedule`.
  *
  * # Usage
  *
@@ -29,13 +37,13 @@
  *
  * > **Deno Deploy note:** Jobs are registered at runtime via
  * > `onApplicationBootstrap`. Deno Deploy's static top-level cron discovery
- * > will not see decorator-registered jobs. Run `deno` with `--unstable-cron`
- * > or add `"cron"` to the `unstable` array in `deno.json`.
+ * > will not see decorator-registered jobs.
  *
  * @module
  */
 export * from "./cron_job_ref.ts";
 export * from "./cron_options.ts";
+export * from "./cron_schedule.ts";
 export * from "./decorator.ts";
 export * from "./exceptions.ts";
 export * from "./module.ts";

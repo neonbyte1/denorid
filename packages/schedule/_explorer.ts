@@ -6,6 +6,7 @@ import {
   type Type,
 } from "@denorid/injector";
 import { CRON_METADATA, CRON_PROVIDER } from "./_constants.ts";
+import { registerCronJob } from "./_cron_runtime.ts";
 import type { CronMetadata } from "./_metadata.ts";
 import { CronJobRef } from "./cron_job_ref.ts";
 import { SchedulerRegistry } from "./registry.ts";
@@ -17,7 +18,8 @@ type CronInstance = Record<
 
 /**
  * Internal lifecycle service that discovers `@Cron()`-decorated providers on
- * application bootstrap and registers each method with `Deno.cron()`.
+ * application bootstrap and registers each method with `Deno.cron()` when the
+ * runtime provides it, or with croner otherwise.
  */
 @Injectable()
 export class ScheduleExplorer implements OnApplicationBootstrap {
@@ -52,29 +54,42 @@ export class ScheduleExplorer implements OnApplicationBootstrap {
       }) as CronInstance;
 
       for (const meta of cronMetadataList) {
-        const name = meta.name || `${provider.name}.${String(meta.method)}`;
+        // Default names must satisfy Deno.cron's charset on every runtime.
+        const name = meta.name ||
+          `${provider.name}_${String(meta.method)}`.replace(
+            /[^A-Za-z0-9_\- ]/g,
+            "_",
+          );
         const controller = new AbortController();
         const handler = instance[meta.method].bind(instance) as () =>
           | void
           | Promise<void>;
 
-        Deno.cron(
+        registerCronJob({
           name,
-          meta.schedule,
-          { signal: controller.signal, backoffSchedule: meta.backoffSchedule },
+          schedule: meta.schedule,
           handler,
-        );
+          signal: controller.signal,
+          backoffSchedule: meta.backoffSchedule,
+        });
 
-        this.registry.addCronJob(
-          name,
-          new CronJobRef({
+        try {
+          this.registry.addCronJob(
             name,
-            schedule: meta.schedule,
-            handler,
-            controller,
-            backoffSchedule: meta.backoffSchedule,
-          }),
-        );
+            new CronJobRef({
+              name,
+              schedule: meta.schedule,
+              handler,
+              controller,
+              backoffSchedule: meta.backoffSchedule,
+            }),
+          );
+        } catch (error) {
+          // Stop the job registered above so it does not run untracked.
+          controller.abort();
+
+          throw error;
+        }
       }
     }
   }
