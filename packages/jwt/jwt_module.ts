@@ -57,7 +57,9 @@ export interface JwtModuleAsyncOptions extends Pick<ModuleMetadata, "imports"> {
  * JwtModule.forRootAsync({
  *   imports: [ConfigModule],
  *   inject: [ConfigService],
- *   useFactory: (config: ConfigService) => ({ secret: config.get("JWT_SECRET") }),
+ *   useFactory: (config: ConfigService) => ({
+ *     secret: config.getOrThrow<string>("JWT_SECRET"),
+ *   }),
  * })
  * ```
  */
