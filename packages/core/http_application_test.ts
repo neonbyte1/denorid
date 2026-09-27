@@ -5,8 +5,14 @@ import {
   type Type,
 } from "@denorid/injector";
 import { Logger } from "@denorid/logger";
-import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import { assertSpyCalls, spy, stub } from "@std/testing/mock";
+import type { Server as NodeHttpServer } from "node:http";
 import { describe, it } from "node:test";
 import { Catch, type ExceptionFilter } from "./exceptions/filter.ts";
 import { ExceptionHandler } from "./exceptions/handler.ts";
@@ -17,6 +23,7 @@ import type { ControllerMapping } from "./http/controller_mapping.ts";
 import type { CorsOptions } from "./http/cors.ts";
 import { HttpApplication } from "./http_application.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
+import { FakeWebSocketAdapter } from "./websockets/_test_utils.ts";
 
 class RootModule {}
 
@@ -245,6 +252,53 @@ describe("HttpApplication", () => {
       await app.close();
 
       assertSpyCalls(closeSpy, 0);
+    });
+
+    it("closes the HTTP adapter when init failed", async () => {
+      const adapter = makeHttpAdapter();
+      const app = makeApp({ adapter });
+      using closeSpy = spy(adapter, "close");
+      using _mapping = stub(
+        adapter,
+        "createControllerMapping",
+        () => Promise.reject(new Error("mapping failed")),
+      );
+
+      await assertRejects(() => app.init(), Error, "mapping failed");
+      await app.close();
+
+      assertSpyCalls(closeSpy, 1);
+    });
+  });
+
+  describe("useWebSocketAdapter", () => {
+    it("returns this for method chaining", () => {
+      const app = makeApp();
+
+      assertStrictEquals(
+        app.useWebSocketAdapter(new FakeWebSocketAdapter()),
+        app,
+      );
+    });
+  });
+
+  describe("getHttpServer", () => {
+    it("returns the node:http server of the HTTP adapter", () => {
+      const server = {} as NodeHttpServer;
+      const adapter: HttpAdapter = {
+        ...makeHttpAdapter(),
+        getHttpServer: (): NodeHttpServer => server,
+      };
+
+      assertStrictEquals(makeApp({ adapter }).getHttpServer(), server);
+    });
+
+    it("throws when the HTTP adapter has no node:http server", () => {
+      assertThrows(
+        () => makeApp().getHttpServer(),
+        Error,
+        "The HTTP adapter does not provide a node:http server",
+      );
     });
   });
 

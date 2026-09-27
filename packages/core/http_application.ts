@@ -1,4 +1,5 @@
 import type { InjectorContext, Type } from "@denorid/injector";
+import type { Server as NodeHttpServer } from "node:http";
 import { MESSAGE_CONTROLLER_METADATA } from "./_constants.ts";
 import { Application, type ApplicationOptions } from "./application.ts";
 import type {
@@ -11,6 +12,8 @@ import type { HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
 import type { CorsOptions } from "./http/cors.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
+import { GatewayRuntime } from "./websockets/_gateway_runtime.ts";
+import type { WebSocketAdapter } from "./websockets/adapter.ts";
 
 /**
  * Core HTTP-specific configuration options for an HTTP application.
@@ -61,8 +64,8 @@ export interface InternalHttpApplicationOptions extends HttpApplicationOptions {
 }
 
 /**
- * HTTP-capable application that extends {@link Application} with route mapping
- * and an underlying {@link HttpAdapter}.
+ * HTTP-capable application that extends {@link Application} with route mapping,
+ * WebSocket gateways and an underlying {@link HttpAdapter}.
  */
 export class HttpApplication extends Application<InternalHttpApplicationOptions>
   implements HttpApplicationContext {
@@ -70,6 +73,8 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   private readonly adapter: HttpAdapter;
   private controller?: ControllerMapping;
   private listening?: "pending" | "active";
+  private webSocketAdapter?: WebSocketAdapter;
+  private gateways?: GatewayRuntime;
 
   private readonly globalGuards: Set<CanActivate | CanActivateFn> = new Set();
   private readonly microservices: Map<
@@ -114,6 +119,16 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
         globalGuards: [...this.globalGuards],
       });
 
+      this.gateways = new GatewayRuntime({
+        ctx: this.ctx,
+        exceptionHandler: this.exceptionHandler,
+        globalGuards: [...this.globalGuards],
+        logger: this.logger,
+      });
+      await this.gateways.connect((): WebSocketAdapter | undefined =>
+        this.webSocketAdapter ?? this.adapter.createWebSocketAdapter?.()
+      );
+
       await this.ctx.onApplicationBootstrap();
 
       await this.controller.register(this.options.basePath);
@@ -140,6 +155,28 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   ): this {
     this.microservices.set(server as MicroserviceServer<object>, options);
     return this;
+  }
+
+  /**
+   * @inheritdoc
+   */
+  public useWebSocketAdapter(adapter: WebSocketAdapter): this {
+    this.webSocketAdapter = adapter;
+    return this;
+  }
+
+  /**
+   * @inheritdoc
+   */
+  public getHttpServer(): NodeHttpServer {
+    if (!this.adapter.getHttpServer) {
+      throw new Error(
+        "The HTTP adapter does not provide a node:http server " +
+          "(HttpAdapter.getHttpServer() is not implemented).",
+      );
+    }
+
+    return this.adapter.getHttpServer();
   }
 
   /**
@@ -189,6 +226,7 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
       await Promise.all(
         [...this.microservices.keys()].map((s) => s.close().catch(() => {})),
       );
+      await this.gateways?.close();
       await this.adapter.close();
       await super.close();
     }

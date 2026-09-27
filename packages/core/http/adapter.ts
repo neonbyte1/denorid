@@ -1,6 +1,8 @@
 import type { InjectorContext } from "@denorid/injector";
+import type { Server as NodeHttpServer } from "node:http";
 import type { ExceptionHandler } from "../exceptions/handler.ts";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
+import type { WebSocketAdapter } from "../websockets/adapter.ts";
 import type { ControllerMapping } from "./controller_mapping.ts";
 import type { CorsOptions } from "./cors.ts";
 
@@ -47,4 +49,23 @@ export interface HttpAdapter {
   createControllerMapping(
     opts: ControllerMappingOptions,
   ): ControllerMapping | Promise<ControllerMapping>;
+
+  /**
+   * Creates the WebSocket adapter used for `@WebSocketGateway()` classes
+   * when the application did not set one via `useWebSocketAdapter()`.
+   * Adapters without built-in WebSocket support omit this method.
+   *
+   * @return {WebSocketAdapter} The default WebSocket adapter.
+   */
+  createWebSocketAdapter?(): WebSocketAdapter;
+
+  /**
+   * Returns the underlying `node:http` server, e.g. to attach socket.io.
+   * Adapters serving through a runtime native API (e.g. `Deno.serve`) switch
+   * to a `node:http` server on the first call. Must be called before
+   * {@link listen}.
+   *
+   * @return {NodeHttpServer} The `node:http` server.
+   */
+  getHttpServer?(): NodeHttpServer;
 }

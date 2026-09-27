@@ -4,9 +4,11 @@ import type {
   ModuleRefOptions,
   Tag,
 } from "@denorid/injector";
+import type { Server as NodeHttpServer } from "node:http";
 import type { ConsoleCommandRunnerOptions } from "./cli/command_runner.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
+import type { WebSocketAdapter } from "./websockets/adapter.ts";
 
 /**
  * Interface defining the core application context.
@@ -155,4 +157,24 @@ export interface HttpApplicationContext
    * @returns {Promise<void>}
    */
   startAllMicroservices(): Promise<void>;
+
+  /**
+   * Sets the WebSocket adapter used for `@WebSocketGateway()` classes.
+   * Without one, the HTTP adapter's default is used
+   * (`HttpAdapter.createWebSocketAdapter`). Must be called before
+   * {@link listen}.
+   *
+   * @param {WebSocketAdapter} adapter - The WebSocket adapter.
+   * @returns {this} This application instance for method chaining.
+   */
+  useWebSocketAdapter(adapter: WebSocketAdapter): this;
+
+  /**
+   * Returns the underlying `node:http` server of the HTTP adapter, e.g. to
+   * attach socket.io. Must be called before {@link listen}.
+   *
+   * @returns {NodeHttpServer} The `node:http` server.
+   * @throws {Error} When the HTTP adapter does not support it.
+   */
+  getHttpServer(): NodeHttpServer;
 }
