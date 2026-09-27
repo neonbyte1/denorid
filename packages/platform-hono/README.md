@@ -68,6 +68,9 @@ const app = await DenoridFactory.create(
   `/.well-known/`.
 - Responses carry `ETag` and `Last-Modified`; conditional requests are answered
   with `304 Not Modified`.
+- Single byte ranges (`Range: bytes=...`, honoring `If-Range`) are answered with
+  `206 Partial Content`, e.g. for video seeking. Multiple ranges are ignored and
+  the whole file is sent.
 - `root` has to be a directory and `fallback` a file below it, otherwise the
   application fails to start.
 

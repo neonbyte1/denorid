@@ -1,8 +1,9 @@
 import { Hono } from "@hono/hono";
 import { assertEquals, assertRejects } from "@std/assert";
-import { assertSpyCall, spy } from "@std/testing/mock";
+import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
 import { dirname, join, relative } from "node:path";
 import { describe, it } from "node:test";
+import type { RuntimeGlobals } from "./_serve.ts";
 import { createStaticFilesHandler } from "./_static_files.ts";
 import type { StaticFilesOptions } from "./adapter.ts";
 
@@ -111,6 +112,7 @@ describe(createStaticFilesHandler.name, () => {
         "text/plain; charset=utf-8",
       );
       assertEquals(response.headers.get("Content-Length"), "13");
+      assertEquals(response.headers.get("Accept-Ranges"), "bytes");
       assertEquals(response.headers.get("Cache-Control"), "no-cache");
       assertEquals(
         response.headers.get("Last-Modified"),
@@ -283,7 +285,7 @@ describe(createStaticFilesHandler.name, () => {
       await using fixture = await makeConditionalApp();
       const { app, etag } = fixture;
 
-      assertEquals(await status(app, { "If-None-Match": etag.slice(2) }), 304);
+      assertEquals(await status(app, { "If-None-Match": `W/${etag}` }), 304);
       assertEquals(
         await status(app, { "If-None-Match": `"other", ${etag}` }),
         304,
@@ -332,6 +334,191 @@ describe(createStaticFilesHandler.name, () => {
         }),
         200,
       );
+    });
+  });
+
+  describe("range requests", () => {
+    const CONTENT = "0123456789abcdefghij";
+
+    interface RangeFixture extends TempRoot {
+      app: Hono;
+      etag: string;
+    }
+
+    async function makeRangeApp(
+      runtime?: RuntimeGlobals,
+    ): Promise<RangeFixture> {
+      const root = await makeRoot({ "data.bin": CONTENT, "empty.bin": "" });
+      const app = new Hono();
+
+      app.get(
+        "*",
+        await createStaticFilesHandler({ root: root.path }, "/", runtime),
+      );
+
+      const etag = (await app.request("/data.bin")).headers.get("ETag");
+
+      return { ...root, app, etag: etag ?? "" };
+    }
+
+    /** Status, `Content-Range`, `Content-Length` and body of a response. */
+    async function fetchRange(
+      app: Hono,
+      headers: Record<string, string>,
+      init: { path?: string; method?: string } = {},
+    ): Promise<[number, string | null, string | null, string]> {
+      const response = await app.request(init.path ?? "/data.bin", {
+        method: init.method,
+        headers,
+      });
+
+      return [
+        response.status,
+        response.headers.get("Content-Range"),
+        response.headers.get("Content-Length"),
+        await response.text(),
+      ];
+    }
+
+    const satisfiable: [string, string, string][] = [
+      ["bytes=2-5", "bytes 2-5/20", "2345"],
+      ["bytes=15-", "bytes 15-19/20", "fghij"],
+      ["bytes=-3", "bytes 17-19/20", "hij"],
+      ["bytes=-100", "bytes 0-19/20", CONTENT],
+      ["bytes=18-99", "bytes 18-19/20", "ij"],
+      [" Bytes=0-0 ", "bytes 0-0/20", "0"],
+    ];
+
+    for (const [range, contentRange, body] of satisfiable) {
+      it(`answers ${JSON.stringify(range)} with 206 ${contentRange}`, async () => {
+        await using fixture = await makeRangeApp();
+
+        assertEquals(
+          await fetchRange(fixture.app, { Range: range }),
+          [206, contentRange, String(body.length), body],
+        );
+      });
+    }
+
+    for (const range of ["bytes=20-", "bytes=-0"]) {
+      it(`answers ${JSON.stringify(range)} with 416`, async () => {
+        await using fixture = await makeRangeApp();
+
+        assertEquals(
+          await fetchRange(fixture.app, { Range: range }),
+          [416, "bytes */20", "0", ""],
+        );
+      });
+    }
+
+    for (
+      const range of [
+        "bytes=5-2",
+        "bytes=-",
+        "bytes=0-1,4-5",
+        "items=0-1",
+        "bytes=a-b",
+      ]
+    ) {
+      it(`ignores ${JSON.stringify(range)} and sends the whole file`, async () => {
+        await using fixture = await makeRangeApp();
+
+        assertEquals(
+          await fetchRange(fixture.app, { Range: range }),
+          [200, null, "20", CONTENT],
+        );
+      });
+    }
+
+    it("ignores ranges of empty files", async () => {
+      await using fixture = await makeRangeApp();
+
+      assertEquals(
+        await fetchRange(fixture.app, { Range: "bytes=0-" }, {
+          path: "/empty.bin",
+        }),
+        [200, null, "0", ""],
+      );
+    });
+
+    it("ignores ranges of HEAD requests", async () => {
+      await using fixture = await makeRangeApp();
+
+      assertEquals(
+        await fetchRange(fixture.app, { Range: "bytes=2-5" }, {
+          method: "HEAD",
+        }),
+        [200, null, "20", ""],
+      );
+    });
+
+    it("sends the range while If-Range matches", async () => {
+      await using fixture = await makeRangeApp();
+
+      for (const ifRange of [fixture.etag, MTIME.toUTCString()]) {
+        assertEquals(
+          await fetchRange(fixture.app, {
+            Range: "bytes=2-5",
+            "If-Range": ifRange,
+          }),
+          [206, "bytes 2-5/20", "4", "2345"],
+        );
+      }
+    });
+
+    it("sends the whole file once If-Range no longer matches", async () => {
+      await using fixture = await makeRangeApp();
+      const stale = [
+        '"other"',
+        `W/${fixture.etag}`,
+        new Date(MTIME.getTime() - 1_000).toUTCString(),
+      ];
+
+      for (const ifRange of stale) {
+        assertEquals(
+          await fetchRange(fixture.app, {
+            Range: "bytes=2-5",
+            "If-Range": ifRange,
+          }),
+          [200, null, "20", CONTENT],
+        );
+      }
+    });
+
+    it("answers 304 before evaluating the range", async () => {
+      await using fixture = await makeRangeApp();
+      const [status] = await fetchRange(fixture.app, {
+        Range: "bytes=2-5",
+        "If-None-Match": fixture.etag,
+      });
+
+      assertEquals(status, 304);
+    });
+
+    it("slices Bun file blobs for ranges", async () => {
+      const file = spy((path: string) => new Blob([Deno.readFileSync(path)]));
+      await using fixture = await makeRangeApp({ Bun: { file } });
+
+      assertEquals(
+        await fetchRange(fixture.app, { Range: "bytes=2-5" }),
+        [206, "bytes 2-5/20", "4", "2345"],
+      );
+      assertSpyCalls(file, 2);
+    });
+
+    it("streams whole files to range requests on Bun", async () => {
+      const file = spy((path: string) => new Blob([Deno.readFileSync(path)]));
+      await using fixture = await makeRangeApp({ Bun: { file } });
+
+      assertEquals(
+        await fetchRange(fixture.app, {
+          Range: "bytes=2-5",
+          "If-Range": '"other"',
+        }),
+        [200, null, "20", CONTENT],
+      );
+      // Only the setup request without a Range header read a Bun file blob.
+      assertSpyCalls(file, 1);
     });
   });
 
