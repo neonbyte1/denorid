@@ -47,6 +47,7 @@ jobs:
           - jwt
           - microservices
           - platform-hono
+          - platform-socket-io
           - kv
           - s3
           - schedule
