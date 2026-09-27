@@ -58,7 +58,8 @@ export interface GatewayRuntimeOptions {
  */
 export class GatewayRuntime {
   private adapter?: WebSocketAdapter;
-  private readonly servers: Set<unknown> = new Set();
+  /** Every distinct server, with its events and the `Gateway.method()` handling each. */
+  private readonly servers: Map<unknown, Map<string, string>> = new Map();
 
   /**
    * @param {GatewayRuntimeOptions} options - Runtime dependencies.
@@ -73,8 +74,9 @@ export class GatewayRuntime {
    * @param {() => WebSocketAdapter | undefined} getAdapter - Returns the
    *   adapter to use.
    * @return {Promise<void>} Resolves once every gateway is connected.
-   * @throws {Error} When `getAdapter` returns no adapter, a gateway handles an
-   *   event in two methods or `afterInit` fails.
+   * @throws {Error} When `getAdapter` returns no adapter, an event is handled
+   *   by two methods of one gateway or of gateways sharing a server, or
+   *   `afterInit` fails.
    */
   public async connect(
     getAdapter: () => WebSocketAdapter | undefined,
@@ -112,7 +114,7 @@ export class GatewayRuntime {
    * @return {Promise<void>} Resolves once every server is closed.
    */
   public async close(): Promise<void> {
-    const servers = [...this.servers];
+    const servers = [...this.servers.keys()];
 
     this.servers.clear();
 
@@ -172,8 +174,30 @@ export class GatewayRuntime {
     }));
 
     const server = await adapter.create(getGatewayOptions(gateway));
+    let events = this.servers.get(server);
 
-    this.servers.add(server);
+    if (!events) {
+      events = new Map();
+      this.servers.set(server, events);
+    }
+
+    // Gateways sharing a server bind their handlers to the same clients, so
+    // an event must be unique per server, not only per gateway.
+    for (const { event, name } of subscriptions) {
+      const owner = events.get(event);
+      const method = `${gateway.name}.${String(name)}()`;
+
+      if (owner !== undefined) {
+        throw new Error(
+          `${method} subscribes to the event "${event}", which ${owner} ` +
+            "already handles on the same WebSocket server. Gateways with " +
+            "equal options share a server, and an event can be handled by " +
+            "one method per server only.",
+        );
+      }
+
+      events.set(event, method);
+    }
 
     for (const field of getWebSocketServerFields(gateway)) {
       instance[field] = server;
@@ -272,6 +296,7 @@ export class GatewayRuntime {
       if (isClass<CanActivate>(guard)) {
         allowed = await (await this.options.ctx.getHostModuleRef().get(guard, {
           contextId,
+          strict: false,
         })).canActivate(executionContext);
       } else if (isFunction<CanActivateFn>(guard)) {
         allowed = await guard(executionContext);

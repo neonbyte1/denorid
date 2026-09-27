@@ -1,4 +1,5 @@
 import {
+  Global,
   Injectable,
   InjectorContext,
   Module,
@@ -72,6 +73,7 @@ interface Harness extends AsyncDisposable {
 interface HarnessOptions {
   httpAdapter?: HttpAdapter;
   useAdapter?: boolean;
+  imports?: Type[];
 }
 
 function makeHttpAdapter(): HttpAdapter {
@@ -89,7 +91,7 @@ async function createApp(
   providers: Type[],
   options: HarnessOptions = {},
 ): Promise<Harness> {
-  @Module({ providers })
+  @Module({ imports: options.imports, providers })
   class AppModule {}
 
   let exceptionHandler!: ExceptionHandler;
@@ -254,6 +256,95 @@ describe("WebSocket gateways", () => {
         'DuplicateGateway subscribes to the event "ping" in both first() and second().',
       );
       assertEquals(h.adapter.servers.size, 0);
+    });
+
+    it("fails init when gateways sharing a server subscribe the same event", async () => {
+      @WebSocketGateway({ path: "/lobby" })
+      class LobbyGateway {
+        @SubscribeMessage("join")
+        public join(): void {}
+      }
+
+      @WebSocketGateway({ path: "/rooms" })
+      class RoomsGateway {
+        @SubscribeMessage("join")
+        public join(): void {}
+      }
+
+      @WebSocketGateway({ path: "/rooms" })
+      class ChatGateway {
+        @SubscribeMessage("message")
+        @SubscribeMessage("join")
+        public enter(): void {}
+      }
+
+      const h = await createApp([LobbyGateway, RoomsGateway, ChatGateway]);
+
+      await assertRejects(
+        () => h.app.init(),
+        Error,
+        'ChatGateway.enter() subscribes to the event "join", which RoomsGateway.join() already handles on the same WebSocket server.',
+      );
+
+      await h.app.close();
+
+      assertEquals(
+        h.adapter.closed.map(({ options }) => options.path),
+        ["/lobby", "/rooms"],
+      );
+    });
+
+    it("connects a gateway of a @Global() module once", async () => {
+      const calls: string[] = [];
+
+      @WebSocketGateway({ path: "/global" })
+      class GlobalGateway implements OnGatewayInit, OnGatewayConnection {
+        @SubscribeMessage("ping")
+        public ping(): string {
+          return "pong";
+        }
+
+        public afterInit(): void {
+          calls.push("init");
+        }
+
+        public handleConnection(): void {
+          calls.push("connect");
+        }
+      }
+
+      @Global()
+      @Module({ providers: [GlobalGateway], exports: [GlobalGateway] })
+      class GlobalModule {}
+
+      await using h = await createApp([], { imports: [GlobalModule] });
+      await h.app.init();
+
+      const client = connect(h, "/global");
+
+      assertEquals(calls, ["init", "connect"]);
+      assertEquals(client.handlers.map(({ event }) => event), ["ping"]);
+    });
+
+    it("connects a gateway of a nested module that does not export it", async () => {
+      @WebSocketGateway({ path: "/nested" })
+      class NestedGateway {
+        @SubscribeMessage("ping")
+        public ping(): string {
+          return "pong";
+        }
+      }
+
+      @Module({ providers: [NestedGateway] })
+      class ChatModule {}
+
+      @Module({ imports: [ChatModule] })
+      class FeatureModule {}
+
+      await using h = await createApp([], { imports: [FeatureModule] });
+      await h.app.init();
+
+      assertEquals(await connect(h, "/nested").send("ping", null), "pong");
     });
 
     it("fails init without a WebSocket adapter", async () => {
@@ -553,6 +644,46 @@ describe("WebSocket gateways", () => {
       assertStrictEquals(context.switchToWs().getClient(), client);
       assertEquals(context.switchToWs().getData(), { id: 1 });
       assertEquals(context.switchToWs().getPattern(), "guarded");
+    });
+
+    it("resolves class guards provided by any module, exported or not", async () => {
+      @Injectable()
+      class ExportedGuard implements CanActivate {
+        public canActivate(): boolean {
+          return true;
+        }
+      }
+
+      @Injectable()
+      class InternalGuard implements CanActivate {
+        public canActivate(): boolean {
+          return true;
+        }
+      }
+
+      @Module({ providers: [InternalGuard] })
+      class InternalModule {}
+
+      @Module({
+        imports: [InternalModule],
+        providers: [ExportedGuard],
+        exports: [ExportedGuard],
+      })
+      class GuardsModule {}
+
+      @UseGuards(ExportedGuard, InternalGuard)
+      @WebSocketGateway()
+      class Gateway {
+        @SubscribeMessage("guarded")
+        public guarded(): string {
+          return "ok";
+        }
+      }
+
+      await using h = await createApp([Gateway], { imports: [GuardsModule] });
+      await h.app.init();
+
+      assertEquals(await connect(h).send("guarded", null), "ok");
     });
 
     it("rejects with a WsException when a guard denies", async () => {

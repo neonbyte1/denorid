@@ -14,7 +14,8 @@ import {
  * The method receives a single `WsContext` argument; its return value is
  * delivered to the client (see `WsMessageHandler.callback`).
  *
- * Within one gateway, every event can be handled by one method only.
+ * Every event can be handled by one method per server only: within one
+ * gateway, and across gateways with equal options, which share a server.
  *
  * @example
  * ```ts
