@@ -7,6 +7,7 @@ import type {
   HttpApplicationContext,
 } from "./application_context.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
+import { REGISTERED_HTTP_ROUTES } from "./http/_routes.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
 import type { CorsOptions } from "./http/cors.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
@@ -102,7 +103,8 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
 
   /**
    * Creates the controller mapping, connects the WebSocket gateways, fires
-   * `onApplicationBootstrap`, then registers the routes.
+   * `onApplicationBootstrap`, then registers the routes and publishes them to
+   * `HttpRoutes` (a later bootstrap replaces the list).
    *
    * @returns {Promise<void>} Resolves when the application is bootstrapped.
    */
@@ -130,7 +132,10 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
 
     await super.bootstrap();
 
-    await controller.register(this.options.basePath);
+    REGISTERED_HTTP_ROUTES.set(
+      this.ctx,
+      await controller.register(this.options.basePath),
+    );
   }
 
   /**

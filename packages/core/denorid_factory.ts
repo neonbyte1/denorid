@@ -8,6 +8,7 @@ import type {
 } from "./application_context.ts";
 import { ExceptionHandler } from "./exceptions/handler.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
+import { HttpRoutes } from "./http/routes.ts";
 import {
   HttpApplication,
   type HttpApplicationOptions,
@@ -84,6 +85,10 @@ export class DenoridFactory {
         ctx.registerGlobal({
           provide: InjectorContext,
           useValue: ctx,
+        });
+        ctx.registerGlobal({
+          provide: HttpRoutes,
+          useValue: new HttpRoutes(ctx),
         });
       },
     });

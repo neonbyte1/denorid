@@ -17,7 +17,9 @@ import type { RequestMappingMetadata } from "./_request_mapping.ts";
 import { VALIDATED_INPUTS } from "./_validated.ts";
 import type { ControllerMappingOptions } from "./adapter.ts";
 import type { ControllerOptions } from "./controller_options.ts";
+import type { HttpMethod } from "./method.ts";
 import type { RequestContext } from "./request_context.ts";
+import type { HttpRoute } from "./routes.ts";
 
 /**
  * Splits a host into hostname and optional `:port`: `example.com:8080` and
@@ -59,17 +61,27 @@ export abstract class ControllerMapping {
    * Registers all HTTP controllers found in the injector context.
    *
    * @param {string} [basePath] - Optional path prefix applied to every controller.
-   * @return {Promise<void>} Resolves when all controllers have been registered.
+   * @return {Promise<readonly HttpRoute[]>} The registered routes in
+   *   registration order (frozen), one per controller path and route path.
    */
-  public async register(basePath?: string): Promise<void> {
+  public async register(basePath?: string): Promise<readonly HttpRoute[]> {
     basePath ??= "";
+
+    const routes: HttpRoute[] = [];
 
     for (
       const token of this.options.ctx.container
         .getTokensByTag(HTTP_CONTROLLER_METADATA, true)
     ) {
-      await this.registerController(token as Type<HttpController>, basePath);
+      routes.push(
+        ...await this.registerController(
+          token as Type<HttpController>,
+          basePath,
+        ),
+      );
     }
+
+    return Object.freeze(routes);
   }
 
   /**
@@ -111,23 +123,28 @@ export abstract class ControllerMapping {
    *
    * @param {Type<HttpController>} controllerClass - The controller class to register.
    * @param {string} basePath - The global path prefix to prepend.
-   * @return {Promise<void>} Resolves when all routes of the controller are registered.
+   * @return {Promise<HttpRoute[]>} The registered routes, one per controller
+   *   path and entry of the route path.
    */
   protected async registerController(
     controllerClass: Type<HttpController>,
     basePath: string,
-  ): Promise<void> {
+  ): Promise<HttpRoute[]> {
     const metadata = controllerClass[Symbol.metadata];
     const options = metadata?.[CONTROLLER_METADATA] as ControllerOptions;
     const controllerPaths = this.normalizePaths(options.path);
 
     const routes = (
       (metadata?.[CONTROLLER_REQUEST_MAPPING] ?? []) as RequestMappingMetadata[]
-    ).filter((route) => route.method !== undefined);
+    ).filter((route): route is RequestMappingMetadata & {
+      method: HttpMethod;
+    } => route.method !== undefined);
 
-    const controllerGuards = metadata?.[GUARDS_METADATA] as
+    const controllerGuardSet = metadata?.[GUARDS_METADATA] as
       | Set<Type<CanActivate> | CanActivate | CanActivateFn>
       | undefined;
+    const controllerGuards = [...(controllerGuardSet ?? [])];
+    const registered: HttpRoute[] = [];
 
     for (
       const controllerPath of controllerPaths.length > 0
@@ -140,11 +157,32 @@ export abstract class ControllerMapping {
         await this.registerRoute(
           controllerClass,
           controllerBasePath,
-          controllerGuards ? [...controllerGuards] : [],
+          [...controllerGuards],
           route,
         );
+
+        const guards = [
+          ...new Set([
+            ...this.options.globalGuards,
+            ...controllerGuards,
+            ...(route.guards ?? []),
+          ]),
+        ];
+        const routePaths = this.normalizePaths(route.path);
+
+        for (const routePath of routePaths.length > 0 ? routePaths : [""]) {
+          registered.push({
+            method: route.method,
+            path: this.joinPaths(controllerBasePath, routePath),
+            controller: controllerClass,
+            metadata: route,
+            guards,
+          });
+        }
       }
     }
+
+    return registered;
   }
 
   /**

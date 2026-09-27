@@ -12,6 +12,7 @@ import {
   isClassProvider,
 } from "@denorid/injector";
 import { ExceptionHandler } from "../exceptions/handler.ts";
+import { HttpRoutes } from "../http/routes.ts";
 import type { MockFactory } from "./mock_factory.ts";
 import { TestingModule } from "./testing_module.ts";
 
@@ -155,6 +156,7 @@ export class TestingModuleBuilder {
                 useValue: new ExceptionHandler(ctx),
               },
               { provide: InjectorContext, useValue: ctx },
+              { provide: HttpRoutes, useValue: new HttpRoutes(ctx) },
             ].map((global): Provider =>
               overrides.get(global.provide) ?? global
             ),

@@ -22,6 +22,8 @@ import type { HostArguments } from "./host_arguments.ts";
 import type { ControllerMappingOptions, HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
 import type { CorsOptions } from "./http/cors.ts";
+import { HttpMethod } from "./http/method.ts";
+import { type HttpRoute, HttpRoutes } from "./http/routes.ts";
 import { HttpApplication } from "./http_application.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
 import { FakeWebSocketAdapter } from "./websockets/_test_utils.ts";
@@ -46,7 +48,7 @@ function makeInjectorContext(): InjectorContext {
 
 function makeControllerMapping(): ControllerMapping {
   return {
-    register: () => Promise.resolve(),
+    register: () => Promise.resolve([]),
   } as unknown as ControllerMapping;
 }
 
@@ -121,6 +123,27 @@ describe("HttpApplication", () => {
       await app.init();
 
       assertSpyCalls(createMappingSpy, 1);
+    });
+
+    it("publishes the registered routes to HttpRoutes", async () => {
+      const ctx = makeInjectorContext();
+      const routes: readonly HttpRoute[] = Object.freeze([{
+        method: HttpMethod.GET,
+        path: "/api/threads",
+        controller: RootModule,
+        metadata: { name: "list", method: HttpMethod.GET },
+        guards: [],
+      }]);
+      const adapter = makeHttpAdapter({
+        register: (): Promise<readonly HttpRoute[]> => Promise.resolve(routes),
+      } as unknown as ControllerMapping);
+      const httpRoutes = new HttpRoutes(ctx);
+
+      assertEquals(httpRoutes.list(), []);
+
+      await makeApp({ adapter, ctx }).init();
+
+      assertStrictEquals(httpRoutes.list(), routes);
     });
 
     it("passes the cors option to the controller mapping", async () => {

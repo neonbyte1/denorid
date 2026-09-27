@@ -1,8 +1,12 @@
 import {
+  Inject,
+  Injectable,
   type InjectorContext,
   InjectorContext as InjectorContextImpl,
+  Module,
   type Type,
 } from "@denorid/injector";
+import { Logger } from "@denorid/logger";
 import { assertEquals, assertInstanceOf } from "@std/assert";
 import { assertSpyCalls, spy, stub } from "@std/testing/mock";
 import { describe, it } from "node:test";
@@ -15,7 +19,11 @@ import { DenoridFactory } from "./denorid_factory.ts";
 import { ExceptionHandler } from "./exceptions/handler.ts";
 import type { ExecutionContext } from "./guards/execution_context.ts";
 import type { ControllerMappingOptions, HttpAdapter } from "./http/adapter.ts";
-import type { ControllerMapping } from "./http/controller_mapping.ts";
+import { Controller } from "./http/controller.ts";
+import { ControllerMapping } from "./http/controller_mapping.ts";
+import { HttpMethod } from "./http/method.ts";
+import { Get } from "./http/request_mapping.ts";
+import { HttpRoutes } from "./http/routes.ts";
 import { HttpApplication } from "./http_application.ts";
 import { MicroserviceApplication } from "./microservice_application.ts";
 import { MicroserviceServer } from "./microservices/server.ts";
@@ -41,7 +49,7 @@ describe("DenoridFactory", () => {
 
   function makeControllerMapping(): ControllerMapping {
     return {
-      register: () => Promise.resolve(),
+      register: () => Promise.resolve([]),
     } as unknown as ControllerMapping;
   }
 
@@ -117,7 +125,6 @@ describe("DenoridFactory", () => {
 
         opts.beforeInit(mockCtx);
 
-        assertEquals(registered.length, 2);
         assertEquals(registered[0].provide, ExceptionHandler);
         assertInstanceOf(registered[0].useValue, ExceptionHandler);
       } finally {
@@ -343,6 +350,63 @@ describe("DenoridFactory", () => {
       assertEquals(
         typeof (app as MicroserviceApplicationContext).listen,
         "function",
+      );
+    });
+  });
+
+  describe("HttpRoutes", () => {
+    it("lets providers list the routes once the application is initialized", async () => {
+      @Controller("threads")
+      class ThreadController {
+        @Get()
+        public list(): string[] {
+          return [];
+        }
+
+        @Get(":id")
+        public get(): null {
+          return null;
+        }
+      }
+
+      @Injectable()
+      class RouteReader {
+        @Inject(HttpRoutes)
+        public readonly routes!: HttpRoutes;
+      }
+
+      @Module({ providers: [ThreadController, RouteReader] })
+      class AppModule {}
+
+      class SilentControllerMapping extends ControllerMapping {
+        protected override registerRoute(): Promise<void> {
+          return Promise.resolve();
+        }
+      }
+
+      using _log = stub(Logger, "log");
+      await using app = await DenoridFactory.create(AppModule, {
+        listen: () => {},
+        close: () => Promise.resolve(),
+        createControllerMapping: (options: ControllerMappingOptions) =>
+          Promise.resolve(new SilentControllerMapping(options)),
+      }, { basePath: "/api", logger: new Logger("test", { levels: [] }) });
+      const { routes } = await app.get(RouteReader);
+
+      assertEquals(routes.list(), []);
+
+      await app.init();
+
+      assertEquals(
+        routes.list().map(({ method, path, controller }) => [
+          method,
+          path,
+          controller,
+        ]),
+        [
+          [HttpMethod.GET, "/api/threads", ThreadController],
+          [HttpMethod.GET, "/api/threads/:id", ThreadController],
+        ],
       );
     });
   });

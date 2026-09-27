@@ -153,6 +153,37 @@ export class ThreadController {
   the values.
 - Refinements may be async.
 
+## Registered routes
+
+`HttpRoutes` lists the routes of the HTTP application, e.g. to generate API
+documentation. It is injectable in every application created by `DenoridFactory`
+(and in testing modules with `useCoreGlobals()`). The list is filled while the
+application initializes, after the `onApplicationBootstrap` hooks ran; it is
+empty before and in applications without HTTP adapter.
+
+```ts
+import { HttpMethod, HttpRoutes } from "@denorid/core";
+import { Inject, Injectable } from "@denorid/injector";
+
+@Injectable()
+export class RouteLister {
+  @Inject(HttpRoutes)
+  private readonly routes!: HttpRoutes;
+
+  public print(): void {
+    for (const { method, path, controller } of this.routes.list()) {
+      console.log(HttpMethod[method], path, controller.name);
+    }
+  }
+}
+```
+
+Every entry holds the `method`, the full `path` (base path, controller path and
+route path, e.g. `/api/threads/:id`; a path array gives one entry per path), the
+`controller` class, the route `metadata` (including the `@Body()`, `@Form()`,
+`@Query()` and `@Params()` schemas) and the `guards` (global, controller and
+method guards, without duplicates).
+
 ## Testing
 
 ```ts

@@ -399,6 +399,100 @@ describe("ControllerMapping", () => {
 
       assertEquals(mapping.routeCalls.length, 0);
     });
+
+    it("returns one route per controller path and route path, including the base path", async () => {
+      const list: RequestMappingMetadata = {
+        name: "list",
+        method: HttpMethod.GET,
+      };
+      const create: RequestMappingMetadata = {
+        name: "create",
+        method: HttpMethod.POST,
+        path: ["new", "/create/"],
+      };
+      const helper: RequestMappingMetadata = { name: "helper" };
+
+      class Threads {}
+      setControllerMetadata(Threads, { path: ["threads", "topics"] }, [
+        list,
+        create,
+        helper,
+      ]);
+
+      class Health {}
+      setControllerMetadata(Health, {}, [{
+        name: "check",
+        method: HttpMethod.GET,
+        path: "health",
+      }]);
+
+      const { ctx } = createMockContext([Threads, Health]);
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
+
+      const routes = await mapping.register("/api/");
+
+      assertEquals(
+        routes.map(({ method, path, controller }) => [
+          method,
+          path,
+          controller,
+        ]),
+        [
+          [HttpMethod.GET, "/api/threads", Threads],
+          [HttpMethod.POST, "/api/threads/new", Threads],
+          [HttpMethod.POST, "/api/threads/create", Threads],
+          [HttpMethod.GET, "/api/topics", Threads],
+          [HttpMethod.POST, "/api/topics/new", Threads],
+          [HttpMethod.POST, "/api/topics/create", Threads],
+          [HttpMethod.GET, "/api/health", Health],
+        ],
+      );
+      assertStrictEquals(routes[0].metadata, list);
+      assertStrictEquals(routes[2].metadata, create);
+      assertEquals(Object.isFrozen(routes), true);
+    });
+
+    it("lists the global, controller and method guards of a route without duplicates", async () => {
+      const globalGuard: CanActivateFn = () => true;
+      const sharedGuard: CanActivateFn = () => true;
+      const controllerGuard: CanActivateFn = () => true;
+      const methodGuard: CanActivateFn = () => true;
+
+      class FakeController {}
+      setControllerMetadata(
+        FakeController,
+        { path: "guarded" },
+        [
+          {
+            name: "get",
+            method: HttpMethod.GET,
+            guards: new Set([controllerGuard, methodGuard, globalGuard]),
+          },
+          { name: "open", method: HttpMethod.GET, path: "open" },
+        ],
+        new Set([sharedGuard, controllerGuard]),
+      );
+
+      const { ctx } = createMockContext([FakeController]);
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [globalGuard, sharedGuard],
+        cors: undefined,
+      });
+
+      const routes = await mapping.register();
+
+      assertEquals(routes.map(({ guards }) => guards), [
+        [globalGuard, sharedGuard, controllerGuard, methodGuard],
+        [globalGuard, sharedGuard, controllerGuard],
+      ]);
+    });
   });
 
   describe("validateRequest()", () => {

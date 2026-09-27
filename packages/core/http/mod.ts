@@ -29,6 +29,7 @@ export * from "./http_code.ts";
 export * from "./method.ts";
 export * from "./request_context.ts";
 export * from "./request_mapping.ts";
+export * from "./routes.ts";
 export * from "./status.ts";
 export * from "./validation.ts";
 

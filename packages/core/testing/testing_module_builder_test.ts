@@ -20,6 +20,7 @@ import {
 } from "@std/assert";
 import { afterEach, describe, it } from "node:test";
 import { ExceptionHandler } from "../exceptions/handler.ts";
+import { HttpRoutes } from "../http/routes.ts";
 import type { TestingModule } from "./testing_module.ts";
 import { Test, TestingModuleBuilder } from "./testing_module_builder.ts";
 
@@ -502,6 +503,9 @@ describe(TestingModuleBuilder.name, () => {
 
         @Inject(InjectorContext)
         injectorContext!: InjectorContext;
+
+        @Inject(HttpRoutes)
+        routes!: HttpRoutes;
       }
 
       module = await Test.createTestingModule({
@@ -514,6 +518,7 @@ describe(TestingModuleBuilder.name, () => {
 
       assertInstanceOf(svc.exceptionHandler, ExceptionHandler);
       assertInstanceOf(svc.injectorContext, InjectorContext);
+      assertEquals(svc.routes.list(), []);
     });
 
     it("keeps core globals opt-in", async () => {
