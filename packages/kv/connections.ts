@@ -1,6 +1,11 @@
+import type { Kv } from "@deno/kv";
 import { ExceptionHandler, RpcHostArguments } from "@denorid/core";
 import { Inject, Injectable } from "@denorid/injector";
-import { type ConnectionEntry, createConnectionMap } from "./_connections.ts";
+import {
+  type ConnectionEntry,
+  createConnectionMap,
+  openKv,
+} from "./_connections.ts";
 import { DEFAULT_QUEUE_NAME, KV_MODULE_OPTIONS } from "./_constants.ts";
 import {
   ConnectionNotEstablishedException,
@@ -8,8 +13,11 @@ import {
 } from "./exceptions.ts";
 
 /**
- * Manages Deno KV connections registered via the module options.
+ * Manages the KV connections registered via the module options.
  * Provides access to individual connections by name and controls their lifecycle.
+ *
+ * On Deno the native `Deno.openKv` opens the stores (requires `--unstable-kv`
+ * or Deno Deploy), on Node.js and Bun the `@deno/kv` package is used.
  */
 @Injectable()
 export class KvConnections {
@@ -23,14 +31,18 @@ export class KvConnections {
   private readonly exceptionHandler!: ExceptionHandler;
 
   /**
-   * Retrieves an open `Deno.Kv` instance by connection name.
+   * Retrieves an open KV instance by connection name.
+   *
+   * On Deno the instance is a native `Deno.Kv`; cast it
+   * (`kv as unknown as Deno.Kv`) to reach Deno-only members such as
+   * `commitVersionstamp`.
    *
    * @param {string} [name] - The connection name. Defaults to the default queue name when omitted.
-   * @return {Deno.Kv} The open KV instance.
+   * @return {Kv} The open KV instance.
    * @throws {ConnectionNotFoundException} When no connection is registered under `name`.
    * @throws {ConnectionNotEstablishedException} When the connection has not been opened yet.
    */
-  public get(name?: string): Deno.Kv {
+  public get(name?: string): Kv {
     name ??= DEFAULT_QUEUE_NAME;
 
     const conn = this.connections.get(name);
@@ -47,7 +59,9 @@ export class KvConnections {
   }
 
   /**
-   * Opens all registered KV connections.
+   * Opens all registered KV connections that are not open yet.
+   * Uses the native `Deno.openKv` when available, otherwise `openKv` of
+   * `@deno/kv` with the connection's `openOptions`.
    * Errors per connection are forwarded to the exception handler rather than thrown.
    *
    * @return {Promise<void>}
@@ -55,7 +69,7 @@ export class KvConnections {
   public async connect(): Promise<void> {
     for (const entry of this.connections.values()) {
       try {
-        entry.kv ??= await Deno.openKv(entry.path);
+        entry.kv ??= await openKv(entry.path, entry.openOptions);
       } catch (err) {
         this.exceptionHandler.handle(
           err,
@@ -87,7 +101,7 @@ export class KvConnections {
 }
 
 /**
- * Parameter decorator that injects a `Deno.Kv` instance from {@link KvConnections}.
+ * Parameter decorator that injects a {@link Kv} instance from {@link KvConnections}.
  *
  * @param {string} [name] - The connection name to inject. Defaults to the default connection when omitted.
  * @return {ReturnType<typeof Inject>} A parameter decorator.

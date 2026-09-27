@@ -1,3 +1,4 @@
+import type { AtomicOperation, Kv, KvCommitResult, KvKey } from "@deno/kv";
 import { assertEquals, assertStrictEquals } from "@std/assert";
 import { describe, it } from "node:test";
 import type { KvConnections } from "../connections.ts";
@@ -13,7 +14,7 @@ function createQueue(connections: KvConnections): KvQueue {
 
 describe(KvQueue.name, () => {
   it("enqueues an id-only message on the default queue", async () => {
-    const result = { ok: true, versionstamp: "1" } as Deno.KvCommitResult;
+    const result = { ok: true, versionstamp: "1" } as KvCommitResult;
     const calls: unknown[][] = [];
     const queue = createQueue({
       get: (name?: string) => {
@@ -25,7 +26,7 @@ describe(KvQueue.name, () => {
 
             return Promise.resolve(result);
           },
-        } as unknown as Deno.Kv;
+        } as unknown as Kv;
       },
     } as KvConnections);
 
@@ -37,8 +38,8 @@ describe(KvQueue.name, () => {
   });
 
   it("enqueues payloads, named queues, and enqueue options", async () => {
-    const result = { ok: true, versionstamp: "2" } as Deno.KvCommitResult;
-    const options = { delay: 100, keysIfUndelivered: [["dead"] as Deno.KvKey] };
+    const result = { ok: true, versionstamp: "2" } as KvCommitResult;
+    const options = { delay: 100, keysIfUndelivered: [["dead"] as KvKey] };
     const calls: unknown[][] = [];
     const queue = createQueue({
       get: (name?: string) => {
@@ -50,7 +51,7 @@ describe(KvQueue.name, () => {
 
             return Promise.resolve(result);
           },
-        } as unknown as Deno.Kv;
+        } as unknown as Kv;
       },
     } as KvConnections);
 
@@ -80,9 +81,9 @@ describe(KvQueue.name, () => {
             return Promise.resolve({
               ok: true,
               versionstamp: "3",
-            } as Deno.KvCommitResult);
+            } as KvCommitResult);
           },
-        }) as unknown as Deno.Kv,
+        }) as unknown as Kv,
     } as KvConnections);
 
     await queue.send({ id: "event", payload: null as unknown as object });
@@ -97,7 +98,7 @@ describe(KvQueue.name, () => {
 
         return atomicOperation;
       },
-    } as unknown as Deno.AtomicOperation;
+    } as unknown as AtomicOperation;
     const calls: unknown[][] = [];
     const options = { backoffSchedule: [10, 20] };
     const queue = createQueue({
@@ -110,7 +111,7 @@ describe(KvQueue.name, () => {
 
             return atomicOperation;
           },
-        } as unknown as Deno.Kv;
+        } as unknown as Kv;
       },
     } as KvConnections);
 

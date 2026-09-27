@@ -1,14 +1,15 @@
+import type { AtomicOperation, KvCommitResult, KvKey } from "@deno/kv";
 import { Inject, Injectable } from "@denorid/injector";
 import { KvConnections } from "../connections.ts";
 
 /**
- * Options forwarded directly to `Deno.Kv.enqueue`.
+ * Options forwarded directly to `Kv.enqueue`.
  */
 export interface EnqueueOptions {
   /** Delay in milliseconds before the message is delivered. */
   delay?: number;
   /** KV keys that receive the message value if delivery ultimately fails. */
-  keysIfUndelivered?: Deno.KvKey[];
+  keysIfUndelivered?: KvKey[];
   /** Custom retry backoff intervals in milliseconds. */
   backoffSchedule?: number[];
 }
@@ -23,12 +24,12 @@ export interface KvQueueSendOptions {
   queue?: string;
   /** Optional payload to attach to the message. */
   payload?: object;
-  /** Additional enqueue options forwarded to Deno KV. */
+  /** Additional enqueue options forwarded to the KV store. */
   options?: EnqueueOptions;
 }
 
 /**
- * The internal message envelope stored in Deno KV.
+ * The internal message envelope stored in the KV queue.
  */
 export interface KvQueueMessage {
   /** The event identifier. */
@@ -38,7 +39,7 @@ export interface KvQueueMessage {
 }
 
 /**
- * Injectable service for sending messages to a Deno KV queue.
+ * Injectable service for sending messages to a KV queue.
  */
 @Injectable()
 export class KvQueue {
@@ -52,21 +53,21 @@ export class KvQueue {
    * Sends a message to the queue, returning a commit result promise.
    *
    * @param {KvQueueSendOptions} options - The message options.
-   * @return {Promise<Deno.KvCommitResult>}
+   * @return {Promise<KvCommitResult>}
    */
-  public send(options: KvQueueSendOptions): Promise<Deno.KvCommitResult>;
+  public send(options: KvQueueSendOptions): Promise<KvCommitResult>;
   /**
    * Sends a message to the queue as part of an atomic operation.
    *
    * @param {KvQueueSendOptions & { atomic: true }} options - The message options with the atomic flag set.
-   * @return {Deno.AtomicOperation}
+   * @return {AtomicOperation}
    */
   public send(
     options: KvQueueSendOptions & { atomic: true },
-  ): Deno.AtomicOperation;
+  ): AtomicOperation;
   public send(
     options: KvQueueSendOptions | (KvQueueSendOptions & { atomic: true }),
-  ): Promise<Deno.KvCommitResult> | Deno.AtomicOperation {
+  ): Promise<KvCommitResult> | AtomicOperation {
     const kv = this.connections.get(options.queue);
     const message: KvQueueMessage = { id: options.id };
 

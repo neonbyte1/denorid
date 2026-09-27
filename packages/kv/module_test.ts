@@ -1,33 +1,18 @@
 import { Test } from "@denorid/core/testing";
 import { Module } from "@denorid/injector";
-import {
-  assertEquals,
-  assertInstanceOf,
-  assertStrictEquals,
-} from "@std/assert";
-import { stub } from "@std/testing/mock";
+import { assertEquals, assertExists, assertInstanceOf } from "@std/assert";
 import { describe, it } from "node:test";
 import { KvConnections } from "./connections.ts";
 import { KvModule } from "./module.ts";
 import { KvQueue } from "./queue/mod.ts";
 
-function createKv(): Deno.Kv {
-  return { close: () => {} } as unknown as Deno.Kv;
-}
-
 describe(KvModule.name, () => {
   it("forRoot registers options and connects during module initialization", async () => {
-    const openedKv = createKv();
-    const opened: Array<string | undefined> = [];
-    const openKvStub = stub(Deno, "openKv", (path?: string) => {
-      opened.push(path);
-
-      return Promise.resolve(openedKv);
-    });
+    const openOptions = { debug: false };
     const module = await Test.createTestingModule({
       imports: [
         KvModule.forRoot({
-          connection: { path: "/tmp/for-root.db", queue: true },
+          connection: { path: ":memory:", queue: true, openOptions },
         }),
       ],
     })
@@ -38,32 +23,26 @@ describe(KvModule.name, () => {
       const connections = await module.get(KvConnections);
       const entry = connections.connections.get("default");
 
-      assertEquals(opened, ["/tmp/for-root.db"]);
-      assertEquals(entry?.path, "/tmp/for-root.db");
+      assertEquals(entry?.path, ":memory:");
       assertEquals(entry?.queue, true);
-      assertStrictEquals(entry?.kv, openedKv);
+      assertEquals(entry?.openOptions, openOptions);
+      assertExists(entry?.kv);
+      await connections.get().set(["key"], "value");
+      assertEquals((await connections.get().get(["key"])).value, "value");
     } finally {
       await module.close();
-      openKvStub.restore();
     }
   });
 
   it("forRootAsync injects imported dependencies and awaits factory results", async () => {
     const CONFIG = Symbol("CONFIG");
-    const openedKv = createKv();
-    const opened: Array<string | undefined> = [];
 
     @Module({
-      providers: [{ provide: CONFIG, useValue: "/tmp/async.db" }],
+      providers: [{ provide: CONFIG, useValue: ":memory:" }],
       exports: [CONFIG],
     })
     class ConfigModule {}
 
-    const openKvStub = stub(Deno, "openKv", (path?: string) => {
-      opened.push(path);
-
-      return Promise.resolve(openedKv);
-    });
     const module = await Test.createTestingModule({
       imports: [
         KvModule.forRootAsync({
@@ -82,24 +61,18 @@ describe(KvModule.name, () => {
 
     try {
       const connections = await module.get(KvConnections);
-      const entry = connections.connections.get("default");
+      const { kv, ...entry } = connections.connections.get("default") ?? {};
 
-      assertEquals(opened, ["/tmp/async.db"]);
-      assertEquals(entry, {
-        path: "/tmp/async.db",
-        queue: false,
-        kv: openedKv,
-      });
+      assertEquals(entry, { path: ":memory:", queue: false });
+      assertExists(kv);
     } finally {
       await module.close();
-      openKvStub.restore();
     }
   });
 
   it("exports connections and queue providers from a compiled testing module", async () => {
-    const openKvStub = stub(Deno, "openKv", () => Promise.resolve(createKv()));
     const module = await Test.createTestingModule({
-      imports: [KvModule.forRoot({ connection: "/tmp/exported.db" })],
+      imports: [KvModule.forRoot({ connection: ":memory:" })],
     })
       .useCoreGlobals()
       .compile();
@@ -109,7 +82,6 @@ describe(KvModule.name, () => {
       assertInstanceOf(await module.get(KvQueue), KvQueue);
     } finally {
       await module.close();
-      openKvStub.restore();
     }
   });
 });

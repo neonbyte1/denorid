@@ -1,15 +1,16 @@
+import type { Kv } from "@deno/kv";
 import type { ExceptionHandler } from "@denorid/core";
 import { RpcHostArguments } from "@denorid/core";
 import { Test } from "@denorid/core/testing";
 import { Injectable } from "@denorid/injector";
 import {
   assertEquals,
+  assertExists,
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
-import { stub } from "@std/testing/mock";
 import { describe, it } from "node:test";
 import type { ConnectionEntry } from "./_connections.ts";
 import {
@@ -18,8 +19,10 @@ import {
 } from "./exceptions.ts";
 import { InjectKv, KvConnections } from "./connections.ts";
 
-function createKv(close: () => void = () => {}): Deno.Kv {
-  return { close } as unknown as Deno.Kv;
+const UNREACHABLE_PATH = "/denorid-kv-missing-directory/store.db";
+
+function createKv(close: () => void = () => {}): Kv {
+  return { close } as unknown as Kv;
 }
 
 function createService(
@@ -81,54 +84,54 @@ describe(KvConnections.name, () => {
   });
 
   it("opens missing connections and preserves existing kv instances", async () => {
-    const opened: Array<string | undefined> = [];
+    const handled: unknown[] = [];
     const existingKv = createKv();
-    const openedKv = createKv();
     const entries = new Map<string, ConnectionEntry>([
-      ["default", { path: "/tmp/default.db" }],
-      ["existing", { path: "/tmp/existing.db", kv: existingKv }],
+      ["default", { path: ":memory:" }],
+      ["existing", { path: UNREACHABLE_PATH, kv: existingKv }],
     ]);
-    const service = createService(entries);
-    const openKvStub = stub(Deno, "openKv", (path?: string) => {
-      opened.push(path);
+    const service = createService(entries, handled);
 
-      return Promise.resolve(openedKv);
-    });
+    await service.connect();
 
     try {
-      await service.connect();
-    } finally {
-      openKvStub.restore();
-    }
+      const opened = entries.get("default")?.kv;
 
-    assertEquals(opened, ["/tmp/default.db"]);
-    assertStrictEquals(entries.get("default")?.kv, openedKv);
-    assertStrictEquals(entries.get("existing")?.kv, existingKv);
+      assertExists(opened);
+      await opened.set(["key"], "value");
+      assertEquals((await opened.get(["key"])).value, "value");
+      assertStrictEquals(entries.get("existing")?.kv, existingKv);
+      assertEquals(handled, []);
+    } finally {
+      service.close();
+    }
   });
 
-  it("delegates open errors to the exception handler", async () => {
+  it("delegates open errors to the exception handler and keeps opening the others", async () => {
     const handled: unknown[] = [];
-    const failure = new Error("open failed");
-    const service = createService(
-      new Map([["default", { path: "/tmp/default.db" }]]),
-      handled,
-    );
-    const openKvStub = stub(Deno, "openKv", () => Promise.reject(failure));
+    const entries = new Map<string, ConnectionEntry>([
+      ["broken", { path: UNREACHABLE_PATH }],
+      ["default", { path: ":memory:" }],
+    ]);
+    const service = createService(entries, handled);
+
+    await service.connect();
 
     try {
-      await service.connect();
-    } finally {
-      openKvStub.restore();
-    }
+      assertEquals(handled.length, 1);
+      assertInstanceOf((handled[0] as unknown[])[0], Error);
+      assertInstanceOf((handled[0] as unknown[])[1], RpcHostArguments);
 
-    assertEquals(handled.length, 1);
-    assertStrictEquals((handled[0] as unknown[])[0], failure);
-    assertInstanceOf((handled[0] as unknown[])[1], RpcHostArguments);
-    assertEquals(
-      ((handled[0] as unknown[])[1] as RpcHostArguments).switchToRpc()
-        .getPattern(),
-      "kv:connect",
-    );
+      const rpc = ((handled[0] as unknown[])[1] as RpcHostArguments)
+        .switchToRpc();
+
+      assertEquals(rpc.getPattern(), "kv:connect");
+      assertEquals(rpc.getData(), UNREACHABLE_PATH);
+      assertEquals(entries.get("broken")?.kv, undefined);
+      assertExists(entries.get("default")?.kv);
+    } finally {
+      service.close();
+    }
   });
 
   it("closes established connections and deletes kv references", () => {
@@ -186,13 +189,13 @@ describe(KvConnections.name, () => {
     @Injectable()
     class UsesDefaultKv {
       @InjectKv()
-      kv!: Deno.Kv;
+      kv!: Kv;
     }
 
     @Injectable()
     class UsesNamedKv {
       @InjectKv("named")
-      kv!: Deno.Kv;
+      kv!: Kv;
     }
 
     const module = await Test.createTestingModule({
@@ -215,7 +218,7 @@ describe(KvConnections.name, () => {
     @Injectable()
     class UsesMissingKv {
       @InjectKv("missing")
-      kv!: Deno.Kv;
+      kv!: Kv;
     }
 
     const module = await Test.createTestingModule({

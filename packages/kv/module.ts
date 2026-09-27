@@ -15,7 +15,8 @@ import type {
 import { KvQueue, KvQueueListener } from "./queue/mod.ts";
 
 /**
- * Denorid module that registers and manages Deno KV connections.
+ * Denorid module that registers and manages KV connections (native Deno KV
+ * on Deno, `@deno/kv` on Node.js and Bun).
  * Use {@link KvModule.forRoot} or {@link KvModule.forRootAsync} to configure connections.
  */
 @Module({
