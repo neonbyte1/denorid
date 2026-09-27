@@ -32,22 +32,37 @@ export async function connectWithRetry(
       }
     }
 
-    signal?.throwIfAborted();
-
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      reject(signal!.reason);
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, retryDelay);
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    await promise;
+    await delay(retryDelay, signal);
   }
+}
+
+/**
+ * Waits `ms` milliseconds.
+ *
+ * @param {number} ms - How long to wait, in milliseconds.
+ * @param {AbortSignal} [signal] - Aborting it clears the timer and rejects
+ * with `signal.reason`; an already aborted signal rejects right away.
+ * @return {Promise<void>} Resolves once the time elapsed.
+ * @throws {unknown} `signal.reason` once aborted.
+ */
+export function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason);
+  }
+
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const onAbort = (): void => {
+    clearTimeout(timer);
+    reject(signal!.reason);
+  };
+  const timer = setTimeout(() => {
+    signal?.removeEventListener("abort", onAbort);
+    resolve();
+  }, ms);
+
+  signal?.addEventListener("abort", onAbort, { once: true });
+
+  return promise;
 }
 
 /**

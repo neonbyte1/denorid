@@ -5,8 +5,9 @@ import {
   serializePattern,
 } from "@denorid/core/microservices";
 import type { InjectorContext, Type } from "@denorid/injector";
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import { spy, stub } from "@std/testing/mock";
+import { FakeTime } from "@std/testing/time";
 import amqplib, { type Options } from "amqplib";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
@@ -155,19 +156,32 @@ function flush(): Promise<void> {
 }
 
 /**
- * Starts `server.listen()` and waits for its setup. `outcome` settles with
- * `undefined` once `listen()` resolves or with the error it rejected with.
+ * Answers each `amqplib.connect` call with the next of `results`: a
+ * connection (or a promise of one) to resolve with, or an error to reject with.
  */
-async function start(
-  server: RmqServer,
-): Promise<{ outcome: Promise<Error | undefined> }> {
-  const outcome = server.listen().then(
-    () => undefined,
-    (err: Error) => err,
-  );
-  await flush();
+function sequence(
+  ...results: (FakeConnection | Promise<FakeConnection> | Error)[]
+): () => Promise<never> {
+  let calls = 0;
 
-  return { outcome };
+  return () => {
+    const result = results[calls++];
+
+    return result instanceof Error
+      ? Promise.reject(result)
+      : Promise.resolve(result as never);
+  };
+}
+
+/** Makes `channel.consume` wait for the returned gate before it starts. */
+function holdConsume(channel: FakeChannel): PromiseWithResolvers<void> {
+  const gate = Promise.withResolvers<void>();
+  const { consume } = channel;
+
+  channel.consume = (queue, fn, opts) =>
+    gate.promise.then(() => consume(queue, fn, opts));
+
+  return gate;
 }
 
 function serve(
@@ -195,12 +209,12 @@ describe(RmqServer.name, () => {
   });
 
   describe("close()", () => {
-    it("cancels the consumer, closes channel and connection, and resolves listen()", async () => {
+    it("cancels the consumer, then closes channel and connection", async () => {
       const conn = new FakeConnection();
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({});
-      const { outcome } = await start(server);
+      await server.listen();
       await server.close();
 
       assertEquals(conn.log, [
@@ -208,7 +222,6 @@ describe(RmqServer.name, () => {
         "channel.close",
         "connection.close",
       ]);
-      assertEquals(await outcome, undefined);
     });
 
     it("lets an in-flight handler reply and ack before closing the channel", async () => {
@@ -227,7 +240,7 @@ describe(RmqServer.name, () => {
 
       const server = new RmqServer({ consumerTag: "my-tag" });
       serve(server, SlowCtrl);
-      const { outcome } = await start(server);
+      await server.listen();
       conn.channel.messageHandler!(makeMsg("slow", null, {
         correlationId: "cid",
         replyTo: "reply-q",
@@ -249,7 +262,6 @@ describe(RmqServer.name, () => {
         "connection.close",
       ]);
       assertEquals(conn.channel.replies[0].body, "done");
-      assertEquals(await outcome, undefined);
     });
 
     it("still closes channel and connection when cancelling the consumer fails", async () => {
@@ -258,15 +270,27 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({});
-      await start(server);
+      await server.listen();
       await server.close();
 
       assertEquals(conn.log, ["channel.close", "connection.close"]);
     });
 
-    it("is safe to call when not connected", async () => {
+    it("is safe to call before listen() and twice", async () => {
+      const conn = new FakeConnection();
+      using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
+
       const server = new RmqServer({});
       await server.close();
+      await server.listen();
+      await server.close();
+      await server.close();
+
+      assertEquals(conn.log, [
+        "cancel:ctag",
+        "channel.close",
+        "connection.close",
+      ]);
     });
 
     it("swallows channel.close() and connection.close() errors", async () => {
@@ -278,14 +302,118 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({});
-      const { outcome } = await start(server);
+      await server.listen();
       await server.close();
+    });
 
-      assertEquals(await outcome, undefined);
+    it("stops a pending listen(), which resolves; the connection it gets later is closed unused", async () => {
+      const connecting = Promise.withResolvers<FakeConnection>();
+      const conn = new FakeConnection();
+      using _s = stub(amqplib, "connect", sequence(connecting.promise));
+
+      const server = new RmqServer({});
+      const listening = server.listen();
+      const closing = server.close();
+
+      connecting.resolve(conn);
+      await closing;
+
+      assertEquals(conn.log, ["connection.close"]);
+      assertEquals(conn.channel.messageHandler, undefined);
+      await listening;
+    });
+
+    it("stops the connection retries of a pending listen()", async () => {
+      using time = new FakeTime();
+      using connect = stub(
+        amqplib,
+        "connect",
+        () => Promise.reject(new Error("refused")),
+      );
+
+      const server = new RmqServer({
+        maxConnectionAttempts: 5,
+        retryDelay: 1000,
+      });
+      const listening = server.listen();
+
+      await time.tickAsync(500);
+      await server.close();
+      await listening;
+      await time.tickAsync(5000);
+
+      assertEquals(connect.calls.length, 1);
+    });
+
+    it("shuts down a session whose consumer started while it waited", async () => {
+      const conn = new FakeConnection();
+      const consuming = holdConsume(conn.channel);
+      using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
+
+      const server = new RmqServer({});
+      const listening = server.listen();
+      await flush();
+      const closing = server.close();
+
+      consuming.resolve();
+      await listening;
+      await closing;
+
+      assertEquals(conn.log, [
+        "cancel:ctag",
+        "channel.close",
+        "connection.close",
+      ]);
     });
   });
 
-  describe("listen() - connection lifecycle", () => {
+  describe("listen() - startup", () => {
+    it("resolves once the consumer runs", async () => {
+      const conn = new FakeConnection();
+      const consuming = holdConsume(conn.channel);
+      using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
+      let listening = false;
+
+      const server = new RmqServer({});
+      const started = server.listen().then(() => {
+        listening = true;
+      });
+      await flush();
+      assertEquals(listening, false);
+
+      consuming.resolve();
+      await started;
+
+      assertEquals(conn.channel.messageHandler !== undefined, true);
+      await server.close();
+    });
+
+    it("retries the connection maxConnectionAttempts times, retryDelay ms apart", async () => {
+      const conn = new FakeConnection();
+      using connect = stub(
+        amqplib,
+        "connect",
+        sequence(new Error("refused"), conn),
+      );
+
+      const server = new RmqServer({ maxConnectionAttempts: 2, retryDelay: 0 });
+      await server.listen();
+
+      assertEquals(connect.calls.length, 2);
+      assertEquals(conn.channel.messageHandler !== undefined, true);
+      await server.close();
+    });
+
+    it("rejects when the broker is unreachable", async () => {
+      using _s = stub(
+        amqplib,
+        "connect",
+        () => Promise.reject(new Error("refused")),
+      );
+
+      await assertRejects(() => new RmqServer({}).listen(), Error, "refused");
+    });
+
     it("logs connection and channel errors instead of crashing, also during setup", async () => {
       const gate = Promise.withResolvers<void>();
       const conn = new FakeConnection();
@@ -299,80 +427,264 @@ describe(RmqServer.name, () => {
         (server as unknown as ServerInternals).logger,
         "error",
       );
-      const { outcome } = await start(server);
+      const listening = server.listen();
+      await flush();
 
       conn.emit("error", new Error("setup conn error"));
       conn.channel.emit("error", new Error("setup channel error"));
       gate.resolve();
-      await flush();
+      await listening;
       conn.emit("error", new Error("conn error"));
       conn.channel.emit("error", new Error("channel error"));
 
       assertEquals(errorSpy.calls.length, 4);
-      assertEquals(conn.channel.consumeOptions !== undefined, true);
-      await server.close();
-      assertEquals(await outcome, undefined);
-    });
-
-    it("rejects listen() with the cause when the connection closes unexpectedly", async () => {
-      const conn = new FakeConnection();
-      using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
-      const cause = new Error("socket reset");
-
-      const server = new RmqServer({});
-      const { outcome } = await start(server);
-      conn.channel.emit("close");
-      conn.emit("close", cause);
-
-      const err = await outcome;
-      assertEquals(err?.message, "RMQ connection closed unexpectedly");
-      assertStrictEquals(err?.cause, cause);
       await server.close();
     });
 
-    it("rejects listen() and closes the connection when the consumer channel closes unexpectedly", async () => {
-      const conn = new FakeConnection();
-      using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
-
-      const server = new RmqServer({});
-      const { outcome } = await start(server);
-      conn.channel.emit("close");
-
-      assertEquals(
-        (await outcome)?.message,
-        "RMQ channel closed unexpectedly",
-      );
-      assertEquals(conn.closeCalls, 1);
-      await server.close();
-    });
-
-    it("closes the connection and rethrows when topology setup fails", async () => {
+    it("closes the connection and rejects when the topology setup fails", async () => {
       const conn = new FakeConnection();
       const failure = new Error("PRECONDITION_FAILED");
       conn.channel.assertQueue = () => Promise.reject(failure);
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
-      const server = new RmqServer({});
-      const { outcome } = await start(server);
+      const err = await assertRejects(() => new RmqServer({}).listen());
 
-      assertStrictEquals(await outcome, failure);
+      assertStrictEquals(err, failure);
       assertEquals(conn.closeCalls, 1);
     });
 
-    it("rejects listen() with the setup error when the connection drops during setup", async () => {
+    it("rejects with the setup error and does not reconnect when the connection drops during setup", async () => {
       const gate = Promise.withResolvers<{ queue: string }>();
       const conn = new FakeConnection();
       conn.channel.assertQueue = () => gate.promise;
-      using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
+      using connect = stub(
+        amqplib,
+        "connect",
+        () => Promise.resolve(conn as never),
+      );
 
       const server = new RmqServer({});
-      const { outcome } = await start(server);
+      const listening = server.listen();
+      await flush();
       conn.channel.emit("close");
       conn.emit("close", new Error("socket reset"));
       gate.reject(new Error("Channel closed"));
 
-      assertEquals((await outcome)?.message, "Channel closed");
+      await assertRejects(() => listening, Error, "Channel closed");
       await flush();
+      assertEquals(connect.calls.length, 1);
+      assertEquals(conn.closeCalls, 1);
+    });
+  });
+
+  describe("listen() - reconnecting", () => {
+    it("logs a dropped connection with its cause and consumes again on a new one", async () => {
+      @MessageController()
+      class Ctrl {
+        @MessagePattern("greet")
+        greet(data: unknown): string {
+          return `hello ${data}`;
+        }
+      }
+
+      const first = new FakeConnection();
+      const second = new FakeConnection();
+      using connect = stub(amqplib, "connect", sequence(first, second));
+      const cause = new Error("socket reset");
+
+      const server = new RmqServer({});
+      const errorSpy = spy(
+        (server as unknown as ServerInternals).logger,
+        "error",
+      );
+      serve(server, Ctrl);
+      await server.listen();
+
+      // amqplib closes the channels of a dropped connection first.
+      first.channel.emit("close");
+      first.emit("close", cause);
+      await flush();
+
+      assertEquals(connect.calls.length, 2);
+      assertEquals(errorSpy.calls.map((call) => call.args), [
+        ["RMQ connection closed unexpectedly, reconnecting", cause],
+      ]);
+      assertEquals(first.closeCalls, 1);
+
+      second.channel.messageHandler!(makeMsg("greet", "again", {
+        correlationId: "cid",
+        replyTo: "reply-q",
+      }));
+      await flush();
+      await server.close();
+
+      assertEquals(second.channel.replies[0].body, "hello again");
+      assertEquals(second.log, [
+        "reply",
+        "ack",
+        "cancel:ctag",
+        "channel.close",
+        "connection.close",
+      ]);
+    });
+
+    it("closes the old connection and reconnects once when only the consumer channel closed", async () => {
+      const first = new FakeConnection();
+      const second = new FakeConnection();
+      using connect = stub(amqplib, "connect", sequence(first, second));
+
+      const server = new RmqServer({});
+      const errorSpy = spy(
+        (server as unknown as ServerInternals).logger,
+        "error",
+      );
+      await server.listen();
+
+      first.channel.emit("close");
+      await flush();
+
+      assertEquals(first.log, ["connection.close"]);
+      assertEquals(connect.calls.length, 2);
+      assertEquals(errorSpy.calls.map((call) => call.args[0]), [
+        "RMQ channel closed unexpectedly, reconnecting",
+      ]);
+      assertEquals(second.channel.messageHandler !== undefined, true);
+      await server.close();
+    });
+
+    it("retries every 1000 ms by default, logging each failed attempt, until it consumes again", async () => {
+      using time = new FakeTime();
+      const first = new FakeConnection();
+      const broken = new FakeConnection();
+      const second = new FakeConnection();
+      const refused = new Error("refused");
+      const failure = new Error("PRECONDITION_FAILED");
+      broken.channel.assertQueue = () => Promise.reject(failure);
+      using connect = stub(
+        amqplib,
+        "connect",
+        sequence(first, refused, broken, second),
+      );
+
+      const server = new RmqServer({ maxConnectionAttempts: 3 });
+      const errorSpy = spy(
+        (server as unknown as ServerInternals).logger,
+        "error",
+      );
+      await server.listen();
+
+      first.emit("close");
+      await time.runMicrotasks();
+      assertEquals(connect.calls.length, 2);
+
+      await time.tickAsync(999);
+      assertEquals(connect.calls.length, 2);
+      await time.tickAsync(1);
+      await time.runMicrotasks();
+      assertEquals(connect.calls.length, 3);
+      assertEquals(broken.closeCalls, 1);
+
+      await time.tickAsync(1000);
+      await time.runMicrotasks();
+      assertEquals(connect.calls.length, 4);
+      assertEquals(errorSpy.calls.map((call) => call.args), [
+        ["RMQ connection closed unexpectedly, reconnecting", undefined],
+        ["RMQ reconnect failed, retrying in 1000 ms", refused],
+        ["RMQ reconnect failed, retrying in 1000 ms", failure],
+      ]);
+      assertEquals(second.channel.messageHandler !== undefined, true);
+      await server.close();
+    });
+
+    it("does not reconnect on the close events close() causes", async () => {
+      const conn = new FakeConnection();
+      using connect = stub(
+        amqplib,
+        "connect",
+        () => Promise.resolve(conn as never),
+      );
+
+      const server = new RmqServer({});
+      const errorSpy = spy(
+        (server as unknown as ServerInternals).logger,
+        "error",
+      );
+      await server.listen();
+      // The fakes emit `close` when closed, as amqplib does.
+      await server.close();
+      await flush();
+
+      assertEquals(connect.calls.length, 1);
+      assertEquals(errorSpy.calls.length, 0);
+    });
+
+    it("does not reconnect after a drop that happens as close() starts", async () => {
+      const conn = new FakeConnection();
+      using connect = stub(
+        amqplib,
+        "connect",
+        () => Promise.resolve(conn as never),
+      );
+
+      const server = new RmqServer({});
+      const errorSpy = spy(
+        (server as unknown as ServerInternals).logger,
+        "error",
+      );
+      await server.listen();
+      conn.channel.emit("close");
+      await server.close();
+      await flush();
+
+      assertEquals(connect.calls.length, 1);
+      assertEquals(conn.log, ["connection.close"]);
+      assertEquals(errorSpy.calls.length, 0);
+    });
+
+    it("close() stops a reconnect waiting for its next attempt", async () => {
+      using time = new FakeTime();
+      const first = new FakeConnection();
+      using connect = stub(
+        amqplib,
+        "connect",
+        sequence(first, new Error("refused")),
+      );
+
+      const server = new RmqServer({ retryDelay: 60_000 });
+      await server.listen();
+      first.emit("close");
+      await time.runMicrotasks();
+      assertEquals(connect.calls.length, 2);
+
+      await server.close();
+      await time.tickAsync(120_000);
+
+      assertEquals(connect.calls.length, 2);
+    });
+
+    it("close() waits for a pending reconnect attempt and closes the connection it gets", async () => {
+      const first = new FakeConnection();
+      const second = new FakeConnection();
+      const connecting = Promise.withResolvers<FakeConnection>();
+      using connect = stub(
+        amqplib,
+        "connect",
+        sequence(first, connecting.promise),
+      );
+
+      const server = new RmqServer({});
+      await server.listen();
+      first.emit("close");
+      await flush();
+
+      const closing = server.close();
+
+      connecting.resolve(second);
+      await closing;
+
+      assertEquals(connect.calls.length, 2);
+      assertEquals(second.log, ["connection.close"]);
+      assertEquals(second.channel.messageHandler, undefined);
     });
   });
 
@@ -391,7 +703,7 @@ describe(RmqServer.name, () => {
 
       const server = new RmqServer({});
       serve(server, Ctrl);
-      await start(server);
+      await server.listen();
       conn.channel.messageHandler!(makeMsg(serializePattern("greet"), "world", {
         correlationId: "cid-1",
         replyTo: "reply-queue",
@@ -419,7 +731,7 @@ describe(RmqServer.name, () => {
 
       const server = new RmqServer({});
       serve(server, VoidCtrl);
-      await start(server);
+      await server.listen();
       conn.channel.messageHandler!(makeMsg("void", null, {
         correlationId: "cid",
         replyTo: "reply-q",
@@ -443,7 +755,7 @@ describe(RmqServer.name, () => {
 
       const server = new RmqServer({});
       serve(server, EvCtrl);
-      await start(server);
+      await server.listen();
       conn.channel.messageHandler!(makeMsg("user.created", null));
       await flush();
 
@@ -471,7 +783,7 @@ describe(RmqServer.name, () => {
 
       const server = new RmqServer({ noAck: true });
       serve(server, Ctrl);
-      await start(server);
+      await server.listen();
       conn.channel.messageHandler!(makeMsg("ok", null));
       conn.channel.messageHandler!(makeMsg("fail", null));
       conn.channel.messageHandler!({
@@ -505,7 +817,7 @@ describe(RmqServer.name, () => {
 
       const server = new RmqServer({});
       serve(server, ErrCtrl);
-      await start(server);
+      await server.listen();
       const msg = makeMsg("fail", null, { correlationId: "c1", replyTo: "r" });
       conn.channel.messageHandler!(msg);
       conn.channel.messageHandler!(
@@ -537,7 +849,7 @@ describe(RmqServer.name, () => {
           (server as unknown as ServerInternals).logger,
           "error",
         );
-        await start(server);
+        await server.listen();
         const msg = {
           properties: {
             headers: { pattern: "any" },
@@ -578,7 +890,7 @@ describe(RmqServer.name, () => {
         "error",
       );
       serve(server, BigCtrl);
-      await start(server);
+      await server.listen();
       conn.channel.messageHandler!(makeMsg("big", null, {
         correlationId: "cid",
         replyTo: "reply-q",
@@ -619,7 +931,7 @@ describe(RmqServer.name, () => {
         "error",
       );
       serve(server, Ctrl);
-      await start(server);
+      await server.listen();
       conn.channel.messageHandler!(makeMsg("ok", null, {
         correlationId: "cid",
         replyTo: "reply-q",
@@ -644,7 +956,7 @@ describe(RmqServer.name, () => {
 
       const server = new RmqServer({});
       serve(server, Ctrl);
-      await start(server);
+      await server.listen();
       for (const headers of [{}, undefined]) {
         conn.channel.messageHandler!({
           properties: { headers, correlationId: "cid", replyTo: "reply-q" },
@@ -665,7 +977,7 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({});
-      await start(server);
+      await server.listen();
       conn.channel.messageHandler!(null);
       await flush();
 
@@ -690,7 +1002,7 @@ describe(RmqServer.name, () => {
         );
 
         const server = new RmqServer({ queueOptions });
-        await start(server);
+        await server.listen();
 
         assertEquals(assertQueue.calls[0].args[0], "denorid");
         assertEquals(
@@ -707,7 +1019,7 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({ noAssert: true, queue: "my-q" });
-      await start(server);
+      await server.listen();
 
       assertEquals(assertQueue.calls.length, 0);
       await server.close();
@@ -722,7 +1034,7 @@ describe(RmqServer.name, () => {
         prefetchCount: 5,
         isGlobalPrefetchCount: true,
       });
-      await start(server);
+      await server.listen();
 
       assertEquals(prefetch.calls[0].args, [5, true]);
       await server.close();
@@ -740,7 +1052,7 @@ describe(RmqServer.name, () => {
         exchangeType: "topic",
         exchangeOptions: { durable: false, arguments: { "x-ttl": 1000 } },
       });
-      await start(server);
+      await server.listen();
 
       assertEquals(assertExchange.calls[0].args.slice(0, 2), [
         "my-ex",
@@ -761,7 +1073,7 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({ exchange: "ex" });
-      await start(server);
+      await server.listen();
 
       assertEquals(assertExchange.calls[0].args[1], "direct");
       assertEquals(
@@ -779,7 +1091,7 @@ describe(RmqServer.name, () => {
       using _s = stub(amqplib, "connect", () => Promise.resolve(conn as never));
 
       const server = new RmqServer({ exchange: "ex", noAssert: true });
-      await start(server);
+      await server.listen();
 
       assertEquals(assertExchange.calls.length, 0);
       assertEquals(bindQueue.calls.length, 1);

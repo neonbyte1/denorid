@@ -1,7 +1,7 @@
 import type { Channel, ChannelModel, ConsumeMessage } from "amqplib";
 import { Buffer } from "node:buffer";
 import { Server } from "../server.ts";
-import { closeQuietly, connectWithRetry } from "./_connection.ts";
+import { closeQuietly, connectWithRetry, delay } from "./_connection.ts";
 import { RmqDeserializer } from "./deserializer.ts";
 import type { RmqOptions } from "./options.ts";
 import { RmqSerializer } from "./serializer.ts";
@@ -12,41 +12,112 @@ interface Reply {
   contentType?: string;
 }
 
+/** A connection whose consumer channel is set up and consuming. */
+interface ServerSession {
+  connection: ChannelModel;
+  channel: Channel;
+  consumerTag: string;
+}
+
 /**
  * Microservice server using RabbitMQ via amqplib.
  *
  * Consumes messages from the configured queue. Pattern is read from
  * `msg.properties.headers["pattern"]`. Request-response messages carry
  * `correlationId` and `replyTo` properties; events do not.
+ *
+ * When the broker closes the connection or the consumer channel after
+ * startup, the server logs it, closes the connection and sets itself up
+ * again: one connection attempt every `retryDelay` ms (default `1000`) until
+ * it consumes again or {@link close} is called. Failed attempts are logged.
  */
 export class RmqServer extends Server<RmqOptions> {
-  private connection?: ChannelModel;
-  private channel?: Channel;
-  private consumerTag?: string;
-  private closing = false;
-  private stopped?: PromiseWithResolvers<void>;
+  /** The running session; unset while (re)connecting and once closed. */
+  private session?: ServerSession;
+  /** Aborted by `close()` to stop a pending start or reconnect. */
+  private lifecycle?: AbortController;
+  /** The latest start or reconnect; never rejects. `close()` waits for it. */
+  private connecting?: Promise<void>;
   private readonly inFlight: Set<Promise<void>> = new Set();
   private readonly serializer = new RmqSerializer();
   private readonly deserializer = new RmqDeserializer();
 
   /**
-   * Connects, sets up the queue (and exchange binding) and consumes it.
+   * Connects (up to `maxConnectionAttempts` attempts, `retryDelay` ms apart),
+   * sets up the queue (and exchange binding) and consumes it. Once started,
+   * the server reconnects by itself after the broker dropped it (see
+   * {@link RmqServer}).
    *
-   * Resolves once {@link close} shut the server down. Rejects when setup fails
-   * (the connection is closed first) or when the broker closes the connection
-   * or the consumer channel while the server is not closing.
+   * @return {Promise<void>} Resolves once the consumer runs (or once
+   * {@link close} stopped the pending start), rejects when connecting or the
+   * setup fails, after the connection was closed.
+   */
+  public override async listen(): Promise<void> {
+    const lifecycle = new AbortController();
+
+    this.lifecycle = lifecycle;
+
+    const starting = this.open(this.options, lifecycle.signal);
+
+    this.connecting = starting.catch(() => {});
+
+    try {
+      await starting;
+    } catch (err) {
+      // `close()` stopped the start, which closed what it opened.
+      if (!lifecycle.signal.aborted) {
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Stops a pending start or reconnect (a connection it gets afterwards is
+   * closed before this resolves), cancels the consumer, waits for in-flight
+   * messages to be handled (replied and acked), then closes channel and
+   * connection. Safe to call before, during and after {@link listen}.
    *
    * @return {Promise<void>}
    */
-  public override async listen(): Promise<void> {
-    const connection = await connectWithRetry(this.options);
-    const stopped = Promise.withResolvers<void>();
+  public override async close(): Promise<void> {
+    const { lifecycle, connecting } = this;
 
-    // Awaited only after setup; keeps a drop during setup from surfacing as
-    // an unhandled rejection (setup itself rejects then).
-    stopped.promise.catch(() => {});
-    this.stopped = stopped;
-    this.connection = connection;
+    lifecycle?.abort();
+    this.lifecycle = undefined;
+    this.connecting = undefined;
+
+    // A stopped (re)connect closes what it opened; one whose consumer already
+    // started leaves its session to this call.
+    await connecting;
+
+    const { session } = this;
+
+    // Unset first, so the close events of this session are ignored.
+    this.session = undefined;
+
+    if (session) {
+      try {
+        await session.channel.cancel(session.consumerTag);
+        // deno-lint-ignore no-empty
+      } catch {}
+    }
+
+    await Promise.all(this.inFlight);
+    await closeQuietly(session?.channel);
+    await closeQuietly(session?.connection);
+  }
+
+  /**
+   * Connects with `connectOptions` and sets up one session: consumer channel,
+   * queue topology, consumer. Publishes it once the consumer runs, even when
+   * `signal` aborted meanwhile (`close()` shuts it down then). Closes the
+   * connection and rethrows when a step fails or `signal` aborted earlier.
+   */
+  private async open(
+    connectOptions: RmqOptions,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const connection = await connectWithRetry(connectOptions, signal);
 
     // Attached before any other call: amqplib rethrows `error` events nobody
     // listens to, crashing the process.
@@ -54,34 +125,29 @@ export class RmqServer extends Server<RmqOptions> {
       this.logger.error("RMQ connection error", err);
     });
     connection.once("close", (cause?: Error) => {
-      if (!this.closing) {
-        stopped.reject(
-          new Error("RMQ connection closed unexpectedly", { cause }),
-        );
-      }
+      this.drop(connection, "RMQ connection closed unexpectedly", cause);
     });
 
     try {
+      signal.throwIfAborted();
+
       const channel = await connection.createChannel();
 
-      this.channel = channel;
       channel.on("error", (err: Error) => {
         this.logger.error("RMQ channel error", err);
       });
       channel.once("close", () => {
-        if (this.closing) {
-          return;
-        }
-
         // Deferred: when the whole connection drops, amqplib closes its
         // channels first; the connection `close` (with its cause) wins then.
         queueMicrotask(() => {
-          stopped.reject(new Error("RMQ channel closed unexpectedly"));
-          void closeQuietly(connection);
+          this.drop(connection, "RMQ channel closed unexpectedly");
         });
       });
 
       const queue = await this.setupQueue(channel);
+
+      signal.throwIfAborted();
+
       const { consumerTag } = await channel.consume(
         queue,
         (msg) => {
@@ -100,43 +166,70 @@ export class RmqServer extends Server<RmqOptions> {
         },
       );
 
-      this.consumerTag = consumerTag;
+      this.session = { connection, channel, consumerTag };
       this.logger.log(`RMQ server listening on queue "${queue}"`);
     } catch (err) {
       await closeQuietly(connection);
       throw err;
     }
-
-    await stopped.promise;
   }
 
   /**
-   * Cancels the consumer, waits for in-flight messages to be handled (replied
-   * and acked), then closes channel and connection and resolves {@link listen}.
-   *
-   * @return {Promise<void>}
+   * Handles the broker closing the connection or the consumer channel of the
+   * running session: closes the connection and, unless `close()` started,
+   * logs the drop and reconnects. Identity-checked, so the second event of one
+   * drop, the events of a session still being set up (its setup fails
+   * instead) and those of a session `close()` shuts down are ignored.
    */
-  public override async close(): Promise<void> {
-    const { connection, channel, consumerTag, stopped } = this;
-
-    this.closing = true;
-    this.connection = undefined;
-    this.channel = undefined;
-    this.consumerTag = undefined;
-
-    if (consumerTag) {
-      try {
-        await channel!.cancel(consumerTag);
-        // deno-lint-ignore no-empty
-      } catch {}
+  private drop(connection: ChannelModel, reason: string, cause?: Error): void {
+    if (this.session?.connection !== connection) {
+      return;
     }
 
-    await Promise.all(this.inFlight);
-    await closeQuietly(channel);
-    await closeQuietly(connection);
+    this.session = undefined;
+    void closeQuietly(connection);
 
-    stopped?.resolve();
-    this.closing = false;
+    if (!this.lifecycle) {
+      return;
+    }
+
+    this.logger.error(`${reason}, reconnecting`, cause);
+    this.connecting = this.reconnect(this.lifecycle.signal);
+  }
+
+  /**
+   * Sets the server up again after a drop: one connection attempt at a time,
+   * every `retryDelay` ms, until one consumes or `close()` aborts `signal`.
+   * Logs every failed attempt; never rejects.
+   */
+  private async reconnect(signal: AbortSignal): Promise<void> {
+    const retryDelay = this.options.retryDelay ?? 1000;
+    const connectOptions: RmqOptions = {
+      ...this.options,
+      maxConnectionAttempts: 1,
+    };
+
+    for (;;) {
+      try {
+        await this.open(connectOptions, signal);
+        return;
+      } catch (err) {
+        if (signal.aborted) {
+          return;
+        }
+
+        this.logger.error(
+          `RMQ reconnect failed, retrying in ${retryDelay} ms`,
+          err,
+        );
+      }
+
+      try {
+        await delay(retryDelay, signal);
+      } catch {
+        return; // `close()` aborted the wait
+      }
+    }
   }
 
   private async setupQueue(channel: Channel): Promise<string> {
