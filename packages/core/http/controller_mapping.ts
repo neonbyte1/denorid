@@ -14,6 +14,13 @@ import type { ControllerMappingOptions } from "./adapter.ts";
 import type { ControllerOptions } from "./controller_options.ts";
 import type { RequestContext } from "./request_context.ts";
 
+/**
+ * Splits a host into hostname and optional `:port`: `example.com:8080` and
+ * `[::1]:8080` yield `example.com` and `[::1]`. A bare IPv6 address such as
+ * `::1` does not match and is used as is.
+ */
+const HOST_WITHOUT_PORT = /^(\[[^\]]*\]|[^:]*)(?::\d*)?$/;
+
 /** A route handler function that receives a request context and returns a response. */
 export type HttpRouteFn = (ctx: RequestContext) => Promise<unknown> | unknown;
 
@@ -64,15 +71,20 @@ export abstract class ControllerMapping {
    * Registers a single route with the underlying HTTP engine.
    *
    * Implemented by each adapter to bind the route metadata to its own
-   * routing mechanism (e.g. Hono, Oak, etc.).
+   * routing mechanism (e.g. Hono, Oak, etc.). It is called once per
+   * controller base path, and only for entries that have an HTTP `method`.
+   * The entries of an array `route.path` are alternatives: register the
+   * handler once per entry of `normalizePaths(route.path)`. Before running
+   * guards, check {@link matchesHost} for every request and pass requests
+   * for other hosts on.
    *
    * @param {Type<HttpController>} controllerClass - The controller class owning the route.
    * @param {string} controllerBasePath - The fully-resolved base path for the controller.
-   * @param {RequestMappingMetadata} route - Metadata describing the route (method, path, handler).
    * @param {(Type<CanActivate>|CanActivate|CanActivateFn)[]} controllerGuards - Guards defined on
    * the controller level. Each guard is either a class reference (resolved via DI), an
    * already-instantiated object, or a plain function. All guards must return `true`
    * for the request to proceed.
+   * @param {RequestMappingMetadata} route - Metadata describing the route (method, path, handler).
    * @return {Promise<void>} Resolves when the route has been registered.
    */
   protected abstract registerRoute(
@@ -85,6 +97,12 @@ export abstract class ControllerMapping {
   /**
    * Reads controller metadata and registers each of its declared routes.
    *
+   * Every entry of the controller path is an alternative base path: the
+   * routes are registered once per entry (a missing path counts as one empty
+   * path). Route entries without an HTTP method (only `@HttpCode()`,
+   * `@Body()`, `@Form()` or `@UseGuards()` on a method) are not routes and
+   * are skipped.
+   *
    * @param {Type<HttpController>} controllerClass - The controller class to register.
    * @param {string} basePath - The global path prefix to prepend.
    * @return {Promise<void>} Resolves when all routes of the controller are registered.
@@ -93,33 +111,86 @@ export abstract class ControllerMapping {
     controllerClass: Type<HttpController>,
     basePath: string,
   ): Promise<void> {
-    const options = controllerClass[Symbol.metadata]
-      ?.[CONTROLLER_METADATA] as ControllerOptions;
+    const metadata = controllerClass[Symbol.metadata];
+    const options = metadata?.[CONTROLLER_METADATA] as ControllerOptions;
+    const controllerPaths = this.normalizePaths(options.path);
 
-    const controllerBasePath = this.joinPaths(
-      basePath,
-      ...this.normalizePaths(options.path),
-    );
+    const routes = (
+      (metadata?.[CONTROLLER_REQUEST_MAPPING] ?? []) as RequestMappingMetadata[]
+    ).filter((route) => route.method !== undefined);
 
-    const requestMapping =
-      (controllerClass[Symbol.metadata]?.[CONTROLLER_REQUEST_MAPPING] ??
-        []) as RequestMappingMetadata[];
+    const controllerGuards = metadata?.[GUARDS_METADATA] as
+      | Set<Type<CanActivate> | CanActivate | CanActivateFn>
+      | undefined;
 
-    const controllerGuards = controllerClass[Symbol.metadata]
-      ?.[GUARDS_METADATA] as
-        | Set<Type<CanActivate> | CanActivate | CanActivateFn>
-        | undefined;
+    for (
+      const controllerPath of controllerPaths.length > 0
+        ? controllerPaths
+        : [""]
+    ) {
+      const controllerBasePath = this.joinPaths(basePath, controllerPath);
 
-    for (const route of requestMapping) {
-      await this.registerRoute(
-        controllerClass,
-        controllerBasePath,
-        controllerGuards ? [...controllerGuards] : [],
-        route,
-      );
+      for (const route of routes) {
+        await this.registerRoute(
+          controllerClass,
+          controllerBasePath,
+          controllerGuards ? [...controllerGuards] : [],
+          route,
+        );
+      }
     }
   }
 
+  /**
+   * Checks the `host` option of the controller against the host of a
+   * request. Adapters call it for every request before running guards and
+   * pass the request on (so other routes, static files or the 404 handler
+   * apply) when it returns `false`.
+   *
+   * - No `host` option: every host matches.
+   * - String entries match the hostname case-insensitively.
+   * - RegExp entries are tested against the hostname.
+   * - An array matches when any entry matches.
+   *
+   * @param {Type<HttpController>} controllerClass - The controller class owning the route.
+   * @param {string} hostname - Hostname of the request (e.g. `URL.hostname`).
+   *   A trailing `:port` (as in a `Host` header) is ignored.
+   * @return {boolean} `true` when the controller's routes serve this host.
+   */
+  protected matchesHost(
+    controllerClass: Type<HttpController>,
+    hostname: string,
+  ): boolean {
+    const host = (controllerClass[Symbol.metadata]?.[CONTROLLER_METADATA] as
+      | ControllerOptions
+      | undefined)?.host;
+
+    if (host === undefined) {
+      return true;
+    }
+
+    const name = HOST_WITHOUT_PORT.exec(hostname)?.[1] ?? hostname;
+    const lowerCaseName = name.toLowerCase();
+
+    return (Array.isArray(host) ? host : [host]).some((pattern) => {
+      if (typeof pattern === "string") {
+        return pattern.toLowerCase() === lowerCaseName;
+      }
+
+      // A global or sticky RegExp keeps `lastIndex` between calls.
+      pattern.lastIndex = 0;
+
+      return pattern.test(name);
+    });
+  }
+
+  /**
+   * Evaluates guards in order and stops at the first one that denies.
+   *
+   * @param {ExecutionContext} executionContext - Context passed to every guard.
+   * @param {...(Type<CanActivate> | CanActivate | CanActivateFn)} guards - The guards to evaluate.
+   * @return {Promise<boolean>} `true` when every guard allows the request.
+   */
   protected async resolveGuards(
     executionContext: ExecutionContext,
     ...guards: (Type<CanActivate> | CanActivate | CanActivateFn)[]
@@ -133,6 +204,15 @@ export abstract class ControllerMapping {
     return true;
   }
 
+  /**
+   * Evaluates a single guard. A guard class is resolved through the injector
+   * in the request's context, from whichever module declares it; an instance
+   * is asked via `canActivate`; a function is called.
+   *
+   * @param {ExecutionContext} executionContext - Context passed to the guard.
+   * @param {Type<CanActivate> | CanActivate | CanActivateFn} guard - The guard to evaluate.
+   * @return {Promise<boolean>} `true` when the guard allows the request.
+   */
   protected async resolveGuard(
     executionContext: ExecutionContext,
     guard: Type<CanActivate> | CanActivate | CanActivateFn,
@@ -143,6 +223,7 @@ export abstract class ControllerMapping {
           .switchToHttp()
           .getRequest()
           .contextId,
+        strict: false,
       })).canActivate(
         executionContext,
       );

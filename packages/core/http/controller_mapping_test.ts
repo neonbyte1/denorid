@@ -1,6 +1,13 @@
-import type { InjectionToken, Type } from "@denorid/injector";
+import {
+  Injectable,
+  type InjectionToken,
+  InjectorContext,
+  Module,
+  type Type,
+} from "@denorid/injector";
+import { Logger } from "@denorid/logger";
 import { assertEquals } from "@std/assert";
-import { type Spy, spy } from "@std/testing/mock";
+import { type Spy, spy, stub } from "@std/testing/mock";
 import { beforeEach, describe, it } from "node:test";
 import {
   CONTROLLER_METADATA,
@@ -16,6 +23,8 @@ import {
   ControllerMapping,
   type HttpController,
 } from "./controller_mapping.ts";
+import type { ControllerOptions } from "./controller_options.ts";
+import { HttpMethod } from "./method.ts";
 
 describe("ControllerMapping", () => {
   interface RegisterRouteCall {
@@ -90,7 +99,7 @@ describe("ControllerMapping", () => {
 
   function setControllerMetadata(
     target: Type,
-    controllerMeta: { path?: string | string[] },
+    controllerMeta: ControllerOptions,
     requestMapping?: RequestMappingMetadata[],
     guards?: Set<Type<CanActivate> | CanActivate | CanActivateFn>,
   ): void {
@@ -231,7 +240,11 @@ describe("ControllerMapping", () => {
     });
 
     it("should prepend the given basePath to each controller path", async () => {
-      const route: RequestMappingMetadata = { name: "getAll", path: "/items" };
+      const route: RequestMappingMetadata = {
+        name: "getAll",
+        method: HttpMethod.GET,
+        path: "/items",
+      };
       class FakeController {}
       setControllerMetadata(FakeController, { path: "/products" }, [route]);
 
@@ -250,8 +263,14 @@ describe("ControllerMapping", () => {
     });
 
     it("should register routes for every token returned by getTokensByTag", async () => {
-      const route1: RequestMappingMetadata = { name: "r1" };
-      const route2: RequestMappingMetadata = { name: "r2" };
+      const route1: RequestMappingMetadata = {
+        name: "r1",
+        method: HttpMethod.GET,
+      };
+      const route2: RequestMappingMetadata = {
+        name: "r2",
+        method: HttpMethod.POST,
+      };
 
       class Controller1 {}
       setControllerMetadata(Controller1, { path: "/c1" }, [route1]);
@@ -289,8 +308,16 @@ describe("ControllerMapping", () => {
 
   describe("registerController()", () => {
     it("should call registerRoute once per route in the request mapping", async () => {
-      const route1: RequestMappingMetadata = { name: "getAll", path: "/all" };
-      const route2: RequestMappingMetadata = { name: "getOne", path: "/:id" };
+      const route1: RequestMappingMetadata = {
+        name: "getAll",
+        method: HttpMethod.GET,
+        path: "/all",
+      };
+      const route2: RequestMappingMetadata = {
+        name: "getOne",
+        method: HttpMethod.GET,
+        path: "/:id",
+      };
 
       class FakeController {}
       setControllerMetadata(FakeController, { path: "/items" }, [
@@ -314,7 +341,10 @@ describe("ControllerMapping", () => {
     });
 
     it("should pass the controller class to registerRoute", async () => {
-      const route: RequestMappingMetadata = { name: "get" };
+      const route: RequestMappingMetadata = {
+        name: "get",
+        method: HttpMethod.GET,
+      };
 
       class FakeController {}
       setControllerMetadata(FakeController, { path: "/test" }, [route]);
@@ -349,8 +379,12 @@ describe("ControllerMapping", () => {
       assertEquals(mapping.routeCalls.length, 0);
     });
 
-    it("should handle array-based controller paths", async () => {
-      const route: RequestMappingMetadata = { name: "get", path: "/" };
+    it("should register the routes once per entry of an array controller path", async () => {
+      const route: RequestMappingMetadata = {
+        name: "get",
+        method: HttpMethod.GET,
+        path: "/",
+      };
 
       class FakeController {}
       setControllerMetadata(FakeController, { path: ["api", "v1"] }, [route]);
@@ -365,12 +399,45 @@ describe("ControllerMapping", () => {
 
       await mapping.register();
 
-      assertEquals(mapping.routeCalls.length, 1);
-      assertEquals(mapping.routeCalls[0].controllerBasePath, "/api/v1");
+      assertEquals(
+        mapping.routeCalls.map(({ controllerBasePath, route }) => [
+          controllerBasePath,
+          route.name,
+        ]),
+        [["/api", "get"], ["/v1", "get"]],
+      );
+    });
+
+    it("should register the routes once at the root for an empty array controller path", async () => {
+      const route: RequestMappingMetadata = {
+        name: "get",
+        method: HttpMethod.GET,
+      };
+
+      class FakeController {}
+      setControllerMetadata(FakeController, { path: [] }, [route]);
+
+      const { ctx } = createMockContext([FakeController]);
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
+
+      await mapping.register("v1");
+
+      assertEquals(
+        mapping.routeCalls.map(({ controllerBasePath }) => controllerBasePath),
+        ["/v1"],
+      );
     });
 
     it("should resolve to '/' when controller path is undefined", async () => {
-      const route: RequestMappingMetadata = { name: "get" };
+      const route: RequestMappingMetadata = {
+        name: "get",
+        method: HttpMethod.GET,
+      };
 
       class FakeController {}
       setControllerMetadata(FakeController, { path: undefined }, [route]);
@@ -389,8 +456,11 @@ describe("ControllerMapping", () => {
       assertEquals(mapping.routeCalls[0].controllerBasePath, "/");
     });
 
-    it("should combine basePath and array controller paths correctly", async () => {
-      const route: RequestMappingMetadata = { name: "create" };
+    it("should combine basePath with each array controller path", async () => {
+      const route: RequestMappingMetadata = {
+        name: "create",
+        method: HttpMethod.POST,
+      };
 
       class FakeController {}
       setControllerMetadata(FakeController, { path: ["users", "profile"] }, [
@@ -407,15 +477,60 @@ describe("ControllerMapping", () => {
 
       await mapping.register("v2");
 
-      assertEquals(mapping.routeCalls.length, 1);
       assertEquals(
-        mapping.routeCalls[0].controllerBasePath,
-        "/v2/users/profile",
+        mapping.routeCalls.map(({ controllerBasePath }) => controllerBasePath),
+        ["/v2/users", "/v2/profile"],
       );
     });
 
+    it("should skip entries without an HTTP method", async () => {
+      const index: RequestMappingMetadata = {
+        name: "index",
+        method: HttpMethod.GET,
+        path: "/",
+      };
+      const guarded: RequestMappingMetadata = {
+        name: "internalHandler",
+        guards: new Set([() => true]),
+      };
+      const withStatus: RequestMappingMetadata = {
+        name: "forgotPost",
+        statusCode: 201,
+      };
+      const create: RequestMappingMetadata = {
+        name: "create",
+        method: HttpMethod.POST,
+      };
+
+      class FakeController {}
+      setControllerMetadata(FakeController, { path: "x" }, [
+        index,
+        guarded,
+        withStatus,
+        create,
+      ]);
+
+      const { ctx } = createMockContext([FakeController]);
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
+
+      await mapping.register();
+
+      assertEquals(mapping.routeCalls.map(({ route }) => route), [
+        index,
+        create,
+      ]);
+    });
+
     it("should strip slashes from basePath when joining", async () => {
-      const route: RequestMappingMetadata = { name: "get" };
+      const route: RequestMappingMetadata = {
+        name: "get",
+        method: HttpMethod.GET,
+      };
 
       class FakeController {}
       setControllerMetadata(FakeController, { path: "/api/" }, [route]);
@@ -434,7 +549,10 @@ describe("ControllerMapping", () => {
     });
 
     it("should pass guards from GUARDS_METADATA to registerRoute", async () => {
-      const route: RequestMappingMetadata = { name: "get" };
+      const route: RequestMappingMetadata = {
+        name: "get",
+        method: HttpMethod.GET,
+      };
       const guardFn: CanActivateFn = (_ctx) => true;
 
       class FakeController {}
@@ -460,7 +578,10 @@ describe("ControllerMapping", () => {
     });
 
     it("should pass empty guards array when GUARDS_METADATA is absent", async () => {
-      const route: RequestMappingMetadata = { name: "get" };
+      const route: RequestMappingMetadata = {
+        name: "get",
+        method: HttpMethod.GET,
+      };
 
       class FakeController {}
       setControllerMetadata(FakeController, { path: "/open" }, [route]);
@@ -477,6 +598,104 @@ describe("ControllerMapping", () => {
 
       assertEquals(mapping.routeCalls.length, 1);
       assertEquals(mapping.routeCalls[0].controllerGuards, []);
+    });
+  });
+
+  describe("matchesHost()", () => {
+    function matches(
+      host: ControllerOptions["host"],
+      hostname: string,
+    ): boolean {
+      class FakeController {}
+      setControllerMetadata(FakeController, { path: "/", host });
+
+      const { ctx } = createMockContext([]);
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
+
+      return mapping["matchesHost"](
+        FakeController as Type<HttpController>,
+        hostname,
+      );
+    }
+
+    it("should match every host when the controller has no host option", () => {
+      assertEquals(matches(undefined, "public.example.com"), true);
+    });
+
+    it("should match every host when the controller has no metadata", () => {
+      const { ctx } = createMockContext([]);
+      const mapping = new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
+
+      class Plain {}
+      Object.defineProperty(Plain, Symbol.metadata, { value: null });
+
+      assertEquals(
+        mapping["matchesHost"](Plain as Type<HttpController>, "a.test"),
+        true,
+      );
+    });
+
+    it("should match a string host case-insensitively", () => {
+      assertEquals(matches("Admin.Example.com", "admin.example.COM"), true);
+    });
+
+    it("should reject a different host", () => {
+      assertEquals(matches("admin.example.com", "public.example.com"), false);
+    });
+
+    it("should not match a string host as a suffix or prefix", () => {
+      assertEquals(matches("example.com", "admin.example.com"), false);
+      assertEquals(
+        matches("admin.example.com", "admin.example.com.evil"),
+        false,
+      );
+    });
+
+    it("should ignore the port of the request", () => {
+      assertEquals(
+        matches("admin.example.com", "admin.example.com:8080"),
+        true,
+      );
+      assertEquals(matches(/^admin\./, "admin.example.com:8080"), true);
+      assertEquals(matches("[::1]", "[::1]:3000"), true);
+    });
+
+    it("should keep a bare IPv6 address intact", () => {
+      assertEquals(matches("::1", "::1"), true);
+    });
+
+    it("should test a RegExp against the hostname", () => {
+      assertEquals(matches(/^(.+)\.example\.com$/, "tenant.example.com"), true);
+      assertEquals(matches(/^(.+)\.example\.com$/, "example.com"), false);
+    });
+
+    it("should give the same result for repeated calls with a global RegExp", () => {
+      const pattern = /^api\./g;
+
+      assertEquals(matches(pattern, "api.example.com"), true);
+      assertEquals(matches(pattern, "api.example.com"), true);
+    });
+
+    it("should match when any entry of an array matches", () => {
+      const host = ["admin.example.com", /^api\./];
+
+      assertEquals(matches(host, "admin.example.com"), true);
+      assertEquals(matches(host, "api.example.org"), true);
+      assertEquals(matches(host, "public.example.com"), false);
+    });
+
+    it("should match nothing for an empty array", () => {
+      assertEquals(matches([], "admin.example.com"), false);
     });
   });
 
@@ -593,6 +812,38 @@ describe("ControllerMapping", () => {
       };
 
       const result = await mapping["resolveGuard"](mockExecCtx, instance);
+      assertEquals(result, true);
+    });
+
+    it("should resolve a guard class declared in a module that does not export it", async () => {
+      @Injectable()
+      class ModuleGuard implements CanActivate {
+        public canActivate(_ctx: ExecutionContext): boolean {
+          return true;
+        }
+      }
+
+      @Module({ providers: [ModuleGuard] })
+      class GuardModule {}
+
+      @Module({ imports: [GuardModule] })
+      class AppModule {}
+
+      using _log = stub(Logger.prototype, "log");
+      await using ctx = await InjectorContext.create(AppModule);
+      const mapping = new TestControllerMapping({
+        ctx,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
+
+      const result = await mapping["resolveGuard"](
+        {
+          switchToHttp: () => ({ getRequest: () => ({ contextId: "req-1" }) }),
+        } as unknown as ExecutionContext,
+        ModuleGuard,
+      );
       assertEquals(result, true);
     });
   });

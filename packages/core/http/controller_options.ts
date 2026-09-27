@@ -14,10 +14,12 @@ export interface ControllerOptions extends InjectableOptions {
    * The base path(s) for all routes in the controller.
    *
    * This path is prepended to all route paths defined in the controller's methods.
-   * When multiple paths are provided, the controller registers routes for each path.
+   * When multiple paths are provided, each one is an alternative: the
+   * controller registers all of its routes under every path.
    *
    * - Single string: All routes use this base path
    * - Array of strings: Routes are registered under each base path
+   *   (`["users", "people"]` serves both `/users/...` and `/people/...`)
    * - Undefined: Routes are registered at the root level
    *
    * @default undefined
@@ -29,10 +31,12 @@ export interface ControllerOptions extends InjectableOptions {
    *
    * When specified, the controller's routes only respond to requests matching
    * the given host pattern(s). This is useful for multi-tenant applications or
-   * subdomain-based routing.
+   * subdomain-based routing. Requests for other hosts are passed on, so other
+   * routes, static files or the 404 response apply. The port of the request
+   * is ignored.
    *
-   * - String: Exact host match (e.g., "api.example.com")
-   * - RegExp: Pattern matching for dynamic hosts (e.g., /^(.+)\.example\.com$/)
+   * - String: Exact, case-insensitive hostname match (e.g., "api.example.com")
+   * - RegExp: Tested against the hostname (e.g., /^(.+)\.example\.com$/)
    * - Array: Multiple host patterns, routes respond to any matching pattern
    * - Undefined: No host restriction, routes respond to all hosts
    *

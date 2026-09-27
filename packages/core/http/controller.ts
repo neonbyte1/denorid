@@ -16,6 +16,8 @@ import type { ControllerOptions } from "./controller_options.ts";
 export function Controller(): Decorator<ClassDecoratorContext, Type>;
 /**
  * Marks a class as an HTTP controller with one or more base path prefixes.
+ * Each entry of an array is an alternative base path: every route is
+ * registered under each of them.
  *
  * @param {string | string[]} prefix - Base path(s) prepended to every route in this controller.
  * @return {Decorator<ClassDecoratorContext, Type>} The class decorator.
