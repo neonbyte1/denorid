@@ -1,10 +1,27 @@
-import type { ExceptionHandler, RequestContext } from "@denorid/core";
+import type {
+  ExceptionHandler,
+  RequestContext,
+  WsMessageHandler,
+} from "@denorid/core";
 import type { InjectorContext } from "@denorid/injector";
-import { assertEquals, assertRejects } from "@std/assert";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import { assertSpyCalls, stub } from "@std/testing/mock";
+import { Server as NodeHttpServer } from "node:http";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import {
+  getFreePort,
+  registerGlobalRestore,
+  TestWebSocket,
+} from "./_test_utils.ts";
 import { HonoAdapter, type HonoAdapterOptions } from "./adapter.ts";
+import { WsAdapter } from "./ws_adapter.ts";
 
 describe(HonoAdapter.name, () => {
   function getFreePorts(count: number): number[] {
@@ -25,6 +42,7 @@ describe(HonoAdapter.name, () => {
    */
   async function createAdapter(
     options?: HonoAdapterOptions,
+    cors?: boolean,
   ): Promise<HonoAdapter> {
     class ClientController {}
 
@@ -47,7 +65,7 @@ describe(HonoAdapter.name, () => {
       } as unknown as InjectorContext,
       exceptionHandler: {} as ExceptionHandler,
       globalGuards: [],
-      cors: undefined,
+      cors,
     });
 
     await mapping.register();
@@ -65,6 +83,45 @@ describe(HonoAdapter.name, () => {
 
   function fakeServer(shutdown: () => Promise<void>): Deno.HttpServer {
     return { shutdown } as unknown as Deno.HttpServer;
+  }
+
+  const echo: WsMessageHandler = {
+    event: "echo",
+    callback: (data) => Promise.resolve(data),
+  };
+
+  /**
+   * Serves an echo gateway on `path` through the WebSocket adapter created
+   * by `adapter`, then listens on `port`.
+   */
+  async function listenWithGateway(
+    adapter: HonoAdapter,
+    path: string,
+    port: number,
+  ): Promise<() => Promise<void>> {
+    const ws = adapter.createWebSocketAdapter();
+    const server = await ws.create({ path });
+
+    ws.bindClientConnect(
+      server,
+      (client) => ws.bindMessageHandlers(client, [echo]),
+    );
+    adapter.listen(port);
+
+    return async (): Promise<void> => {
+      await ws.close(server);
+      await adapter.close();
+    };
+  }
+
+  async function assertEcho(url: string, headers?: HeadersInit): Promise<void> {
+    const client = await TestWebSocket.connect(url, headers);
+
+    client.send({ event: "echo", data: "hi", id: 1 });
+
+    assertEquals(await client.next(), '{"id":1,"data":"hi"}');
+
+    await client.close();
   }
 
   describe("listen()", () => {
@@ -194,6 +251,105 @@ describe(HonoAdapter.name, () => {
       } finally {
         await adapter.close();
         await Deno.remove(root, { recursive: true });
+      }
+    });
+  });
+
+  describe("WebSockets", () => {
+    it("creates the native WsAdapter as default WebSocket adapter", () => {
+      assertInstanceOf(new HonoAdapter().createWebSocketAdapter(), WsAdapter);
+    });
+
+    it("serves gateways through the native server of the runtime", async () => {
+      const port = getFreePort();
+      const stop = await listenWithGateway(new HonoAdapter(), "/chat", port);
+
+      try {
+        await assertEcho(`ws://127.0.0.1:${port}/chat`);
+      } finally {
+        await stop();
+      }
+    });
+
+    it("keeps controller routes with CORS working on gateway paths", async () => {
+      const port = getFreePort();
+      const adapter = await createAdapter(undefined, true);
+      const stop = await listenWithGateway(adapter, "/client/ip", port);
+      const origin = { origin: "http://example.com" };
+
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/client/ip`, {
+          headers: origin,
+        });
+
+        assertEquals(await response.text(), "127.0.0.1");
+        assertEquals(response.headers.get("access-control-allow-origin"), "*");
+
+        await assertEcho(`ws://127.0.0.1:${port}/client/ip`, origin);
+      } finally {
+        await stop();
+      }
+    });
+  });
+
+  describe("getHttpServer()", () => {
+    registerGlobalRestore();
+
+    it("returns the node:http server listen() and close() use", async () => {
+      const port = getFreePort();
+      const adapter = await createAdapter();
+      const server = adapter.getHttpServer();
+
+      assertInstanceOf(server, NodeHttpServer);
+      assertStrictEquals(adapter.getHttpServer(), server);
+      assertEquals(server.listening, false);
+
+      adapter.listen(port);
+
+      try {
+        assertEquals(server.listening, true);
+        assertEquals(await getIp(port), "127.0.0.1");
+        assertStrictEquals(adapter.getHttpServer(), server);
+        assertEquals(server.listenerCount("upgrade"), 0);
+      } finally {
+        await adapter.close();
+      }
+
+      assertEquals(server.listening, false);
+    });
+
+    it("throws once the adapter listens through the native server", async () => {
+      using _serve = stub(
+        Deno,
+        "serve",
+        (() => fakeServer(() => Promise.resolve())) as never,
+      );
+      const adapter = new HonoAdapter();
+
+      adapter.listen(8080);
+
+      try {
+        assertThrows(
+          () => adapter.getHttpServer(),
+          Error,
+          "HonoAdapter listens already; call getHttpServer() before listen()",
+        );
+      } finally {
+        await adapter.close();
+      }
+    });
+
+    it("serves gateways on the node:http server", async () => {
+      const port = getFreePort();
+      const adapter = new HonoAdapter();
+      const server = adapter.getHttpServer();
+      const stop = await listenWithGateway(adapter, "/chat", port);
+
+      try {
+        assertEquals(server.listenerCount("upgrade"), 1);
+        await assertEcho(`ws://127.0.0.1:${port}/chat`);
+      } finally {
+        await stop();
       }
     });
   });

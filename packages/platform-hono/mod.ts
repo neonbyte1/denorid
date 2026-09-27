@@ -4,7 +4,9 @@
  *
  * This module exports the {@linkcode HonoAdapter}, which implements the
  * {@linkcode HttpAdapter} interface, along with its supporting
- * {@linkcode HonoControllerMapping} and {@linkcode HonoRequestContext} types.
+ * {@linkcode HonoControllerMapping} and {@linkcode HonoRequestContext} types,
+ * and the native WebSocket adapter {@linkcode WsAdapter} with its
+ * {@linkcode WsServer} and {@linkcode WsClient}.
  *
  * # Usage
  *
@@ -25,3 +27,6 @@
 export * from "./adapter.ts";
 export * from "./controller_mapping.ts";
 export * from "./request_context.ts";
+export * from "./ws_adapter.ts";
+export * from "./ws_client.ts";
+export * from "./ws_server.ts";

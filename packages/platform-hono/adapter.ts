@@ -4,8 +4,11 @@ import type {
   HttpAdapter,
 } from "@denorid/core";
 import { Hono } from "@hono/hono";
-import { type ServerHandle, startServer } from "./_serve.ts";
+import type { Server as NodeHttpServer } from "node:http";
+import { createNodeServer, type ServerHandle, startServer } from "./_serve.ts";
+import { WebSocketHub } from "./_web_socket_hub.ts";
 import { HonoControllerMapping } from "./controller_mapping.ts";
+import { WsAdapter } from "./ws_adapter.ts";
 
 /**
  * Directory served for `GET` and `HEAD` requests no controller route matches.
@@ -97,10 +100,20 @@ export interface HonoAdapterOptions {
  *
  * Serves the app through the native HTTP server of the current runtime:
  * `Deno.serve` on Deno, `Bun.serve` on Bun and `@hono/node-server` on Node.js.
+ * After {@linkcode getHttpServer} it serves through a `node:http` server on
+ * every runtime.
+ *
+ * WebSocket gateways use the native {@linkcode WsAdapter} unless the
+ * application sets another adapter.
  */
 export class HonoAdapter implements HttpAdapter {
-  private readonly app = new Hono();
+  private readonly app: Hono = new Hono();
+  private readonly webSockets: WebSocketHub = new WebSocketHub(
+    this,
+    this.app.fetch,
+  );
   private server?: ServerHandle;
+  private httpServer?: NodeHttpServer;
 
   /**
    * @param {HonoAdapterOptions} [options] - Static files and client address resolution.
@@ -111,7 +124,15 @@ export class HonoAdapter implements HttpAdapter {
    * @inheritdoc
    */
   public listen(port?: number): void {
-    this.server ??= startServer(this.app.fetch, port ?? 3000);
+    if (this.server !== undefined) {
+      return;
+    }
+
+    this.server = startServer(this.webSockets.fetch, port ?? 3000, {
+      nodeServer: this.httpServer,
+      webSockets: this.webSockets.modules,
+    });
+    this.webSockets.listen(this.server.upgradeWebSocket);
   }
 
   /**
@@ -121,6 +142,7 @@ export class HonoAdapter implements HttpAdapter {
     const server = this.server;
 
     delete this.server;
+    this.webSockets.stop();
 
     await server?.close();
   }
@@ -132,5 +154,41 @@ export class HonoAdapter implements HttpAdapter {
     opts: ControllerMappingOptions,
   ): ControllerMapping | Promise<ControllerMapping> {
     return new HonoControllerMapping(this.app, opts, this.options);
+  }
+
+  /**
+   * Creates the native {@linkcode WsAdapter}, used for WebSocket gateways
+   * unless the application sets another adapter.
+   *
+   * @return {WsAdapter} The WebSocket adapter.
+   */
+  public createWebSocketAdapter(): WsAdapter {
+    return new WsAdapter(this);
+  }
+
+  /**
+   * Switches serving to a `node:http` server (`@hono/node-server`) on every
+   * runtime and returns it, e.g. to attach socket.io. Repeated calls return
+   * the same server; {@linkcode listen} then listens on it and
+   * {@linkcode close} closes it.
+   *
+   * @return {NodeHttpServer} The `node:http` server.
+   * @throws {Error} When the adapter already listens through the native
+   *   server API of the runtime.
+   */
+  public getHttpServer(): NodeHttpServer {
+    if (this.httpServer !== undefined) {
+      return this.httpServer;
+    }
+
+    if (this.server !== undefined) {
+      throw new Error(
+        "HonoAdapter listens already; call getHttpServer() before listen()",
+      );
+    }
+
+    this.httpServer = createNodeServer(this.webSockets.fetch);
+
+    return this.httpServer;
   }
 }
