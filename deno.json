@@ -12,6 +12,7 @@
     "./packages/kv",
     "./packages/logger",
     "./packages/microservices/",
+    "./packages/openapi",
     "./packages/platform-hono",
     "./packages/platform-socket-io",
     "./packages/s3",
