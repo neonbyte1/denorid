@@ -10,7 +10,7 @@
   "imports": {
     "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta1",
     "@keyv/redis": "npm:@keyv/redis@^5.1.6",
-    "cache-manager": "npm:cache-manager@^7.2.8",
+    "cache-manager": "npm:cache-manager@^7.2.9",
     "keyv": "npm:keyv@^5.6.0"
   }
 }
