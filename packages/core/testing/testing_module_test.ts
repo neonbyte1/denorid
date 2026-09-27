@@ -1,6 +1,20 @@
-import type { InjectionToken, InjectorContext, Tag } from "@denorid/injector";
-import { assertEquals } from "@std/assert";
-import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
+import {
+  type InjectionToken,
+  Injectable,
+  InjectorContext,
+  Module,
+  type OnBeforeApplicationShutdown,
+  type OnModuleDestroy,
+  type Tag,
+  Tags,
+} from "@denorid/injector";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertNotStrictEquals,
+  assertStrictEquals,
+} from "@std/assert";
+import { assertSpyCalls, spy } from "@std/testing/mock";
 import process from "node:process";
 import { describe, it } from "node:test";
 import type {
@@ -56,73 +70,59 @@ function makeCommandCtx(command: GreetCommand): InjectorContext {
 
 describe(TestingModule.name, () => {
   describe("get()", () => {
-    it("delegates to ctx.resolveInternal with the token", async () => {
-      const token = class MyService {};
-      const instance = new token();
-      const ctx = makeCtx({
-        resolveInternal: (_t: InjectionToken) => Promise.resolve(instance),
-      });
-      const resolveSpy = spy(ctx, "resolveInternal");
-      const module = new TestingModule(ctx);
+    it("returns one transient instance per contextId", async () => {
+      @Injectable({ mode: "transient" })
+      class Transient {}
 
-      const result = await module.get(token);
+      @Module({ providers: [Transient] })
+      class AppModule {}
 
-      assertEquals(result, instance);
-      assertSpyCalls(resolveSpy, 1);
-      assertSpyCall(resolveSpy, 0, { args: [token] });
-    });
+      await using module = new TestingModule(
+        await InjectorContext.create(AppModule),
+      );
 
-    it("ignores options and always resolves via resolveInternal", async () => {
-      const token = "MY_TOKEN";
-      const ctx = makeCtx({
-        resolveInternal: (_t: InjectionToken) => Promise.resolve("value"),
-      });
-      const resolveSpy = spy(ctx, "resolveInternal");
-      const module = new TestingModule(ctx);
+      const first = await module.get(Transient, { contextId: "ctx-1" });
 
-      await module.get(token as InjectionToken, { strict: false });
-
-      assertSpyCalls(resolveSpy, 1);
+      assertStrictEquals(
+        await module.get(Transient, { contextId: "ctx-1" }),
+        first,
+      );
+      assertNotStrictEquals(
+        await module.get(Transient, { contextId: "ctx-2" }),
+        first,
+      );
+      assertNotStrictEquals(await module.get(Transient), first);
     });
   });
 
   describe("getByTag()", () => {
-    it("delegates to ctx.container.getByTag for a single tag", async () => {
+    it("returns the transient instances of the given contextId", async () => {
       const TAG = Symbol("tag");
-      const items = [{ name: "a" }, { name: "b" }];
-      const ctx = makeCtx({
-        container: {
-          getByTag: (_tag: Tag) => Promise.resolve(items),
-        },
+
+      @Tags(TAG)
+      @Injectable({ mode: "transient" })
+      class Tagged {}
+
+      @Module({ providers: [Tagged] })
+      class AppModule {}
+
+      await using module = new TestingModule(
+        await InjectorContext.create(AppModule),
+      );
+
+      const [first] = await module.getByTag<Tagged>([TAG], { contextId: "a" });
+      const [second, third] = await module.getByTag<Tagged>([TAG, TAG], {
+        contextId: "a",
       });
-      const getByTagSpy = spy(ctx.container, "getByTag");
-      const module = new TestingModule(ctx);
 
-      const result = await module.getByTag(TAG);
-
-      assertEquals(result, items);
-      assertSpyCalls(getByTagSpy, 1);
-      assertSpyCall(getByTagSpy, 0, { args: [TAG] });
-    });
-
-    it("calls ctx.container.getByTag for each tag and flattens results", async () => {
-      const TAG_A = Symbol("a");
-      const TAG_B = Symbol("b");
-      const resultsA = [{ name: "a" }];
-      const resultsB = [{ name: "b" }, { name: "c" }];
-      const ctx = makeCtx({
-        container: {
-          getByTag: (tag: Tag) =>
-            Promise.resolve(tag === TAG_A ? resultsA : resultsB),
-        },
-      });
-      const getByTagSpy = spy(ctx.container, "getByTag");
-      const module = new TestingModule(ctx);
-
-      const result = await module.getByTag([TAG_A, TAG_B], { contextId: "x" });
-
-      assertEquals(result, [...resultsA, ...resultsB]);
-      assertSpyCalls(getByTagSpy, 2);
+      assertInstanceOf(first, Tagged);
+      assertStrictEquals(second, first);
+      assertStrictEquals(third, first);
+      assertNotStrictEquals(
+        (await module.getByTag<Tagged>([TAG], { contextId: "b" }))[0],
+        first,
+      );
+      assertNotStrictEquals((await module.getByTag<Tagged>(TAG))[0], first);
     });
   });
 
@@ -138,47 +138,37 @@ describe(TestingModule.name, () => {
     });
   });
 
-  describe("close()", () => {
-    it("calls onBeforeApplicationShutdown then onApplicationShutdown in order", async () => {
-      const calls: string[] = [];
-      const ctx = makeCtx({
-        onBeforeApplicationShutdown: () => {
-          calls.push("before");
-          return Promise.resolve();
-        },
-        onApplicationShutdown: () => {
-          calls.push("shutdown");
-          return Promise.resolve();
-        },
-      });
-      const module = new TestingModule(ctx);
-
-      await module.close();
-
-      assertEquals(calls, ["before", "shutdown"]);
-    });
-  });
-
   describe("[Symbol.asyncDispose]()", () => {
-    it("runs the shutdown hooks when an `await using` block exits", async () => {
+    it("closes the injector context when an `await using` block exits", async () => {
       const calls: string[] = [];
-      const ctx = makeCtx({
-        onBeforeApplicationShutdown: () => {
+
+      @Injectable()
+      class Service
+        implements OnBeforeApplicationShutdown, OnModuleDestroy, Disposable {
+        public onBeforeApplicationShutdown(): void {
           calls.push("before");
-          return Promise.resolve();
-        },
-        onApplicationShutdown: () => {
-          calls.push("shutdown");
-          return Promise.resolve();
-        },
-      });
+        }
+
+        public onModuleDestroy(): void {
+          calls.push("destroy");
+        }
+
+        public [Symbol.dispose](): void {
+          calls.push("dispose");
+        }
+      }
+
+      @Module({ providers: [Service] })
+      class AppModule {}
 
       {
-        await using _module = new TestingModule(ctx);
+        await using _module = new TestingModule(
+          await InjectorContext.create(AppModule),
+        );
         assertEquals(calls, []);
       }
 
-      assertEquals(calls, ["before", "shutdown"]);
+      assertEquals(calls, ["before", "destroy", "dispose"]);
     });
   });
 

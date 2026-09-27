@@ -36,9 +36,14 @@ export class TestingModule implements ApplicationContext {
   ): Promise<T>;
   public get<T>(
     token: InjectionToken<T>,
-    _options?: ModuleRefOptions | ModuleRefContextOptions,
+    options?: ModuleRefOptions | ModuleRefContextOptions,
   ): Promise<T> {
-    return this.ctx.resolveInternal<T>(token);
+    return options && "contextId" in options
+      ? this.ctx.getHostModuleRef().get<T>(token, {
+        contextId: options.contextId,
+        strict: false,
+      })
+      : this.ctx.resolveInternal<T>(token);
   }
 
   /**
@@ -57,17 +62,21 @@ export class TestingModule implements ApplicationContext {
   ): Promise<T[]>;
   public async getByTag<T = unknown>(
     arg0: Tag | Tag[],
-    _options?: ModuleRefOptions | ModuleRefContextOptions,
+    options?: ModuleRefOptions | ModuleRefContextOptions,
   ): Promise<T[]> {
+    const contextId = options && "contextId" in options
+      ? options.contextId
+      : undefined;
+
     if (Array.isArray(arg0)) {
       return (
         await Promise.all(
-          arg0.map((tag) => this.ctx.container.getByTag<T>(tag)),
+          arg0.map((tag) => this.ctx.container.getByTag<T>(tag, contextId)),
         )
       ).flat();
     }
 
-    return this.ctx.container.getByTag<T>(arg0);
+    return this.ctx.container.getByTag<T>(arg0, contextId);
   }
 
   /**
@@ -80,9 +89,8 @@ export class TestingModule implements ApplicationContext {
   /**
    * @inheritdoc
    */
-  public async close(): Promise<void> {
-    await this.ctx.onBeforeApplicationShutdown();
-    await this.ctx.onApplicationShutdown();
+  public close(): Promise<void> {
+    return this.ctx.close();
   }
 
   /**

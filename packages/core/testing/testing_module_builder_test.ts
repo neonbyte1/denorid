@@ -1,11 +1,23 @@
 import type {
+  InjectionToken,
   OnApplicationBootstrap,
   OnApplicationShutdown,
   OnBeforeApplicationShutdown,
   OnModuleInit,
 } from "@denorid/injector";
-import { Inject, Injectable, InjectorContext, Module } from "@denorid/injector";
-import { assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
+import {
+  Global,
+  Inject,
+  Injectable,
+  InjectorContext,
+  Module,
+} from "@denorid/injector";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
 import { afterEach, describe, it } from "node:test";
 import { ExceptionHandler } from "../exceptions/handler.ts";
 import type { TestingModule } from "./testing_module.ts";
@@ -213,6 +225,100 @@ describe(TestingModuleBuilder.name, () => {
       assertEquals(await module.get<number>(A), 10);
       assertEquals(await module.get<number>(B), 20);
     });
+
+    it("replaces a provider declared in an imported module for its consumers", async () => {
+      @Injectable()
+      class UsersRepository {
+        public find(): string {
+          return "real";
+        }
+      }
+
+      @Injectable()
+      class UsersService {
+        @Inject(UsersRepository)
+        public readonly repository!: UsersRepository;
+      }
+
+      @Module({
+        providers: [UsersRepository, UsersService],
+        exports: [UsersService],
+      })
+      class UsersModule {}
+
+      module = await Test.createTestingModule({ imports: [UsersModule] })
+        .overrideProvider(UsersRepository)
+        .useValue({ find: (): string => "mock" })
+        .compile();
+
+      const service = await module.get(UsersService);
+
+      assertEquals(service.repository.find(), "mock");
+    });
+
+    it("replaces a provider of a global module for every module", async () => {
+      @Injectable()
+      class Clock {
+        public now(): number {
+          return Date.now();
+        }
+      }
+
+      @Global()
+      @Module({ providers: [Clock], exports: [Clock] })
+      class ClockModule {}
+
+      @Injectable()
+      class Scheduler {
+        @Inject(Clock)
+        public readonly clock!: Clock;
+      }
+
+      @Module({ providers: [Scheduler], exports: [Scheduler] })
+      class SchedulerModule {}
+
+      module = await Test.createTestingModule({
+        imports: [ClockModule, SchedulerModule],
+      })
+        .overrideProvider(Clock)
+        .useValue({ now: (): number => 0 })
+        .compile();
+
+      const scheduler = await module.get(Scheduler);
+
+      assertEquals(scheduler.clock.now(), 0);
+    });
+
+    it("replaces a core global of useCoreGlobals()", async () => {
+      const exceptionHandler = { handle: (): string => "mock" };
+
+      @Injectable()
+      class Consumer {
+        @Inject(ExceptionHandler)
+        public readonly exceptionHandler!: unknown;
+      }
+
+      module = await Test.createTestingModule({ providers: [Consumer] })
+        .useCoreGlobals()
+        .overrideProvider(ExceptionHandler)
+        .useValue(exceptionHandler)
+        .compile();
+
+      const consumer = await module.get(Consumer);
+
+      assertStrictEquals(consumer.exceptionHandler, exceptionHandler);
+    });
+
+    it("does not add a provider for a token that nothing declares", async () => {
+      const TOKEN = Symbol("undeclared");
+
+      module = await Test.createTestingModule({})
+        .overrideProvider(TOKEN)
+        .useValue("value")
+        .compile();
+
+      await assertRejects(() => module!.get(TOKEN));
+    });
   });
 
   describe("useMocker()", () => {
@@ -336,6 +442,52 @@ describe(TestingModuleBuilder.name, () => {
       const svc = await module.get(ServiceWithDep);
 
       assertEquals(svc.dep, "from-override");
+    });
+
+    it("keeps the exports of imported modules and the core globals", async () => {
+      const MISSING = Symbol("missing");
+
+      @Injectable()
+      class ConfigService {
+        public get(): string {
+          return "real";
+        }
+      }
+
+      @Module({ providers: [ConfigService], exports: [ConfigService] })
+      class ConfigModule {}
+
+      @Injectable()
+      class Service {
+        @Inject(ConfigService)
+        public readonly config!: ConfigService;
+
+        @Inject(ExceptionHandler)
+        public readonly exceptionHandler!: ExceptionHandler;
+
+        @Inject(MISSING)
+        public readonly missing!: unknown;
+      }
+
+      const mocked: InjectionToken[] = [];
+
+      module = await Test.createTestingModule({
+        imports: [ConfigModule],
+        providers: [Service],
+      })
+        .useCoreGlobals()
+        .useMocker((token: InjectionToken): unknown => {
+          mocked.push(token);
+          return { mocked: true };
+        })
+        .compile();
+
+      const service = await module.get(Service);
+
+      assertEquals(mocked, [MISSING]);
+      assertEquals(service.config.get(), "real");
+      assertInstanceOf(service.exceptionHandler, ExceptionHandler);
+      assertEquals(service.missing, { mocked: true });
     });
   });
 

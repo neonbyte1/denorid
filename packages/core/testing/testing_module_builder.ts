@@ -65,8 +65,10 @@ export class TestingModuleBuilder {
   /**
    * Override a provider registered under the given token.
    *
-   * Overrides are applied last and therefore always win over the original
-   * provider and any auto-mocked values from {@linkcode useMocker}.
+   * The override replaces the provider wherever the token is declared: in the
+   * testing module, in imported modules (including global ones), among the
+   * core globals of {@linkcode useCoreGlobals} and among the auto-mocked
+   * values of {@linkcode useMocker}. Tokens declared nowhere are not added.
    *
    * @param {InjectionToken} token - The token whose provider should be replaced.
    * @returns {OverrideBuilder}
@@ -95,10 +97,14 @@ export class TestingModuleBuilder {
   }
 
   /**
-   * Register a factory that is called for any `@Inject`-decorated field dependency
-   * that does not have a provider declared in the testing module.
+   * Register a factory that is called for any `@Inject`-decorated field
+   * dependency of the testing module's providers that nothing provides: not
+   * the testing module, not the exports of its imports and not a global
+   * (including the core globals of {@linkcode useCoreGlobals}).
    *
    * The factory receives the unresolved token and must return a mock value.
+   * The mocks are registered as globals, so the declared providers keep
+   * precedence.
    *
    * @param {MockFactory} factory - The mock factory.
    * @returns {TestingModuleBuilder}
@@ -127,54 +133,60 @@ export class TestingModuleBuilder {
    * @returns {Promise<TestingModule>}
    */
   public async compile(): Promise<TestingModule> {
-    const originalProviders: Provider[] = [...(this.metadata.providers ?? [])];
-    const mockedProviders: Provider[] = this.mocker
-      ? this.buildMockedProviders(originalProviders)
-      : [];
-
-    const allProviders: Provider[] = [
-      ...originalProviders,
-      ...mockedProviders,
-      ...this.overrides,
-    ];
-
+    const providers: Provider[] = this.metadata.providers ?? [];
     const dynamicModule: DynamicModule = {
       module: TestingRootModule,
       imports: this.metadata.imports ?? [],
-      providers: allProviders,
+      providers,
       exports: [],
     };
+    const overrides = new Map<InjectionToken, Provider>(
+      this.overrides.map((provider) => [getProviderToken(provider), provider]),
+    );
 
-    const ctx = await InjectorContext.create(
-      dynamicModule,
-      this.coreGlobals
-        ? {
-          beforeInit: (ctx) => {
-            ctx.registerGlobal(
+    const ctx = await InjectorContext.create(dynamicModule, {
+      overrides: this.overrides,
+      beforeInit: (ctx: InjectorContext): void => {
+        if (this.coreGlobals) {
+          ctx.registerGlobal(
+            ...[
               {
                 provide: ExceptionHandler,
                 useValue: new ExceptionHandler(ctx),
               },
-              {
-                provide: InjectorContext,
-                useValue: ctx,
-              },
-            );
-          },
+              { provide: InjectorContext, useValue: ctx },
+            ].map((global): Provider =>
+              overrides.get(global.provide) ?? global
+            ),
+          );
         }
-        : undefined,
-    );
+
+        if (this.mocker) {
+          this.registerMocks(ctx, providers, this.mocker, overrides);
+        }
+      },
+    });
 
     return new TestingModule(ctx);
   }
 
-  private buildMockedProviders(originalProviders: Provider[]): Provider[] {
-    const declared = new Set<InjectionToken>(
-      originalProviders.map(getProviderToken),
-    );
-    const mocked: Provider[] = [];
-
-    for (const provider of originalProviders) {
+  /**
+   * Registers a global mock (or the override of its token) for every field
+   * dependency of the given class providers that `ctx` cannot resolve from
+   * the testing module.
+   *
+   * @param {InjectorContext} ctx - The context before any provider was created.
+   * @param {Provider[]} providers - The providers of the testing module.
+   * @param {MockFactory} mocker - Creates the mock values.
+   * @param {Map<InjectionToken, Provider>} overrides - The overrides by token.
+   */
+  private registerMocks(
+    ctx: InjectorContext,
+    providers: Provider[],
+    mocker: MockFactory,
+    overrides: Map<InjectionToken, Provider>,
+  ): void {
+    for (const provider of providers) {
       let targetClass: Type | undefined;
 
       if (typeof provider === "function") {
@@ -187,18 +199,14 @@ export class TestingModuleBuilder {
         continue;
       }
 
-      for (const dep of getInjectionDependencies(targetClass)) {
-        if (!declared.has(dep.token)) {
-          declared.add(dep.token);
-          mocked.push({
-            provide: dep.token,
-            useValue: this.mocker!(dep.token),
-          });
+      for (const { token } of getInjectionDependencies(targetClass)) {
+        if (!ctx.container.canResolve(token)) {
+          ctx.registerGlobal(
+            overrides.get(token) ?? { provide: token, useValue: mocker(token) },
+          );
         }
       }
     }
-
-    return mocked;
   }
 }
 
