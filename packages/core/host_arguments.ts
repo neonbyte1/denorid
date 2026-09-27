@@ -44,6 +44,34 @@ export interface RpcArguments {
 }
 
 /**
+ * Methods to obtain the client and payload of an incoming WebSocket message.
+ */
+export interface WsArguments {
+  /**
+   * Returns the connected client that sent the message.
+   *
+   * @template T - Client type of the active WebSocket adapter.
+   * @return {T} The client object.
+   */
+  getClient<T = unknown>(): T;
+
+  /**
+   * Returns the data payload of the incoming message.
+   *
+   * @template T - Expected payload type.
+   * @return {T} The payload.
+   */
+  getData<T = unknown>(): T;
+
+  /**
+   * Returns the event name of the incoming message.
+   *
+   * @return {string} The event name.
+   */
+  getPattern(): string;
+}
+
+/**
  * Provides methods for retrieving the arguments being passed to a handler.
  */
 export interface HostArguments {

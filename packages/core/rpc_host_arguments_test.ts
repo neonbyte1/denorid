@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { describe, it } from "node:test";
+import { ContextNotAvailableException } from "./exceptions/context_not_available.ts";
 import { RpcExecutionContext, RpcHostArguments } from "./rpc_host_arguments.ts";
 
 describe(RpcHostArguments.name, () => {
@@ -41,6 +42,18 @@ describe(RpcHostArguments.name, () => {
     it("handles object pattern", () => {
       const host = new RpcHostArguments({ cmd: "find" }, null);
       assertEquals(host.switchToRpc().getPattern(), { cmd: "find" });
+    });
+  });
+
+  describe("switchToWs()", () => {
+    it("throws - WebSocket context not available in rpc", () => {
+      const host = new RpcHostArguments("test.pattern", { id: 1 });
+
+      assertThrows(
+        () => host.switchToWs(),
+        ContextNotAvailableException,
+        "switchToWs() is not available in rpc context. Use switchToRpc() instead.",
+      );
     });
   });
 });

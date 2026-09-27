@@ -10,6 +10,7 @@ import type {
   HostArguments,
   HttpHostArguments,
   RpcArguments,
+  WsArguments,
 } from "./host_arguments.ts";
 
 /**
@@ -52,6 +53,20 @@ export class RpcHostArguments implements HostArguments {
       getPattern: () => this.pattern,
       getData: () => this.data,
     };
+  }
+
+  /**
+   * Not available in an RPC context - use {@link switchToRpc} instead.
+   *
+   * @throws {ContextNotAvailableException} Always.
+   * @return {WsArguments}
+   */
+  public switchToWs(): WsArguments {
+    throw new ContextNotAvailableException(
+      "rpc",
+      "switchToWs",
+      "switchToRpc",
+    );
   }
 }
 
