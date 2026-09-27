@@ -43,6 +43,34 @@ const app = await DenoridFactory.create(AppModule, new HonoAdapter());
 await app.listen();
 ```
 
+## Routing and responses
+
+- Every entry of a controller or route path array is its own route:
+  `@Get(["a", "b"])` answers `/a` and `/b`.
+- A controller `host` option (string, RegExp or an array of both) is matched
+  against the request hostname; requests for other hosts go on to the next
+  route, the static files or the `404`.
+- `@Head()` routes answer `HEAD` requests, also when a `@Get()` route has the
+  same path. Without a `@Head()` route, `HEAD` is answered by the `GET` route
+  without body.
+- With `cors` enabled, preflight (`OPTIONS`) requests on route paths are
+  answered with the CORS headers; the controller is not called.
+- Results: a `Response` is sent as is, strings, numbers, booleans, bigints and
+  symbols as text, other objects as JSON, with the `@HttpCode()` status or
+  `200`. `undefined`/`null` send an empty body with the `@HttpCode()` status or
+  `204`.
+- Errors: an `HttpException` is sent with its body and status. Any other error
+  is answered with the standard `500` body
+  (`{"message":"Internal Server Error","statusCode":500}`); its message is only
+  logged.
+- Exception filter results: a `Response` is sent as is; when several filters
+  return a value, the first `Response` among them is sent. An `HttpException` is
+  sent with its body and status. Other values are serialized like controller
+  results, with the status of the handled error (`500` unless it is an
+  `HttpException`).
+- Every request gets its own DI context id (`RequestContext.contextId`, a random
+  UUID); an `x-request-id` header is not used for it.
+
 ## Static files
 
 Serve a directory, e.g. a Vite build, for `GET` and `HEAD` requests no
