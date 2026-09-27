@@ -4,6 +4,7 @@ import {
   assertExists,
   assertInstanceOf,
   assertRejects,
+  assertStrictEquals,
 } from "@std/assert";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
@@ -17,6 +18,7 @@ import {
   TaggedServiceB,
   TransientService,
 } from "./_test_fixtures.ts";
+import { runInRequestContextAsync } from "./_request_context.ts";
 import type { InjectableMode } from "./common.ts";
 import { Container } from "./container.ts";
 import { Inject, Injectable, Tags } from "./decorators.ts";
@@ -733,19 +735,29 @@ describe("Container", () => {
 
     it("should return instances recursively", async () => {
       const child = new Container(noopLogger, {
-        exports: new Set([TransientService]),
+        exports: new Set([TaggedServiceA]),
       });
 
-      child.register(TransientService);
+      child.register(TaggedServiceA);
       container.addChild(child);
       container.register(SimpleService);
 
       await container.resolve(SimpleService);
-      await child.resolve(TransientService);
+      await child.resolve(TaggedServiceA);
 
       const instances = container.getInstances({ recursive: true });
 
       assertEquals(instances.length, 2);
+    });
+
+    it("should not track transient instances", async () => {
+      container.register(TransientService);
+
+      await container.resolve(TransientService);
+      await container.resolveWithContext(TransientService, "ctx-1");
+
+      assertEquals(container.getInstances(), []);
+      assertEquals(container.getOwnedInstances(), []);
     });
 
     it("should deduplicate instances", async () => {
@@ -757,6 +769,33 @@ describe("Container", () => {
       const instances = container.getInstances({ recursive: true });
 
       assertEquals(instances.length, 1);
+    });
+  });
+
+  describe("getOwnedInstances", () => {
+    useContainer();
+
+    it("lists created singletons, not values, of the container and its imports", async () => {
+      const value = { external: true };
+      const child = new Container(noopLogger, {
+        exports: new Set([TaggedServiceA]),
+      });
+
+      child.register(TaggedServiceA);
+      container.addChild(child);
+      container.register(SimpleService, { provide: "VALUE", useValue: value });
+
+      const simple = await container.resolve(SimpleService);
+      const tagged = await container.resolve(TaggedServiceA);
+
+      await container.resolve("VALUE");
+
+      assertEquals(container.getOwnedInstances(), [simple]);
+      assertEquals(container.getOwnedInstances({ recursive: true }), [
+        simple,
+        tagged,
+      ]);
+      assertEquals(container.getInstances(), [simple, value]);
     });
   });
 
@@ -1191,4 +1230,692 @@ describe("Container", () => {
       assert(a.id !== b.id);
     });
   });
+
+  describe("concurrent resolution", () => {
+    useContainer();
+
+    it("shares one in-flight singleton between concurrent callers", async () => {
+      let created = 0;
+
+      container.register({
+        provide: "SLOW",
+        useFactory: async () => {
+          await delay(1);
+          return { id: ++created };
+        },
+      });
+
+      const [a, b] = await Promise.all([
+        container.resolve("SLOW"),
+        container.resolve("SLOW"),
+      ]);
+
+      assertStrictEquals(a, b);
+      assertEquals(created, 1);
+      assertEquals(container.getInstances(), [a]);
+    });
+
+    it("shares a singleton whose dependency is still being resolved", async () => {
+      container.register(
+        {
+          provide: "SLOW",
+          useFactory: async () => {
+            await delay(1);
+            return "slow";
+          },
+        },
+        Consumer,
+      );
+
+      const [a, b, slow] = await Promise.all([
+        container.resolve(Consumer),
+        container.resolve(Consumer),
+        container.resolve("SLOW"),
+      ]);
+
+      assertStrictEquals(a, b);
+      assertEquals(a.slow, "slow");
+      assertEquals(slow, "slow");
+    });
+
+    it("creates a new transient instance for every concurrent caller", async () => {
+      container.register({
+        provide: "FRESH",
+        mode: "transient",
+        useFactory: async () => {
+          await delay(1);
+          return {};
+        },
+      });
+
+      const [a, b] = await Promise.all([
+        container.resolve("FRESH"),
+        container.resolve("FRESH"),
+      ]);
+
+      assert(a !== b);
+    });
+
+    it("shares one context-cached transient between concurrent callers", async () => {
+      container.register({
+        provide: "FRESH",
+        mode: "transient",
+        useFactory: async () => {
+          await delay(1);
+          return {};
+        },
+      });
+
+      const [a, b] = await Promise.all([
+        container.resolveWithContext("FRESH", "ctx-1"),
+        container.resolveWithContext("FRESH", "ctx-1"),
+      ]);
+
+      assertStrictEquals(a, b);
+    });
+
+    it("shares one request-scoped instance per request between concurrent callers", async () => {
+      container.register({
+        provide: "PER_REQUEST",
+        mode: "request",
+        useFactory: async () => {
+          await delay(1);
+          return {};
+        },
+      });
+
+      const resolveTwice = (id: string): Promise<unknown[]> =>
+        runInRequestContextAsync(id, () =>
+          Promise.all([
+            container.resolve("PER_REQUEST"),
+            container.resolve("PER_REQUEST"),
+          ]));
+
+      const [[a, b], [c, d]] = await Promise.all([
+        resolveTwice("req-1"),
+        resolveTwice("req-2"),
+      ]);
+
+      assertStrictEquals(a, b);
+      assertStrictEquals(c, d);
+      assert(a !== c);
+    });
+
+    it("evicts a failed resolution so the next call retries", async () => {
+      let attempts = 0;
+
+      container.register({
+        provide: "FLAKY",
+        useFactory: async () => {
+          await delay(1);
+
+          if (++attempts === 1) {
+            throw new Error("first attempt failed");
+          }
+
+          return "ok";
+        },
+      });
+
+      const failed = await Promise.allSettled([
+        container.resolve("FLAKY"),
+        container.resolve("FLAKY"),
+      ]);
+
+      assertEquals(failed.map(({ status }) => status), [
+        "rejected",
+        "rejected",
+      ]);
+      assertEquals(await container.resolve("FLAKY"), "ok");
+      assertEquals(attempts, 2);
+    });
+
+    it("lists the tokens of a cycle", async () => {
+      @Injectable()
+      class A {
+        @Inject("B")
+        b!: unknown;
+      }
+
+      @Injectable()
+      class B {
+        @Inject(A)
+        a!: A;
+      }
+
+      container.register(A, { provide: "B", useClass: B });
+
+      const error = await assertRejects(
+        () => container.resolve(A),
+        CircularDependencyError,
+      );
+
+      assertEquals(error.chain, [A, "B", A]);
+    });
+
+    it("rejects a cycle between concurrent resolution chains instead of waiting forever", async () => {
+      container.register(
+        {
+          provide: "A",
+          useFactory: async () => {
+            await delay(1);
+            return await container.resolve("B");
+          },
+        },
+        {
+          provide: "B",
+          useFactory: async () => {
+            await delay(1);
+            return await container.resolve("A");
+          },
+        },
+      );
+
+      const results = await Promise.allSettled([
+        container.resolve("A"),
+        container.resolve("B"),
+      ]);
+
+      for (const result of results) {
+        assertEquals(result.status, "rejected");
+        assertInstanceOf(
+          (result as PromiseRejectedResult).reason,
+          CircularDependencyError,
+        );
+      }
+
+      assertEquals(
+        ((results[1] as PromiseRejectedResult)
+          .reason as CircularDependencyError)
+          .chain,
+        ["B", "A", "B"],
+      );
+    });
+
+    it("lets work detached from a finished resolution resolve its provider again", async () => {
+      let detached: Promise<unknown> | undefined;
+
+      container.register(
+        {
+          provide: "STARTER",
+          mode: "transient",
+          useFactory: () => {
+            detached ??= container.resolve("DETACHED");
+            return "starter";
+          },
+        },
+        {
+          provide: "DETACHED",
+          useFactory: async () => {
+            await delay(1);
+            return await container.resolve("STARTER");
+          },
+        },
+      );
+
+      assertEquals(await container.resolve("STARTER"), "starter");
+      assertEquals(await detached, "starter");
+    });
+
+    it("lets callbacks scheduled by a finished resolution resolve its provider again", async () => {
+      const { promise: later, resolve } = Promise.withResolvers<unknown>();
+      let scheduled = false;
+
+      container.register({
+        provide: "SCHEDULER",
+        mode: "transient",
+        useFactory: () => {
+          if (!scheduled) {
+            scheduled = true;
+            setTimeout(() => resolve(container.resolve("SCHEDULER")), 1);
+          }
+
+          return "scheduled";
+        },
+      });
+
+      assertEquals(await container.resolve("SCHEDULER"), "scheduled");
+      assertEquals(await later, "scheduled");
+    });
+  });
+
+  describe("aliases", () => {
+    useContainer();
+
+    it("resolves a request-scoped target once per request", async () => {
+      container.register(RequestScopedService, {
+        provide: "ALIAS",
+        useExisting: RequestScopedService,
+      });
+
+      const resolveBoth = (id: string): Promise<unknown[]> =>
+        runInRequestContextAsync(id, async () => [
+          await container.resolve(RequestScopedService),
+          await container.resolve("ALIAS"),
+        ]);
+
+      const [direct1, alias1] = await resolveBoth("req-1");
+      const [direct2, alias2] = await resolveBoth("req-2");
+
+      assertStrictEquals(alias1, direct1);
+      assertStrictEquals(alias2, direct2);
+      assert(alias1 !== alias2);
+    });
+
+    it("reports the mode of its target", () => {
+      container.register(RequestScopedService, TransientService, {
+        provide: "REQUEST_ALIAS",
+        useExisting: RequestScopedService,
+      }, {
+        provide: "TRANSIENT_ALIAS",
+        useExisting: TransientService,
+      });
+
+      assertEquals(container.getProviderMode("REQUEST_ALIAS"), "request");
+      assertEquals(container.isRequestScoped("REQUEST_ALIAS"), true);
+      assertEquals(container.getProviderMode("TRANSIENT_ALIAS"), "transient");
+    });
+
+    it("resolves a transient target every time", async () => {
+      container.register(TransientService, {
+        provide: "ALIAS",
+        useExisting: TransientService,
+      });
+
+      const a = await container.resolve<TransientService>("ALIAS");
+      const b = await container.resolve<TransientService>("ALIAS");
+
+      assert(a.id !== b.id);
+    });
+
+    it("forwards the contextId to its target", async () => {
+      container.register(TransientService, {
+        provide: "ALIAS",
+        useExisting: TransientService,
+      });
+
+      const alias = await container.resolveWithContext("ALIAS", "ctx-1");
+
+      assertStrictEquals(
+        alias,
+        await container.resolveWithContext(TransientService, "ctx-1"),
+      );
+      assert(alias !== await container.resolveWithContext("ALIAS", "ctx-2"));
+    });
+
+    it("is not tracked on its own", async () => {
+      container.register(SimpleService, {
+        provide: "ALIAS",
+        useExisting: SimpleService,
+      });
+
+      const alias = await container.resolve("ALIAS");
+
+      assertStrictEquals(alias, await container.resolve(SimpleService));
+      assertEquals(container.getInstances(), [alias]);
+    });
+
+    it("rejects alias loops", async () => {
+      container.register(
+        { provide: "A", useExisting: "B" },
+        { provide: "B", useExisting: "A" },
+      );
+
+      const error = await assertRejects(
+        () => container.resolve("A"),
+        CircularDependencyError,
+      );
+
+      assertEquals(error.chain, ["A", "B", "A"]);
+      assertEquals(container.getProviderMode("A"), undefined);
+    });
+  });
+
+  describe("request cache", () => {
+    it("keeps request-scoped providers of different containers apart", async () => {
+      const moduleA = new Container(noopLogger);
+      const moduleB = new Container(noopLogger);
+
+      moduleA.register({
+        provide: "CFG",
+        mode: "request",
+        useFactory: () => "module-A",
+      });
+      moduleB.register({
+        provide: "CFG",
+        mode: "request",
+        useFactory: () => "module-B",
+      });
+
+      const values = await runInRequestContextAsync(
+        "req-1",
+        async () => [
+          await moduleA.resolve("CFG"),
+          await moduleB.resolve("CFG"),
+        ],
+      );
+
+      assertEquals(values, ["module-A", "module-B"]);
+    });
+  });
+
+  describe("registerForwarded", () => {
+    function setup(): { global: Container; target: Container } {
+      const target = new Container(noopLogger, {
+        exports: new Set([TaggedServiceA, TransientService]),
+      });
+      const global = new Container(noopLogger);
+
+      target.register(TaggedServiceA, TransientService);
+      global.registerForwarded(target, TaggedServiceA, TransientService);
+
+      return { global, target };
+    }
+
+    it("resolves the instance of the target container", async () => {
+      const { global, target } = setup();
+      const instance = await global.resolve(TaggedServiceA);
+
+      assertStrictEquals(instance, await target.resolve(TaggedServiceA));
+      assertEquals(global.getInstances(), []);
+      assertEquals(target.getInstances(), [instance]);
+    });
+
+    it("reports the mode of the target provider", () => {
+      const { global } = setup();
+
+      assertEquals(global.getProviderMode(TaggedServiceA), "singleton");
+      assertEquals(global.getProviderMode(TransientService), "transient");
+    });
+
+    it("forwards the contextId", async () => {
+      const { global, target } = setup();
+
+      assertStrictEquals(
+        await global.resolveWithContext(TransientService, "ctx-1"),
+        await target.resolveWithContext(TransientService, "ctx-1"),
+      );
+    });
+
+    it("maps the tags of the providers once", async () => {
+      const { global, target } = setup();
+      const consumer = new Container(noopLogger, { globalContainer: global });
+
+      consumer.addChild(target);
+
+      assertEquals(consumer.getTokensByTag(TAG_A), [TaggedServiceA]);
+      assertEquals(await consumer.getByTag(TAG_A), [
+        await target.resolve(TaggedServiceA),
+      ]);
+    });
+  });
+
+  describe("tags across modules", () => {
+    useContainer();
+
+    it("includes the tagged tokens of all nested imports with bypassExportCheck", () => {
+      const child = new Container(noopLogger);
+      const grandChild = new Container(noopLogger);
+
+      child.register(TaggedServiceB);
+      grandChild.register(TaggedServiceA);
+      child.addChild(grandChild);
+      container.addChild(child);
+
+      assertEquals(container.getTokensByTag(TAG_A, true), [
+        TaggedServiceB,
+        TaggedServiceA,
+      ]);
+      assertEquals(container.getTokensByTag(TAG_A), []);
+    });
+
+    it("includes tagged tokens an import re-exports", async () => {
+      const child = new Container(noopLogger, {
+        exports: new Set([TaggedServiceA]),
+      });
+      const grandChild = new Container(noopLogger, {
+        exports: new Set([TaggedServiceA]),
+      });
+
+      grandChild.register(TaggedServiceA);
+      child.addChild(grandChild);
+      container.addChild(child);
+
+      assertEquals(container.getTokensByTag(TAG_A), [TaggedServiceA]);
+      assertInstanceOf((await container.getByTag(TAG_A))[0], TaggedServiceA);
+    });
+
+    it("lists a token of a shared import once", () => {
+      const shared = new Container(noopLogger, {
+        exports: new Set([TaggedServiceA]),
+      });
+      const first = new Container(noopLogger, {
+        exports: new Set([TaggedServiceA]),
+      });
+      const second = new Container(noopLogger, {
+        exports: new Set([TaggedServiceA]),
+      });
+      const global = new Container(noopLogger);
+
+      shared.register(TaggedServiceA);
+      global.register(TaggedServiceA);
+      first.addChild(shared);
+      second.addChild(shared);
+      container = new Container(noopLogger, { globalContainer: global });
+      container.addChild(first);
+      container.addChild(second);
+
+      assertEquals(container.getTokensByTag(TAG_A), [TaggedServiceA]);
+      assertEquals(container.getTokensByTag(TAG_A, true), [TaggedServiceA]);
+    });
+
+    it("caches global transient providers per contextId", async () => {
+      const TAG = Symbol("GLOBAL_TRANSIENT");
+
+      @Injectable({ mode: "transient" })
+      @Tags(TAG)
+      class GlobalTransient {}
+
+      const global = new Container(noopLogger);
+
+      global.register(GlobalTransient);
+      container = new Container(noopLogger, { globalContainer: global });
+
+      const [a] = await container.getByTag(TAG, "ctx-1");
+      const [b] = await container.getByTag(TAG, "ctx-1");
+      const [c] = await container.getByTag(TAG, "ctx-2");
+
+      assertStrictEquals(a, b);
+      assert(a !== c);
+    });
+  });
+
+  describe("scope bubbling", () => {
+    useContainer();
+
+    @Injectable()
+    class Holder {
+      @Inject(RequestScopedService)
+      public state!: RequestScopedService;
+    }
+
+    function inRequests<T>(
+      resolve: () => Promise<T>,
+    ): Promise<[T, T][]> {
+      return Promise.all(
+        ["req-1", "req-2"].map((id) =>
+          runInRequestContextAsync(
+            id,
+            async (): Promise<[T, T]> => [await resolve(), await resolve()],
+          )
+        ),
+      );
+    }
+
+    it("resolves a singleton depending on a request-scoped provider once per request", async () => {
+      container.register(RequestScopedService, Holder);
+
+      const [[a, b], [c]] = await inRequests(() => container.resolve(Holder));
+
+      assertEquals(container.getProviderMode(Holder), "request");
+      assert(container.isRequestScoped(Holder));
+      assertStrictEquals(a, b);
+      assert(a !== c);
+      assert(a.state.id !== c.state.id);
+      assertEquals(container.getInstances(), []);
+      assertEquals(container.getOwnedInstances(), []);
+      await assertRejects(() => container.resolve(Holder), RequestContextError);
+    });
+
+    it("bubbles through transitive class and factory dependencies", async () => {
+      @Injectable()
+      class Outer {
+        @Inject("MIDDLE")
+        public middle!: { state: RequestScopedService };
+      }
+
+      container.register(RequestScopedService, Outer, {
+        provide: "MIDDLE",
+        useFactory: (state: RequestScopedService) => ({ state }),
+        inject: [RequestScopedService],
+      });
+
+      const [[a, b], [c]] = await inRequests(() => container.resolve(Outer));
+
+      assertEquals(container.getProviderMode("MIDDLE"), "request");
+      assertEquals(container.getProviderMode(Outer), "request");
+      assertStrictEquals(a, b);
+      assert(a.middle.state.id !== c.middle.state.id);
+    });
+
+    it("makes a transient depending on a request-scoped provider request-scoped", async () => {
+      container.register(RequestScopedService, {
+        provide: "WORKER",
+        mode: "transient",
+        useFactory: (state: RequestScopedService) => ({ state }),
+        inject: [RequestScopedService],
+      });
+
+      const [[a, b], [c]] = await inRequests(() =>
+        container.resolve<{ state: RequestScopedService }>("WORKER")
+      );
+
+      assertEquals(container.getProviderMode("WORKER"), "request");
+      assertStrictEquals(a, b);
+      assert(a !== c);
+    });
+
+    it("keeps the declared mode without request-scoped dependencies", () => {
+      container.register(
+        TransientService,
+        DependentService,
+        SimpleService,
+        ServiceWithOptionalDep,
+        { provide: "VALUE", useValue: 1 },
+        {
+          provide: "FRESH",
+          mode: "transient",
+          useFactory: (simple: SimpleService) => ({ simple }),
+          inject: [SimpleService],
+        },
+      );
+
+      assertEquals(container.getProviderMode(DependentService), "singleton");
+      assertEquals(
+        container.getProviderMode(ServiceWithOptionalDep),
+        "singleton",
+      );
+      assertEquals(container.getProviderMode("VALUE"), "singleton");
+      assertEquals(container.getProviderMode("FRESH"), "transient");
+    });
+
+    it("follows aliases, exported imports and global providers", () => {
+      const imported = new Container(noopLogger, {
+        exports: new Set([RequestScopedService]),
+      });
+      const global = new Container(noopLogger);
+      const viaGlobal = new Container(noopLogger, { globalContainer: global });
+
+      imported.register(RequestScopedService);
+      container.addChild(imported);
+      container.register(Holder, { provide: "ALIAS", useExisting: Holder });
+      global.register(RequestScopedService);
+      viaGlobal.register(Holder);
+
+      assertEquals(container.getProviderMode(Holder), "request");
+      assertEquals(container.getProviderMode("ALIAS"), "request");
+      assertEquals(viaGlobal.getProviderMode(Holder), "request");
+    });
+
+    it("counts the request-scoped dependencies a class inherits", async () => {
+      @Injectable()
+      class DecoratedChild extends Holder {}
+
+      class PlainChild extends Holder {}
+
+      container.register(RequestScopedService, DecoratedChild, PlainChild);
+
+      const [[a], [b]] = await inRequests(() =>
+        container.resolve(DecoratedChild)
+      );
+
+      assertEquals(container.getProviderMode(PlainChild), "request");
+      assert(a.state.id !== b.state.id);
+    });
+
+    it("updates the mode when the provider graph changes", () => {
+      container.register(Holder);
+
+      assertEquals(container.getProviderMode(Holder), "singleton");
+      assertEquals(container.getProviderMode(Holder), "singleton");
+
+      container.register(RequestScopedService);
+
+      assertEquals(container.getProviderMode(Holder), "request");
+    });
+
+    it("stops at dependency cycles", () => {
+      @Injectable()
+      class CycleA {
+        @Inject("CYCLE_B")
+        public b!: unknown;
+      }
+
+      @Injectable()
+      class CycleB {
+        @Inject(CycleA)
+        public a!: CycleA;
+
+        @Inject("STATE")
+        public state!: unknown;
+      }
+
+      container.register(CycleA, { provide: "CYCLE_B", useClass: CycleB });
+
+      assertEquals(container.getProviderMode(CycleA), "singleton");
+
+      container.register({
+        provide: "STATE",
+        useExisting: RequestScopedService,
+      });
+      container.register(RequestScopedService);
+
+      assertEquals(container.getProviderMode(CycleA), "request");
+      assertEquals(container.getProviderMode("CYCLE_B"), "request");
+    });
+  });
 });
+
+@Injectable()
+class Consumer {
+  @Inject("SLOW")
+  public slow!: string;
+}
+
+function delay(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+
+  setTimeout(resolve, ms);
+
+  return promise;
+}

@@ -1,11 +1,14 @@
 import type { LoggerService } from "@denorid/logger";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { recordCreation } from "./_creation_order.ts";
 import {
   getInjectionDependencies,
   getTags,
   serializeToken,
 } from "./_internal.ts";
-import { getCurrentModuleRef } from "./_module_context.ts";
+import { getCurrentModuleRef, getModuleRefOf } from "./_module_context.ts";
 import {
+  type NormalizedFactoryProvider,
   type NormalizedProvider,
   normalizeProvider,
 } from "./_normalized_provider.ts";
@@ -22,7 +25,11 @@ import {
   RequestContextError,
   TokenNotFoundError,
 } from "./errors.ts";
-import { isClassProvider, type Provider } from "./provider.ts";
+import {
+  getProviderToken,
+  isClassProvider,
+  type Provider,
+} from "./provider.ts";
 
 /**
  * Interface to optionally configure the dependency container instance.
@@ -46,6 +53,221 @@ export interface ContainerOptions {
 }
 
 /**
+ * A provider as registered in a container. Its identity keys every cache, so
+ * two containers registering the same token never share instances.
+ *
+ * @internal
+ */
+interface Registration {
+  /**
+   * The normalized provider.
+   */
+  readonly provider: NormalizedProvider;
+
+  /**
+   * The container resolving the provider's dependencies (or alias target).
+   */
+  readonly scope: Container;
+}
+
+/**
+ * The in-flight resolution of a registration, one step of a resolution chain.
+ *
+ * @internal
+ */
+interface Frame {
+  /**
+   * The registration being resolved.
+   */
+  readonly registration: Registration;
+
+  /**
+   * The resolution that requested this one. Cleared once settled.
+   */
+  parent: Frame | undefined;
+
+  /**
+   * In-flight resolutions this one awaits: its dependencies and the shared
+   * resolutions it joined.
+   */
+  readonly waits: Set<Frame>;
+
+  /**
+   * Settles with the resolved value.
+   */
+  readonly promise: Promise<unknown>;
+
+  /**
+   * Whether the resolution settled.
+   */
+  done: boolean;
+}
+
+/**
+ * A cache of resolutions, settled or in flight, per registration.
+ *
+ * @internal
+ */
+type ResolutionCache = Map<Registration, Frame>;
+
+/**
+ * The resolution chain of the calling code: the innermost in-flight frame.
+ *
+ * @internal
+ */
+const chains = new AsyncLocalStorage<Frame>();
+
+/**
+ * A lookup of effective modes (see `Container.effectiveMode`).
+ *
+ * @internal
+ */
+interface ModeQuery {
+  /**
+   * The registrations being looked up, outermost first (stops cycles).
+   */
+  readonly path: Set<Registration>;
+
+  /**
+   * Whether the lookup has not met a cycle yet. Modes computed after a cycle
+   * may miss a request-scoped dependency and are not memoized.
+   */
+  complete: boolean;
+}
+
+/**
+ * Version of the provider graph of all containers, bumped whenever a
+ * registration, an import or an export changes. Invalidates memoized modes.
+ *
+ * @internal
+ */
+let graphVersion = 0;
+
+/**
+ * Memoized effective modes per registration, with the graph version they
+ * were computed for.
+ *
+ * @internal
+ */
+const effectiveModes = new WeakMap<
+  Registration,
+  { readonly version: number; readonly mode: InjectableMode }
+>();
+
+/**
+ * Lists the tokens of a resolution chain, outermost first. A frame directly
+ * forwarding to the same token (global module providers) is listed once.
+ *
+ * @param {Frame|undefined} frame - The innermost frame of the chain
+ * @returns {InjectionToken[]} The tokens of the chain.
+ *
+ * @internal
+ */
+function chainOf(frame: Frame | undefined): InjectionToken[] {
+  const tokens: InjectionToken[] = [];
+
+  for (let step = frame; step && !step.done; step = step.parent) {
+    const { token } = step.registration.provider;
+
+    if (tokens[0] !== token) {
+      tokens.unshift(token);
+    }
+  }
+
+  return tokens;
+}
+
+/**
+ * Returns the frame of the calling resolution chain, after making sure the
+ * chain is not resolving `registration` already.
+ *
+ * @param {Registration} registration - The registration about to be resolved
+ * @returns {Frame|undefined} The innermost in-flight frame of the calling
+ *          chain, `undefined` outside of a resolution.
+ * @throws {CircularDependencyError} If the chain resolves `registration` already.
+ *
+ * @internal
+ */
+function enterChain(registration: Registration): Frame | undefined {
+  const store = chains.getStore();
+  const current = store?.done ? undefined : store;
+
+  for (let step = current; step && !step.done; step = step.parent) {
+    if (step.registration === registration) {
+      throw new CircularDependencyError([
+        ...chainOf(current),
+        registration.provider.token,
+      ]);
+    }
+  }
+
+  return current;
+}
+
+/**
+ * Finds a path of awaited resolutions from `from` to `to`.
+ *
+ * @param {Frame} from - The frame to start at
+ * @param {Frame} to - The frame to reach
+ * @returns {Frame[]|undefined} The frames from `from` to `to` (inclusive), or
+ *          `undefined` when `from` does not wait for `to`.
+ *
+ * @internal
+ */
+function findWaitPath(from: Frame, to: Frame): Frame[] | undefined {
+  if (from === to) {
+    return [from];
+  }
+
+  for (const next of from.waits) {
+    const path = findWaitPath(next, to);
+
+    if (path) {
+      return [from, ...path];
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Waits for an in-flight resolution started by another chain.
+ *
+ * @param {Frame|undefined} current - The frame of the calling chain
+ * @param {Frame} target - The in-flight resolution to wait for
+ * @returns {Promise<unknown>} Settles with the resolution of `target`.
+ * @throws {CircularDependencyError} If `target` (transitively) waits for the
+ *         calling chain, which would never settle.
+ *
+ * @internal
+ */
+async function join(
+  current: Frame | undefined,
+  target: Frame,
+): Promise<unknown> {
+  if (!current) {
+    return await target.promise;
+  }
+
+  const cycle = findWaitPath(target, current);
+
+  if (cycle) {
+    throw new CircularDependencyError([
+      ...chainOf(current),
+      ...cycle.map((frame) => frame.registration.provider.token),
+    ]);
+  }
+
+  current.waits.add(target);
+
+  try {
+    return await target.promise;
+  } finally {
+    current.waits.delete(target);
+  }
+}
+
+/**
  * Dependency injection container.
  *
  * The `Container` is responsible for registering and resolving providers.
@@ -63,9 +285,8 @@ export interface ContainerOptions {
  * ```
  */
 export class Container {
-  private providers = new Map<InjectionToken, NormalizedProvider>();
-  private singletons = new Map<InjectionToken, unknown>();
-  private resolving = new Set<InjectionToken>();
+  private providers = new Map<InjectionToken, Registration>();
+  private singletons: ResolutionCache = new Map();
 
   /**
    * Parent container.
@@ -93,9 +314,15 @@ export class Container {
   private globalContainer?: Container;
 
   /**
-   * All instances created by this container (for lifecycle management).
+   * All singletons created by this container (for lifecycle management).
    */
   private instances: unknown[] = [];
+
+  /**
+   * Singletons this container created through class and factory providers,
+   * disposed on shutdown (see {@linkcode getOwnedInstances}).
+   */
+  private owned = new Set<unknown>();
 
   /**
    * Mapping to collect all tokens for specified tags.
@@ -105,7 +332,7 @@ export class Container {
   /**
    * Per-context instance caches for context-scoped transient resolution.
    */
-  private contexts = new Map<string, Map<InjectionToken, unknown>>();
+  private contexts = new Map<string, ResolutionCache>();
 
   /**
    * Creates a new container instance.
@@ -143,7 +370,7 @@ export class Container {
    */
   public register(...providers: Provider[]): this {
     for (const provider of providers) {
-      this.addProvider(provider, normalizeProvider(provider));
+      this.addProvider(provider, normalizeProvider(provider), this);
     }
 
     return this;
@@ -153,8 +380,9 @@ export class Container {
    * Register providers whose dependencies are resolved from `scope` instead of
    * this container. Instances are still cached and tracked by this container.
    *
-   * Used for the providers of global modules: the global container holds
-   * them, while their dependencies may come from the module's imports.
+   * Used for the providers of global module variants that have no module
+   * container of their own: the global container holds them, while their
+   * dependencies may come from the module's imports.
    *
    * @param {Container} scope - Container resolving the providers' dependencies.
    * @param {...Provider[]} providers - Providers passed as rest arguments
@@ -162,28 +390,33 @@ export class Container {
    */
   public registerScoped(scope: Container, ...providers: Provider[]): this {
     for (const provider of providers) {
-      const normalized = normalizeProvider(provider);
-
-      this.addProvider(provider, {
-        ...normalized,
-        resolve: () => normalized.resolve(scope),
-      });
+      this.addProvider(provider, normalizeProvider(provider), scope);
     }
 
     return this;
   }
 
-  private addProvider(
-    provider: Provider,
-    normalized: NormalizedProvider,
-  ): void {
-    this.providers.set(normalized.token, normalized);
+  /**
+   * Register providers that `target` resolves: every resolution of their
+   * tokens through this container (including a `contextId`) is forwarded to
+   * `target`, which creates, caches and tracks the instances. The providers
+   * keep their tags in this container, so its tag lookups find them.
+   *
+   * Used for the providers of global modules: the global container exposes
+   * them without creating a second instance.
+   *
+   * @param {Container} target - Container providing the instances.
+   * @param {...Provider[]} providers - Providers passed as rest arguments
+   * @returns {Container} Reference to `this` object.
+   */
+  public registerForwarded(target: Container, ...providers: Provider[]): this {
+    for (const provider of providers) {
+      const token = getProviderToken(provider);
 
-    const targetClass = this.getProviderClass(provider);
-
-    if (targetClass) {
-      this.mapTagsToTokens(targetClass, normalized);
+      this.addProvider(provider, { token, existing: token }, target);
     }
+
+    return this;
   }
 
   /**
@@ -194,6 +427,7 @@ export class Container {
    */
   public setExports(tokens: Set<InjectionToken>): this {
     this.exports = tokens;
+    graphVersion++;
 
     return this;
   }
@@ -208,6 +442,7 @@ export class Container {
     this.children.push(child);
 
     child.parent = this;
+    graphVersion++;
 
     return this;
   }
@@ -262,38 +497,22 @@ export class Container {
   }
 
   /**
-   * Get the mode ({@linkcode InjectableMode}) of a provider.
+   * Get the effective mode ({@linkcode InjectableMode}) of a provider: its
+   * declared mode, or `"request"` when it (transitively) depends on a
+   * request-scoped provider (scope bubbling). An alias (`useExisting`)
+   * reports the mode of its target.
    *
    * @param {InjectionToken} token - The provider token
    * @returns {InjectableMode|undefined} The function returns the mode as `string`
    *          if the provider was found, otherwise `undefined`.
    */
   public getProviderMode(token: InjectionToken): InjectableMode | undefined {
-    const provider = this.providers.get(token);
-
-    if (provider) {
-      return provider.mode;
-    }
-
-    for (const child of this.children) {
-      if (child.isExported(token)) {
-        const mode = child.getProviderMode(token);
-
-        if (mode) {
-          return mode;
-        }
-      }
-    }
-
-    if (this.globalContainer && this.globalContainer !== this) {
-      return this.globalContainer.getProviderMode(token);
-    }
-
-    return undefined;
+    return this.modeOf(token, { path: new Set(), complete: true });
   }
 
   /**
-   * Check if a token is request-scoped.
+   * Check if a token is request-scoped, declared or through one of its
+   * dependencies (see {@linkcode getProviderMode}).
    *
    * @param {InjectionToken} token - The provider token
    * @returns {boolean} The function returns `true` if the provider uses the `"request"`
@@ -309,51 +528,49 @@ export class Container {
    * 2. Exported providers from child containers (imported modules)
    * 3. Global providers
    *
+   * Concurrent resolutions of the same singleton (or request-scoped provider
+   * within one request) share one instance.
+   *
    * @async
    * @template T - The resolved return type
    * @param {InjectionToken} token - The provider token
-   * @returns
+   * @returns {Promise<T>} The function returns a `Promise` that resolves into
+   *          the instantiated value when fulfilled.
    * @throws {CircularDependencyError}
    * @throws {TokenNotFoundError}
    * @throws {RequestContextError}
    */
-  public async resolve<T>(token: InjectionToken<T>): Promise<T> {
-    if (this.resolving.has(token)) {
-      throw new CircularDependencyError([...this.resolving, token]);
-    }
+  public resolve<T>(token: InjectionToken<T>): Promise<T> {
+    return this.lookup(token, undefined) as Promise<T>;
+  }
 
-    const provider = this.providers.get(token);
-
-    if (provider) {
-      return this.resolveWithMode(token, provider) as Promise<T>;
-    }
-
-    for (const child of this.children) {
-      if (child.isExported(token)) {
-        try {
-          return await child.resolve(token);
-        } catch (e) {
-          if (!(e instanceof TokenNotFoundError)) {
-            const err = e as Error;
-
-            this.logger.error(
-              `Failed to resolve ${serializeToken(token)}: ${err.message}`,
-              err.stack,
-            );
-
-            throw err;
-          }
-        }
-      }
-    }
-
-    if (this.globalContainer && this.globalContainer !== this) {
-      if (this.globalContainer.has(token)) {
-        return this.globalContainer.resolve(token);
-      }
-    }
-
-    throw new TokenNotFoundError(token);
+  /**
+   * Resolve a dependency by its token within a named context.
+   *
+   * Follows the same resolution order as {@linkcode resolve}:
+   * 1. Own providers
+   * 2. Exported providers from child containers (imported modules)
+   * 3. Global providers
+   *
+   * Transient providers are cached per `contextId` - the same `contextId`
+   * returns the same instance, while a different `contextId` produces a fresh one.
+   * All other modes use their standard caching strategy.
+   *
+   * @async
+   * @template T - The resolved return type
+   * @param {InjectionToken<T>} token - The provider token
+   * @param {string} contextId - The context identifier for transient caching
+   * @returns {Promise<T>} The function returns a `Promise` that resolves into
+   *          the instantiated value when fulfilled.
+   * @throws {CircularDependencyError}
+   * @throws {TokenNotFoundError}
+   * @throws {RequestContextError}
+   */
+  public resolveWithContext<T>(
+    token: InjectionToken<T>,
+    contextId: string,
+  ): Promise<T> {
+    return this.lookup(token, contextId) as Promise<T>;
   }
 
   /**
@@ -383,10 +600,14 @@ export class Container {
   }
 
   /**
-   * Resolve all providers with a specific tag.
+   * Resolve all providers with a specific tag that are visible in this
+   * container: own, exported by imported modules and global ones (see
+   * {@linkcode getTokensByTag}). Tokens that cannot be resolved are skipped.
    *
    * @async
    * @param {Tag} tag - The tag to search for
+   * @param {string|undefined} contextId - Optional context identifier for
+   *        per-context transient caching
    * @returns {Promise<T[]>} The function returns a `Promise` that resolves into
    *          an array of instances of type `T` when fulfilled.
    *
@@ -404,60 +625,22 @@ export class Container {
     contextId?: string,
   ): Promise<T[]> {
     const instances: T[] = [];
-    const ownTokens = this.tagToTokens.get(tag);
 
-    if (ownTokens) {
-      for (const token of ownTokens) {
-        try {
-          const instance = contextId
-            ? await this.resolveWithContext(token, contextId)
-            : await this.resolve(token);
+    for (const token of this.getTokensByTag(tag)) {
+      try {
+        instances.push(await this.lookup(token, contextId) as T);
+      } catch (e) {
+        if (!(e instanceof TokenNotFoundError)) {
+          const err = e as Error;
 
-          instances.push(instance as T);
-        } catch (e) {
-          if (!(e instanceof TokenNotFoundError)) {
-            const err = e as Error;
+          this.logger.error(
+            `Failed to resolve "${serializeToken(token)}" with tag "${
+              String(tag)
+            }": ${err.message}`,
+            err.stack,
+          );
 
-            this.logger.error(
-              `Failed to resolve "${serializeToken(token)}" with tag "${
-                String(tag)
-              }": ${err.message}`,
-              err.stack,
-            );
-
-            throw err;
-          }
-        }
-      }
-    }
-
-    for (const child of this.children) {
-      instances.push(...(await child.getExportedByTag<T>(tag, contextId)));
-    }
-
-    if (this.globalContainer && this.globalContainer !== this) {
-      const globalTokens = this.globalContainer.tagToTokens.get(tag);
-
-      if (globalTokens) {
-        for (const token of globalTokens) {
-          try {
-            const instance = await this.globalContainer.resolve(token);
-
-            instances.push(instance as T);
-          } catch (e) {
-            if (!(e instanceof TokenNotFoundError)) {
-              const err = e as Error;
-
-              this.logger.error(
-                `Failed to resolve "${serializeToken(token)}" with tag "${
-                  String(tag)
-                }" from global container: ${err.message}`,
-                err.stack,
-              );
-
-              throw err;
-            }
-          }
+          throw err;
         }
       }
     }
@@ -466,7 +649,12 @@ export class Container {
   }
 
   /**
-   * Get all tokens registered with a specific tag (without resolving).
+   * Get all tokens registered with a specific tag (without resolving),
+   * deduplicated: own tokens, tokens of imported modules and global tokens.
+   *
+   * Imported modules contribute the tokens they export (including tokens
+   * they re-export from their own imports). With `bypassExportCheck` every
+   * tagged token of every (transitively) imported module is included.
    *
    * @param {Tag} tag - The searchable tag
    * @param {boolean|undefined} bypassExportCheck - Optional bypass the isExported() logic
@@ -477,43 +665,26 @@ export class Container {
     tag: Tag,
     bypassExportCheck?: boolean,
   ): InjectionToken[] {
-    bypassExportCheck ??= false;
-
-    const result: InjectionToken[] = [];
-    const ownTokens = this.tagToTokens.get(tag);
-
-    if (ownTokens) {
-      result.push(...ownTokens);
-    }
-
-    for (const child of this.children) {
-      const childTokens = child.tagToTokens.get(tag);
-
-      if (childTokens) {
-        for (const token of childTokens) {
-          if (bypassExportCheck || child.isExported(token)) {
-            result.push(token);
-          }
-        }
-      }
-    }
+    const tokens = new Set(
+      this.collectTagged(tag, bypassExportCheck ?? false, new Map()),
+    );
 
     if (this.globalContainer && this.globalContainer !== this) {
-      const globalTokens = this.globalContainer.tagToTokens.get(tag);
-
-      if (globalTokens) {
-        result.push(...globalTokens);
+      for (const token of this.globalContainer.tagToTokens.get(tag) ?? []) {
+        tokens.add(token);
       }
     }
 
-    return result;
+    return [...tokens];
   }
 
   /**
    * Instantiate a class and inject its dependencies.
    *
-   * @note If running within a module context (via {@linkcode runInModuleContext}),
-   *       the {@linkcode ModuleRef} will be passed as the first constructor argument.
+   * @note The class receives the {@linkcode ModuleRef} of the module this
+   *       container belongs to as first constructor argument. A container
+   *       without a module falls back to the module context (see
+   *       {@linkcode runInModuleContext}), if any.
    *
    * @template T - The actual class type
    * @param {Type<T>} target - The constructable class `T`
@@ -523,7 +694,7 @@ export class Container {
    *          The resolved value is the instantiated class with its dependencies.
    */
   public async instantiateClass<T>(target: Type<T>): Promise<T> {
-    const moduleRef = getCurrentModuleRef();
+    const moduleRef = getModuleRefOf(this) ?? getCurrentModuleRef();
     const instance = moduleRef ? new target(moduleRef) : new target();
 
     await this.injectDependencies(instance, target);
@@ -576,9 +747,12 @@ export class Container {
   }
 
   /**
-   * Get all instances created by this container if no `options` are used or
+   * Get all singletons created by this container if no `options` are used or
    * {@linkcode RecursiveResolutionOption.recursive} is set to `false`. Otherwise
-   * get all instances from this container and all children (imported modules).
+   * get all singletons from this container and all children (imported modules).
+   *
+   * @note Transient and request-scoped instances belong to their consumer and
+   *       are never listed.
    *
    * @param {RecursiveResolutionOption|undefined} options - Optional resolution option.
    * @returns {unknown[]} The function returns an array of resolved instances.
@@ -589,6 +763,29 @@ export class Container {
     if (options?.recursive) {
       for (const child of this.children) {
         instances.push(...child.getInstances(options));
+      }
+
+      return [...new Set<unknown>(instances)];
+    }
+
+    return instances;
+  }
+
+  /**
+   * Get the singletons this container created itself through class and
+   * factory providers, as opposed to values (`useValue`) it was handed. The
+   * container owns these instances and disposes them on shutdown.
+   *
+   * @param {RecursiveResolutionOption|undefined} options - Optional resolution option.
+   * @returns {unknown[]} The owned instances in creation order, including
+   *          those of all children (imported modules) when `recursive` is set.
+   */
+  public getOwnedInstances(options?: RecursiveResolutionOption): unknown[] {
+    const instances = [...this.owned];
+
+    if (options?.recursive) {
+      for (const child of this.children) {
+        instances.push(...child.getOwnedInstances(options));
       }
 
       return [...new Set<unknown>(instances)];
@@ -628,10 +825,13 @@ export class Container {
    */
   public clear(): void {
     this.providers.clear();
-    this.singletons.clear();
+    graphVersion++;
+    // New maps: resolutions still in flight keep evicting from the old ones.
+    this.singletons = new Map();
     this.instances = [];
+    this.owned.clear();
     this.tagToTokens.clear();
-    this.contexts.clear();
+    this.contexts = new Map();
   }
 
   /**
@@ -641,6 +841,30 @@ export class Container {
    */
   public clearContext(contextId: string): void {
     this.contexts.delete(contextId);
+  }
+
+  /**
+   * Stores a provider registration and maps the tags of its class.
+   *
+   * @param {Provider} provider - The provider as passed by the caller
+   * @param {NormalizedProvider} normalized - The normalized provider
+   * @param {Container} scope - The container resolving its dependencies
+   *
+   * @internal
+   */
+  private addProvider(
+    provider: Provider,
+    normalized: NormalizedProvider,
+    scope: Container,
+  ): void {
+    this.providers.set(normalized.token, { provider: normalized, scope });
+    graphVersion++;
+
+    const targetClass = this.getProviderClass(provider);
+
+    if (targetClass) {
+      this.mapTagsToTokens(targetClass, normalized.token);
+    }
   }
 
   /**
@@ -672,17 +896,14 @@ export class Container {
   }
 
   /**
-   * Maps all tags to provider tokens.
+   * Maps all tags of `target` to a provider token.
    *
    * @param {Type} target - The constructable target class
-   * @param {NormalizedProvider} normalized - The normalized provider data
+   * @param {InjectionToken} token - The provider token
    *
    * @internal
    */
-  private mapTagsToTokens(
-    target: Type,
-    normalized: NormalizedProvider,
-  ): void {
+  private mapTagsToTokens(target: Type, token: InjectionToken): void {
     for (const tag of getTags(target)) {
       let mapping = this.tagToTokens.get(tag);
 
@@ -692,232 +913,186 @@ export class Container {
         this.tagToTokens.set(tag, mapping);
       }
 
-      mapping.add(normalized.token);
+      mapping.add(token);
     }
   }
 
   /**
-   * Resolves a provider according to its configured mode.
+   * Collects the tokens tagged with `tag` that are visible in this container:
+   * own tokens plus the tokens its imports export (or all of their tokens
+   * when `all` is set), recursively.
    *
-   * @async
-   * @param {InjectionToken} token - The injection token associated with the provider
-   * @param {NormalizedProvider} provider - The normalized provider definition
-   * @returns {Promise<unknown>} The function returns a `Promise` that resolves into
-   *          the instantiated value when fulfilled.
+   * @param {Tag} tag - The searchable tag
+   * @param {boolean} all - Whether to include tokens imports do not export
+   * @param {Map<Container, Set<InjectionToken>>} memo - Results per container
+   *        of the current lookup (shared imports are collected once)
+   * @returns {Set<InjectionToken>} The visible tagged tokens.
    *
    * @internal
    */
-  private resolveWithMode(
+  private collectTagged(
+    tag: Tag,
+    all: boolean,
+    memo: Map<Container, Set<InjectionToken>>,
+  ): Set<InjectionToken> {
+    let tokens = memo.get(this);
+
+    if (tokens) {
+      return tokens;
+    }
+
+    tokens = new Set(this.tagToTokens.get(tag));
+    memo.set(this, tokens);
+
+    for (const child of this.children) {
+      for (const token of child.collectTagged(tag, all, memo)) {
+        if (all || child.isExported(token)) {
+          tokens.add(token);
+        }
+      }
+    }
+
+    return tokens;
+  }
+
+  /**
+   * Get the effective mode of the provider `token` resolves to, looked up
+   * like {@linkcode lookup} does: own providers, then exported providers of
+   * child containers, then global providers.
+   *
+   * @param {InjectionToken} token - The provider token
+   * @param {ModeQuery} query - The running lookup
+   * @returns {InjectableMode|undefined} The mode, or `undefined` if the
+   *          provider (or an alias target) was not found.
+   *
+   * @internal
+   */
+  private modeOf(
     token: InjectionToken,
-    provider: NormalizedProvider,
-  ): Promise<unknown> {
-    switch (provider.mode) {
-      case "singleton":
-        return this.resolveSingleton(token, provider);
+    query: ModeQuery,
+  ): InjectableMode | undefined {
+    const registration = this.providers.get(token);
 
-      case "transient":
-        return this.resolveTransient(provider);
+    if (registration) {
+      const { provider, scope } = registration;
 
-      case "request":
-        return this.resolveRequest(token, provider);
+      if (!("existing" in provider)) {
+        return Container.effectiveMode(registration, provider, query);
+      }
 
-      default:
-        /**
-         * @todo double check : do we really need this? I don't think there's a reason for a fourth type,
-         *       but right now we're treading it like a transient provider.
-         */
-        return this.resolveTransient(provider);
+      if (query.path.has(registration)) {
+        query.complete = false;
+
+        return undefined;
+      }
+
+      query.path.add(registration);
+
+      const mode = scope.modeOf(provider.existing, query);
+
+      query.path.delete(registration);
+
+      return mode;
     }
+
+    for (const child of this.children) {
+      if (child.isExported(token)) {
+        const mode = child.modeOf(token, query);
+
+        if (mode) {
+          return mode;
+        }
+      }
+    }
+
+    if (this.globalContainer && this.globalContainer !== this) {
+      return this.globalContainer.modeOf(token, query);
+    }
+
+    return undefined;
   }
 
   /**
-   * Resolve a singleton-scoped provider. The lifetime of this object
-   * is tied to the lifetime of the container.
+   * Get the effective mode of a registration: `"request"` when the provider
+   * is request-scoped or one of its dependencies (looked up from its scope)
+   * is, transitively; its declared mode otherwise. Memoized per registration
+   * until the provider graph changes.
    *
-   * @async
-   * @param {InjectionToken} token
-   * @param {NormalizedProvider} provider
-   * @returns {unknown} The function returns a `Promise` that resolves into the
-   *          instantiated value when fulfilled.
+   * @note A dependency cycle adds nothing to the mode: resolving it fails
+   *       with a {@linkcode CircularDependencyError} anyway.
+   *
+   * @param {Registration} registration - The registration
+   * @param {NormalizedFactoryProvider} provider - Its (non-alias) provider
+   * @param {ModeQuery|undefined} query - The running lookup, if any
+   * @returns {InjectableMode} The effective mode.
    *
    * @internal
    */
-  private async resolveSingleton(
+  private static effectiveMode(
+    registration: Registration,
+    provider: NormalizedFactoryProvider,
+    query?: ModeQuery,
+  ): InjectableMode {
+    if (provider.mode === "request") {
+      return "request";
+    }
+
+    const memo = effectiveModes.get(registration);
+
+    if (memo?.version === graphVersion) {
+      return memo.mode;
+    }
+
+    const running = query ?? { path: new Set(), complete: true };
+
+    if (running.path.has(registration)) {
+      running.complete = false;
+
+      return provider.mode;
+    }
+
+    running.path.add(registration);
+
+    const bubbled = provider.dependencies.some((token) =>
+      registration.scope.modeOf(token, running) === "request"
+    );
+
+    running.path.delete(registration);
+
+    const mode = bubbled ? "request" : provider.mode;
+
+    if (running.complete) {
+      effectiveModes.set(registration, { version: graphVersion, mode });
+    }
+
+    return mode;
+  }
+
+  /**
+   * Resolves a token: own providers, then exported providers of child
+   * containers, then global providers.
+   *
+   * @param {InjectionToken} token - The provider token
+   * @param {string|undefined} contextId - The context identifier for
+   *        per-context transient caching, if any
+   * @returns {Promise<unknown>} Resolves into the instance when fulfilled.
+   *
+   * @internal
+   */
+  private async lookup(
     token: InjectionToken,
-    provider: NormalizedProvider,
+    contextId: string | undefined,
   ): Promise<unknown> {
-    if (this.singletons.has(token)) {
-      return this.singletons.get(token);
-    }
+    const registration = this.providers.get(token);
 
-    this.resolving.add(token);
-
-    try {
-      const instance = await provider.resolve(this);
-
-      this.singletons.set(token, instance);
-      this.instances.push(instance);
-
-      return instance;
-    } finally {
-      this.resolving.delete(token);
-    }
-  }
-
-  /**
-   * Resolve a transient-scoped provider. The lifetime of this object
-   * is tied to the usage. Transient means a new instance every time.
-   *
-   * The GC will remove it after the function call unless the resolved
-   * value is an object and referenced somewhere else.
-   *
-   * @async
-   * @param {NormalizedProvider} provider - The normalized provider definition
-   * @returns {Promise<unknown>} The function returns a `Promise` that resolves into
-   *          the instantiated value when fulfilled.
-   *
-   * @internal
-   */
-  private async resolveTransient(
-    provider: NormalizedProvider,
-  ): Promise<unknown> {
-    this.resolving.add(provider.token);
-
-    try {
-      const instance = await provider.resolve(this);
-
-      this.instances.push(instance);
-
-      return instance;
-    } finally {
-      this.resolving.delete(provider.token);
-    }
-  }
-
-  /**
-   * Resolve a transient provider within a named context.
-   *
-   * Within the same `contextId` the same instance is returned. A different
-   * `contextId` yields a fresh instance.
-   *
-   * @async
-   * @param {InjectionToken} token - The injection token
-   * @param {NormalizedProvider} provider - The normalized provider definition
-   * @param {string} contextId - The context identifier
-   * @returns {Promise<unknown>} The function returns a `Promise` that resolves
-   *          into the instance when fulfilled.
-   *
-   * @internal
-   */
-  private async resolveTransientWithContext(
-    token: InjectionToken,
-    provider: NormalizedProvider,
-    contextId: string,
-  ): Promise<unknown> {
-    let contextCache = this.contexts.get(contextId);
-
-    if (!contextCache) {
-      contextCache = new Map();
-      this.contexts.set(contextId, contextCache);
-    }
-
-    if (contextCache.has(token)) {
-      return contextCache.get(token);
-    }
-
-    this.resolving.add(token);
-
-    try {
-      const instance = await provider.resolve(this);
-
-      contextCache.set(token, instance);
-      this.instances.push(instance);
-
-      return instance;
-    } finally {
-      this.resolving.delete(token);
-    }
-  }
-
-  /**
-   * Resolves a provider according to its configured mode within a context.
-   *
-   * Transient providers are cached per `contextId`. All other modes delegate
-   * to their standard resolution strategy.
-   *
-   * @async
-   * @param {InjectionToken} token - The injection token associated with the provider
-   * @param {NormalizedProvider} provider - The normalized provider definition
-   * @param {string} contextId - The context identifier
-   * @returns {Promise<unknown>} The function returns a `Promise` that resolves into
-   *          the instantiated value when fulfilled.
-   *
-   * @internal
-   */
-  private resolveWithModeInContext(
-    token: InjectionToken,
-    provider: NormalizedProvider,
-    contextId: string,
-  ): Promise<unknown> {
-    switch (provider.mode) {
-      case "singleton":
-        return this.resolveSingleton(token, provider);
-
-      case "transient":
-        return this.resolveTransientWithContext(token, provider, contextId);
-
-      case "request":
-        return this.resolveRequest(token, provider);
-
-      default:
-        return this.resolveTransientWithContext(token, provider, contextId);
-    }
-  }
-
-  /**
-   * Resolve a dependency by its token within a named context.
-   *
-   * Follows the same resolution order as {@linkcode resolve}:
-   * 1. Own providers
-   * 2. Exported providers from child containers (imported modules)
-   * 3. Global providers
-   *
-   * Transient providers are cached per `contextId` - the same `contextId`
-   * returns the same instance, while a different `contextId` produces a fresh one.
-   * All other modes use their standard caching strategy.
-   *
-   * @async
-   * @template T - The resolved return type
-   * @param {InjectionToken<T>} token - The provider token
-   * @param {string} contextId - The context identifier for transient caching
-   * @returns {Promise<T>} The function returns a `Promise` that resolves into
-   *          the instantiated value when fulfilled.
-   * @throws {CircularDependencyError}
-   * @throws {TokenNotFoundError}
-   * @throws {RequestContextError}
-   */
-  public async resolveWithContext<T>(
-    token: InjectionToken<T>,
-    contextId: string,
-  ): Promise<T> {
-    if (this.resolving.has(token)) {
-      throw new CircularDependencyError([...this.resolving, token]);
-    }
-
-    const provider = this.providers.get(token);
-
-    if (provider) {
-      return this.resolveWithModeInContext(
-        token,
-        provider,
-        contextId,
-      ) as Promise<T>;
+    if (registration) {
+      return await this.resolveRegistration(registration, contextId);
     }
 
     for (const child of this.children) {
       if (child.isExported(token)) {
         try {
-          return await child.resolveWithContext(token, contextId);
+          return await child.lookup(token, contextId);
         } catch (e) {
           if (!(e instanceof TokenNotFoundError)) {
             const err = e as Error;
@@ -935,7 +1110,7 @@ export class Container {
 
     if (this.globalContainer && this.globalContainer !== this) {
       if (this.globalContainer.has(token)) {
-        return this.globalContainer.resolveWithContext(token, contextId);
+        return await this.globalContainer.lookup(token, contextId);
       }
     }
 
@@ -943,94 +1118,225 @@ export class Container {
   }
 
   /**
-   * Resolve a request-scoped provider. The lifetime of this provider
-   * is **not** tied to the application lifecycle. They're created for
-   * each request and garbage-collected after.
+   * Resolves a registration according to its effective mode (see
+   * {@linkcode getProviderMode}):
+   * - alias: resolves the target every time.
+   * - `"singleton"`: one instance per registration, tracked for lifecycle
+   *   hooks and disposal.
+   * - `"request"` (declared or bubbled up from a dependency): one instance
+   *   per registration and request; lifecycle hooks **do not** apply.
+   * - `"transient"` (and unknown modes): a new instance every time, one per
+   *   registration and `contextId` when resolved within a context; lifecycle
+   *   hooks **do not** apply.
    *
-   * @note Lifecycle hooks (`onModuleInit`, `onModuleDestroy`, etc.) **do not** apply.
-   *
-   * @async
-   * @param {InjectionToken} token
-   * @param {NormalizedProvider} provider
-   * @returns {Promise<unknown>}
+   * @param {Registration} registration - The registration to resolve
+   * @param {string|undefined} contextId - The context identifier, if any
+   * @returns {Promise<unknown>} Resolves into the instance when fulfilled.
+   * @throws {RequestContextError} For a request-scoped provider outside of a
+   *         request context.
    *
    * @internal
    */
-  private async resolveRequest(
-    token: InjectionToken,
-    provider: NormalizedProvider,
+  private async resolveRegistration(
+    registration: Registration,
+    contextId: string | undefined,
   ): Promise<unknown> {
-    const context = getRequestContext();
+    const { provider } = registration;
 
-    if (!context) {
-      throw new RequestContextError(token);
+    if ("existing" in provider) {
+      return await this.resolveUncached(registration, contextId);
     }
 
-    if (context.instances.has(token)) {
-      return context.instances.get(token);
-    }
+    switch (Container.effectiveMode(registration, provider)) {
+      case "singleton":
+        return await this.resolveCached(
+          this.singletons,
+          registration,
+          contextId,
+          provider,
+        );
 
-    this.resolving.add(token);
-    try {
-      const instance = await provider.resolve(this);
+      case "request": {
+        const context = getRequestContext();
 
-      context.instances.set(token, instance);
+        if (!context) {
+          throw new RequestContextError(provider.token);
+        }
 
-      /**
-       * @note **NOT** adding this to `this.instances` because request-scoped
-       *       instances are garbage collected when the request context ends
-       */
-      return instance;
-    } finally {
-      this.resolving.delete(token);
+        return await this.resolveCached(
+          context.instances as ResolutionCache,
+          registration,
+          contextId,
+        );
+      }
+
+      default: {
+        if (contextId === undefined) {
+          return await this.resolveUncached(registration, contextId);
+        }
+
+        let cache = this.contexts.get(contextId);
+
+        if (!cache) {
+          cache = new Map();
+
+          this.contexts.set(contextId, cache);
+        }
+
+        return await this.resolveCached(cache, registration, contextId);
+      }
     }
   }
 
   /**
-   * Get tagged providers that are exported (for parent container use).
+   * Resolves a registration once per `cache`: concurrent callers share the
+   * in-flight resolution, a failed resolution is evicted.
    *
-   * @async
-   * @template T - The return type used for **all** matches
-   * @param {Tag} tag - The searchable tag
-   * @returns {Promise<T[]>} The function returns a `Promise` that resolves into `T[]`
-   *          when fulfilled.
+   * @param {ResolutionCache} cache - The cache holding the resolution
+   * @param {Registration} registration - The registration to resolve
+   * @param {string|undefined} contextId - The context identifier, if any
+   * @param {NormalizedFactoryProvider|undefined} tracked - The provider to
+   *        track the instance for, `undefined` to leave it untracked
+   * @returns {Promise<unknown>} Resolves into the instance when fulfilled.
    *
    * @internal
    */
-  private async getExportedByTag<T = unknown>(
-    tag: Tag,
-    contextId?: string,
-  ): Promise<T[]> {
-    const instances: T[] = [];
-    const tokens = this.tagToTokens.get(tag);
+  private async resolveCached(
+    cache: ResolutionCache,
+    registration: Registration,
+    contextId: string | undefined,
+    tracked?: NormalizedFactoryProvider,
+  ): Promise<unknown> {
+    const cached = cache.get(registration);
 
-    if (tokens) {
-      for (const token of tokens) {
-        if (this.isExported(token)) {
-          try {
-            const instance = contextId
-              ? await this.resolveWithContext(token, contextId)
-              : await this.resolve(token);
-
-            instances.push(instance as T);
-          } catch (e) {
-            if (!(e instanceof TokenNotFoundError)) {
-              const err = e as Error;
-
-              this.logger.error(
-                `Failed to resolve exported "${
-                  serializeToken(token)
-                }" with tag "${String(tag)}": ${err.message}`,
-                err.stack,
-              );
-
-              throw err;
-            }
-          }
-        }
-      }
+    if (cached?.done) {
+      return await cached.promise;
     }
 
-    return instances;
+    const current = enterChain(registration);
+
+    if (cached) {
+      return await join(current, cached);
+    }
+
+    return await this.start(registration, current, contextId, cache, tracked)
+      .promise;
+  }
+
+  /**
+   * Resolves a registration without caching the result.
+   *
+   * @param {Registration} registration - The registration to resolve
+   * @param {string|undefined} contextId - The context identifier, if any
+   * @returns {Promise<unknown>} Resolves into the instance when fulfilled.
+   *
+   * @internal
+   */
+  private async resolveUncached(
+    registration: Registration,
+    contextId: string | undefined,
+  ): Promise<unknown> {
+    const current = enterChain(registration);
+
+    return await this.start(registration, current, contextId).promise;
+  }
+
+  /**
+   * Starts resolving a registration as a new frame of the calling chain.
+   *
+   * @param {Registration} registration - The registration to resolve
+   * @param {Frame|undefined} parent - The frame of the calling chain
+   * @param {string|undefined} contextId - The context identifier, if any
+   * @param {ResolutionCache|undefined} cache - The cache holding the
+   *        resolution, if any
+   * @param {NormalizedFactoryProvider|undefined} tracked - The provider to
+   *        track the instance for, `undefined` to leave it untracked
+   * @returns {Frame} The in-flight frame.
+   *
+   * @internal
+   */
+  private start(
+    registration: Registration,
+    parent: Frame | undefined,
+    contextId: string | undefined,
+    cache?: ResolutionCache,
+    tracked?: NormalizedFactoryProvider,
+  ): Frame {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    const frame: Frame = {
+      registration,
+      parent,
+      waits: new Set(),
+      promise,
+      done: false,
+    };
+    const settle = (): void => {
+      frame.done = true;
+      frame.parent?.waits.delete(frame);
+      frame.parent = undefined;
+    };
+
+    parent?.waits.add(frame);
+    cache?.set(registration, frame);
+
+    chains.run(frame, () => this.create(registration, contextId)).then(
+      (instance) => {
+        if (tracked) {
+          this.track(instance, tracked);
+        }
+
+        settle();
+        resolve(instance);
+      },
+      (error: unknown) => {
+        cache?.delete(registration);
+        settle();
+        reject(error);
+      },
+    );
+
+    return frame;
+  }
+
+  /**
+   * Creates the value of a registration: resolves the target of an alias
+   * (forwarding the `contextId`) or runs the provider in its scope.
+   *
+   * @param {Registration} registration - The registration to resolve
+   * @param {string|undefined} contextId - The context identifier, if any
+   * @returns {Promise<unknown>} Resolves into the value when fulfilled.
+   *
+   * @internal
+   */
+  private async create(
+    registration: Registration,
+    contextId: string | undefined,
+  ): Promise<unknown> {
+    const { provider, scope } = registration;
+
+    if ("existing" in provider) {
+      return await scope.lookup(provider.existing, contextId);
+    }
+
+    return await provider.resolve(scope);
+  }
+
+  /**
+   * Records a singleton for lifecycle hooks and, when the container created
+   * it, for disposal.
+   *
+   * @param {unknown} instance - The resolved instance
+   * @param {NormalizedFactoryProvider} provider - The provider it was resolved from
+   *
+   * @internal
+   */
+  private track(instance: unknown, provider: NormalizedFactoryProvider): void {
+    this.instances.push(instance);
+
+    if (provider.owned) {
+      this.owned.add(instance);
+    }
+
+    recordCreation(instance);
   }
 }

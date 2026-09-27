@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { Container } from "./container.ts";
 import type { ModuleRef } from "./module_ref.ts";
 
 /**
@@ -39,4 +40,40 @@ export function getCurrentModuleRef(): ModuleRef | undefined {
  */
 export function runInModuleContext<T>(moduleRef: ModuleRef, fn: () => T): T {
   return moduleContextStorage.run(moduleRef, fn);
+}
+
+/**
+ * The `ModuleRef` of the module each container belongs to.
+ *
+ * @internal
+ */
+const containerModuleRefs = new WeakMap<Container, ModuleRef>();
+
+/**
+ * Binds `moduleRef` to `container`: classes the container instantiates
+ * receive it as their first constructor argument.
+ *
+ * @param {Container} container - The module container
+ * @param {ModuleRef} moduleRef - The `ModuleRef` of the module
+ *
+ * @internal
+ */
+export function bindModuleRef(
+  container: Container,
+  moduleRef: ModuleRef,
+): void {
+  containerModuleRefs.set(container, moduleRef);
+}
+
+/**
+ * Returns the `ModuleRef` bound to `container`.
+ *
+ * @param {Container} container - The container
+ * @returns {ModuleRef|undefined} The bound `ModuleRef`, or `undefined` for a
+ *          container without a module (e.g. a standalone container).
+ *
+ * @internal
+ */
+export function getModuleRefOf(container: Container): ModuleRef | undefined {
+  return containerModuleRefs.get(container);
 }

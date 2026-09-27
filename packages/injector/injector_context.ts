@@ -1,4 +1,5 @@
 import { Logger } from "@denorid/logger";
+import { sortByCreation } from "./_creation_order.ts";
 import {
   hasOnApplicationBootstrap,
   hasOnApplicationShutdown,
@@ -8,7 +9,8 @@ import {
   serializeToken,
 } from "./_internal.ts";
 import { type CompiledModule, ModuleCompiler } from "./_module_compiler.ts";
-import { runInModuleContext } from "./_module_context.ts";
+import { bindModuleRef, runInModuleContext } from "./_module_context.ts";
+import { resolveFromGraph } from "./_module_graph.ts";
 import {
   runInRequestContext,
   runInRequestContextAsync,
@@ -23,7 +25,7 @@ import type {
 } from "./hooks.ts";
 import { ModuleRef } from "./module_ref.ts";
 import type { DynamicModule } from "./modules.ts";
-import type { Provider } from "./provider.ts";
+import { getProviderToken, type Provider } from "./provider.ts";
 
 /**
  * Interface to configure the {@linkcode InjectorContext}.
@@ -44,6 +46,14 @@ export interface InjectorContextOptions {
    * @param {InjectorContext} ctx - The freshly constructed (not yet initialised) context.
    */
   beforeInit?: (ctx: InjectorContext) => void | Promise<void>;
+
+  /**
+   * Providers replacing the module providers with the same token, in every
+   * module (including global ones) that declares that token. The last
+   * override per token wins. Tokens no module declares are ignored, and the
+   * visibility (exports) of an overridden token does not change.
+   */
+  overrides?: Provider[];
 }
 
 /**
@@ -60,13 +70,48 @@ export interface InjectorContextLifecycle
     OnApplicationShutdown {}
 
 /**
+ * Disposes an object through `Symbol.asyncDispose` or, when missing,
+ * `Symbol.dispose`.
+ *
+ * @param {object} value - The object to dispose
+ * @returns {Promise<void>} Resolves when the object is disposed, immediately
+ *          for objects that are not disposable.
+ */
+async function dispose(value: object): Promise<void> {
+  const { [Symbol.asyncDispose]: asyncDispose, [Symbol.dispose]: syncDispose } =
+    value as Partial<AsyncDisposable & Disposable>;
+
+  if (typeof asyncDispose === "function") {
+    await asyncDispose.call(value);
+  } else if (typeof syncDispose === "function") {
+    syncDispose.call(value);
+  }
+}
+
+/**
+ * Converts a thrown value into an `Error`.
+ *
+ * @param {unknown} error - The thrown value
+ * @returns {Error} `error` itself, or an `Error` carrying its string form.
+ */
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+/**
  * Dependency injector context.
  *
  * The `InjectorContext` is resposible for orchestrating the compilation, injection and resolution.
+ *
+ * Disposing the context (`await using ctx = await InjectorContext.create(...)`)
+ * runs {@linkcode close}.
  */
-export class InjectorContext implements InjectorContextLifecycle {
+export class InjectorContext
+  implements InjectorContextLifecycle, AsyncDisposable {
   protected isBootstrapped: boolean = false;
   protected isShuttingDown: boolean = false;
+  private closing?: Promise<void>;
+  private allContainers?: Container[];
 
   /**
    * @param {Container} container - The root container managing all providers and children
@@ -74,6 +119,11 @@ export class InjectorContext implements InjectorContextLifecycle {
    * @param {CompiledModule} rootModule - The compiled root module context
    * @param {CompiledModule[]} modulesInOrder - The list of copmiled modules in resolution order
    * @param {Map<Type, ModuleRef>} moduleRefs - A map from module class types to their module references
+   * @param {ReadonlyArray<Container>} moduleContainers - Every module container,
+   *        including those not reachable from `container` (the imports of
+   *        dropped module variants). Lifecycle hooks, `clearContext` and
+   *        shutdown cover them together with `container`, its descendants and
+   *        `globalContainer`.
    */
   public constructor(
     public readonly container: Container,
@@ -81,6 +131,7 @@ export class InjectorContext implements InjectorContextLifecycle {
     protected readonly rootModule: CompiledModule,
     protected readonly modulesInOrder: CompiledModule[],
     protected readonly moduleRefs: Map<Type, ModuleRef>,
+    protected readonly moduleContainers: ReadonlyArray<Container> = [],
   ) {}
 
   /**
@@ -106,23 +157,27 @@ export class InjectorContext implements InjectorContextLifecycle {
     const globalContainer = new Container(logger);
 
     const moduleContainers = new Map<Type, Container>();
+    // The variant that filled the container of its module class.
+    const containerVariants = new Map<Type, CompiledModule>();
     const builtModules = new Set<CompiledModule>();
+
+    const overrides = new Map<InjectionToken, Provider>(
+      (options?.overrides ?? []).map((
+        provider,
+      ) => [getProviderToken(provider), provider]),
+    );
 
     const ownProviders = (mod: CompiledModule): Provider[] => {
       const providerMap = new Map<InjectionToken, Provider>();
 
       for (const provider of mod.providers) {
-        const token = typeof provider === "function"
-          ? provider
-          : provider.provide;
-
-        providerMap.set(token, provider);
+        providerMap.set(getProviderToken(provider), provider);
       }
 
       const providers: Provider[] = [];
 
       for (const token of mod.ownTokens) {
-        const provider = providerMap.get(token);
+        const provider = overrides.get(token) ?? providerMap.get(token);
 
         if (provider) {
           providers.push(provider);
@@ -167,6 +222,7 @@ export class InjectorContext implements InjectorContextLifecycle {
       }
 
       moduleContainers.set(mod.type, container);
+      containerVariants.set(mod.type, mod);
 
       for (const provider of ownProviders(mod)) {
         container.register(provider);
@@ -176,34 +232,65 @@ export class InjectorContext implements InjectorContextLifecycle {
     };
 
     const rootContainer = buildContainer(compiled);
-
-    if (options?.useGlobals !== false) {
-      // Global module providers live in the global container, but resolve
-      // their dependencies like inside the module: through its imports first.
-      // Later modules override earlier ones for the same token.
-      for (const mod of modulesInOrder) {
-        if (mod.isGlobal) {
-          const scope = new Container(logger, { globalContainer });
-
-          for (const importedMod of mod.imports) {
-            scope.addChild(moduleContainers.get(importedMod.type)!);
-          }
-
-          globalContainer.registerScoped(
-            scope,
-            ...ownProviders(mod).filter((provider) => provider !== mod.type),
-          );
-        }
-      }
-    }
-
     const moduleRefs = new Map<Type, ModuleRef>();
 
-    for (const mod of modulesInOrder) {
-      const container = moduleContainers.get(mod.type)!;
+    for (const [type, mod] of containerVariants) {
+      const container = moduleContainers.get(type)!;
       const moduleRef = new ModuleRef(container, rootContainer, mod.ownTokens);
 
-      moduleRefs.set(mod.type, moduleRef);
+      moduleRefs.set(type, moduleRef);
+      bindModuleRef(container, moduleRef);
+    }
+
+    // Tokens whose global registration is a scoped copy, by module variant.
+    const scopedGlobals = new Map<InjectionToken, CompiledModule>();
+
+    if (options?.useGlobals !== false) {
+      // Later modules override earlier ones for the same token.
+      for (const mod of modulesInOrder) {
+        if (!mod.isGlobal) {
+          continue;
+        }
+
+        const providers = ownProviders(mod).filter((provider) =>
+          getProviderToken(provider) !== mod.type
+        );
+
+        if (containerVariants.get(mod.type) === mod) {
+          // The module container holds these providers: expose its
+          // instances instead of creating a second one.
+          globalContainer.registerForwarded(
+            moduleContainers.get(mod.type)!,
+            ...providers,
+          );
+
+          for (const provider of providers) {
+            scopedGlobals.delete(getProviderToken(provider));
+          }
+
+          continue;
+        }
+
+        // A dropped variant has no container of its own: its providers live
+        // in the global container, but resolve their dependencies like
+        // inside the module (through its imports first), without exposing
+        // those imports to anyone else.
+        const scope = new Container(logger, { globalContainer });
+
+        for (const importedMod of mod.imports) {
+          scope.addChild(moduleContainers.get(importedMod.type)!);
+        }
+
+        bindModuleRef(
+          scope,
+          new ModuleRef(scope, rootContainer, mod.ownTokens),
+        );
+        globalContainer.registerScoped(scope, ...providers);
+
+        for (const provider of providers) {
+          scopedGlobals.set(getProviderToken(provider), mod);
+        }
+      }
     }
 
     const context = new InjectorContext(
@@ -212,6 +299,7 @@ export class InjectorContext implements InjectorContextLifecycle {
       compiled,
       modulesInOrder,
       moduleRefs,
+      [...moduleContainers.values()],
     );
 
     if (options?.beforeInit) {
@@ -220,7 +308,7 @@ export class InjectorContext implements InjectorContextLifecycle {
 
     const initializedInstances = new Set<unknown>();
 
-    const callOnModuleInit = async (instance: unknown) => {
+    const callOnModuleInit = async (instance: unknown): Promise<void> => {
       if (!initializedInstances.has(instance)) {
         initializedInstances.add(instance);
 
@@ -230,26 +318,40 @@ export class InjectorContext implements InjectorContextLifecycle {
       }
     };
 
+    // Only singletons are initialized: transient and request-scoped
+    // instances belong to their consumer.
+    const initialize = async (
+      container: Container,
+      token: InjectionToken,
+    ): Promise<void> => {
+      const mode = container.getProviderMode(token);
+
+      if (mode !== undefined && mode !== "singleton") {
+        return;
+      }
+
+      try {
+        await callOnModuleInit(await container.resolve(token));
+      } catch (e) {
+        const err = toError(e);
+
+        logger.error(
+          `Failed to initialize ${serializeToken(token)}: ${err.message}`,
+          err.stack,
+        );
+      }
+    };
+
     for (const mod of modulesInOrder) {
       const container = moduleContainers.get(mod.type)!;
       const moduleRef = moduleRefs.get(mod.type)!;
 
       await runInModuleContext(moduleRef, async () => {
         for (const token of mod.ownTokens) {
-          if (container.isRequestScoped(token)) {
-            continue;
-          }
+          await initialize(container, token);
 
-          try {
-            const instance = await container.resolve(token);
-            await callOnModuleInit(instance);
-          } catch (e) {
-            const err = e instanceof Error ? e : new Error(String(e));
-
-            logger.error(
-              `Failed to initialize ${serializeToken(token)}: ${err.message}`,
-              err.stack,
-            );
+          if (scopedGlobals.get(token) === mod) {
+            await initialize(globalContainer, token);
           }
         }
 
@@ -279,20 +381,16 @@ export class InjectorContext implements InjectorContextLifecycle {
    * @throws {TokenNotFoundError}
    * @throws {RequestContextError}
    */
-  public resolve<T>(token: InjectionToken<T>): Promise<T> {
-    if (token === this.rootModule.type) {
-      return this.container.resolve(token);
-    }
-
-    if (this.rootModule.exports.has(token)) {
-      return this.container.resolve(token);
-    }
-
-    if (this.rootModule.ownTokens.has(token)) {
+  public async resolve<T>(token: InjectionToken<T>): Promise<T> {
+    if (
+      token !== this.rootModule.type &&
+      !this.rootModule.exports.has(token) &&
+      this.rootModule.ownTokens.has(token)
+    ) {
       throw new TokenNotFoundError(token);
     }
 
-    return this.container.resolve(token);
+    return await this.container.resolve(token);
   }
 
   /**
@@ -310,13 +408,19 @@ export class InjectorContext implements InjectorContextLifecycle {
   public async tryResolve<T>(token: InjectionToken<T>): Promise<T | undefined> {
     try {
       return await this.resolve(token);
-    } catch {
-      return undefined;
+    } catch (e) {
+      if (e instanceof TokenNotFoundError) {
+        return undefined;
+      }
+
+      throw e;
     }
   }
 
   /**
-   * Resolve a dependency without checking exports (internal use).
+   * Resolve a dependency without checking exports (internal use): through
+   * the root module when the token is visible there (own, exported by an
+   * import or global), otherwise from the module that declares it.
    *
    * @note Use this when you need to bypass export restrictions.
    *
@@ -327,7 +431,7 @@ export class InjectorContext implements InjectorContextLifecycle {
    *          the instantiated value when fulfilled.
    */
   public resolveInternal<T>(token: InjectionToken<T>): Promise<T> {
-    return this.container.resolve(token);
+    return resolveFromGraph(this.container, token);
   }
 
   /**
@@ -349,32 +453,31 @@ export class InjectorContext implements InjectorContextLifecycle {
    * @throws {TokenNotFoundError}
    * @throws {RequestContextError}
    */
-  public resolveWithinContext<T>(
+  public async resolveWithinContext<T>(
     token: InjectionToken<T>,
     contextId: string,
   ): Promise<T> {
-    if (token === this.rootModule.type) {
-      return this.container.resolveWithContext(token, contextId);
-    }
-
-    if (this.rootModule.exports.has(token)) {
-      return this.container.resolveWithContext(token, contextId);
-    }
-
-    if (this.rootModule.ownTokens.has(token)) {
+    if (
+      token !== this.rootModule.type &&
+      !this.rootModule.exports.has(token) &&
+      this.rootModule.ownTokens.has(token)
+    ) {
       throw new TokenNotFoundError(token);
     }
 
-    return this.container.resolveWithContext(token, contextId);
+    return await this.container.resolveWithContext(token, contextId);
   }
 
   /**
-   * Clear the instance cache for a specific context.
+   * Clear the instance cache for a specific context in every container of
+   * the context.
    *
    * @param {string} contextId - The context identifier to clear
    */
   public clearContext(contextId: string): void {
-    this.container.clearContext(contextId);
+    for (const container of this.containers()) {
+      container.clearContext(contextId);
+    }
   }
 
   /**
@@ -442,7 +545,8 @@ export class InjectorContext implements InjectorContextLifecycle {
   }
 
   /**
-   * Trigger the {@linkcode OnApplicationBootstrap} hook on all providers.
+   * Trigger the {@linkcode OnApplicationBootstrap} hook on all singletons,
+   * oldest first (dependencies before their consumers).
    *
    * @note Should be called by your application / framework after its own initialization is complete.
    *
@@ -461,16 +565,13 @@ export class InjectorContext implements InjectorContextLifecycle {
     }
 
     const errors: Error[] = [];
-    const instances = this.container.getInstances({ recursive: true });
 
-    for (const instance of instances) {
+    for (const instance of this.lifecycleInstances()) {
       if (hasOnApplicationBootstrap(instance)) {
         try {
           await instance.onApplicationBootstrap();
         } catch (error) {
-          errors.push(
-            error instanceof Error ? error : new Error(String(error)),
-          );
+          errors.push(toError(error));
         }
       }
     }
@@ -483,7 +584,8 @@ export class InjectorContext implements InjectorContextLifecycle {
   }
 
   /**
-   * Trigger the {@linkcode OnBeforeApplicationShutdown} hook on all providers.
+   * Trigger the {@linkcode OnBeforeApplicationShutdown} hook on all
+   * singletons, newest first (consumers before their dependencies).
    *
    * @note Should be called by your program / framework before cleanup begins.
    *
@@ -505,16 +607,13 @@ export class InjectorContext implements InjectorContextLifecycle {
     this.isShuttingDown = true;
 
     const errors: Error[] = [];
-    const instances = this.container.getInstances({ recursive: true });
 
-    for (const instance of [...instances].reverse()) {
+    for (const instance of this.lifecycleInstances().reverse()) {
       if (hasOnBeforeApplicationShutdown(instance)) {
         try {
           await instance.onBeforeApplicationShutdown(signal);
         } catch (error) {
-          errors.push(
-            error instanceof Error ? error : new Error(String(error)),
-          );
+          errors.push(toError(error));
         }
       }
     }
@@ -525,7 +624,11 @@ export class InjectorContext implements InjectorContextLifecycle {
   }
 
   /**
-   * Trigger {@linkcode OnModuleDestory} and {@linkcode OnApplicationShutdown} on all providers.
+   * Trigger {@linkcode OnModuleDestory} and then {@linkcode OnApplicationShutdown}
+   * on all singletons, then dispose the singletons the context created itself
+   * (class and factory providers, not `useValue`/`useExisting`) through
+   * `Symbol.asyncDispose` or `Symbol.dispose`. Every phase runs newest first
+   * (consumers before their dependencies). Finally clears every container.
    *
    * @note Should be called by your program / framework during final cleanup.
    *
@@ -534,33 +637,48 @@ export class InjectorContext implements InjectorContextLifecycle {
    */
   public async onApplicationShutdown(signal?: string): Promise<void> {
     const errors: Error[] = [];
-    const instances = this.container.getInstances({ recursive: true });
+    const instances = this.lifecycleInstances().reverse();
+    const owned = new Set<unknown>();
 
-    for (const instance of [...instances].reverse()) {
+    for (const container of this.containers()) {
+      for (const instance of container.getOwnedInstances()) {
+        owned.add(instance);
+      }
+    }
+
+    for (const instance of instances) {
       if (hasOnModuleDestroy(instance)) {
         try {
           await instance.onModuleDestroy();
         } catch (error) {
-          errors.push(
-            error instanceof Error ? error : new Error(String(error)),
-          );
+          errors.push(toError(error));
         }
       }
     }
 
-    for (const instance of [...instances].reverse()) {
+    for (const instance of instances) {
       if (hasOnApplicationShutdown(instance)) {
         try {
           await instance.onApplicationShutdown(signal);
         } catch (error) {
-          errors.push(
-            error instanceof Error ? error : new Error(String(error)),
-          );
+          errors.push(toError(error));
         }
       }
     }
 
-    this.container.clear();
+    for (const instance of instances) {
+      if (owned.has(instance)) {
+        try {
+          await dispose(instance);
+        } catch (error) {
+          errors.push(toError(error));
+        }
+      }
+    }
+
+    for (const container of this.containers()) {
+      container.clear();
+    }
 
     if (errors.length > 0) {
       throw new LifecycleError("shutdown", errors);
@@ -568,13 +686,105 @@ export class InjectorContext implements InjectorContextLifecycle {
   }
 
   /**
-   * Performs the full shutdown sequence.
+   * Performs the full shutdown sequence: {@linkcode onBeforeApplicationShutdown},
+   * then {@linkcode onApplicationShutdown}, which also runs when the first
+   * phase fails. Later calls return the result of the first one.
    *
    * @async
    * @param {string} signal - Optional the signal received for termination
+   * @throws {LifecycleError} With the errors of both phases when hooks or
+   *         disposers fail.
    */
-  public async close(signal?: string): Promise<void> {
-    await this.onBeforeApplicationShutdown(signal);
-    await this.onApplicationShutdown(signal);
+  public close(signal?: string): Promise<void> {
+    this.closing ??= this.shutdown(signal);
+
+    return this.closing;
+  }
+
+  /**
+   * Closes the context, see {@linkcode close}.
+   *
+   * @returns {Promise<void>} Resolves when the context is closed.
+   */
+  public [Symbol.asyncDispose](): Promise<void> {
+    return this.close();
+  }
+
+  /**
+   * Runs both shutdown phases, the second one even when the first one fails.
+   *
+   * @param {string|undefined} signal - The signal received for termination
+   * @returns {Promise<void>} Resolves when both phases completed.
+   * @throws {LifecycleError} With the errors of both phases.
+   */
+  private async shutdown(signal?: string): Promise<void> {
+    const errors: Error[] = [];
+
+    for (
+      const phase of [
+        () => this.onBeforeApplicationShutdown(signal),
+        () => this.onApplicationShutdown(signal),
+      ]
+    ) {
+      try {
+        await phase();
+      } catch (error) {
+        errors.push(
+          ...(error instanceof LifecycleError
+            ? error.errors
+            : [error as Error]),
+        );
+      }
+    }
+
+    if (errors.length > 0) {
+      throw new LifecycleError("shutdown", errors);
+    }
+  }
+
+  /**
+   * Every container of the context: the root container and its descendants,
+   * the other module containers and the global container.
+   *
+   * @returns {Container[]} The containers, each once.
+   */
+  private containers(): Container[] {
+    if (!this.allContainers) {
+      const containers = new Set<Container>([
+        this.container,
+        ...this.moduleContainers,
+        this.globalContainer,
+      ]);
+
+      for (const container of containers) {
+        for (const child of container.getChildren()) {
+          containers.add(child);
+        }
+      }
+
+      this.allContainers = [...containers];
+    }
+
+    return this.allContainers;
+  }
+
+  /**
+   * The singletons of every container, oldest first. The context itself
+   * (registered as a global value by frameworks) is left out.
+   *
+   * @returns {object[]} The instances in creation order.
+   */
+  private lifecycleInstances(): object[] {
+    const instances = new Set<unknown>();
+
+    for (const container of this.containers()) {
+      for (const instance of container.getInstances()) {
+        instances.add(instance);
+      }
+    }
+
+    instances.delete(this);
+
+    return sortByCreation(instances);
   }
 }

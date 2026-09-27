@@ -1,6 +1,8 @@
 import { serializeToken } from "./_internal.ts";
+import { findDeclaringContainer, resolveFromGraph } from "./_module_graph.ts";
 import type { InjectionToken, Tag, Type } from "./common.ts";
 import type { Container } from "./container.ts";
+import { TokenNotFoundError } from "./errors.ts";
 
 /**
  * Interface to control the instance resolution within a {@linkcode ModuleRef} instance.
@@ -59,6 +61,10 @@ export class ModuleRef {
   /**
    * Resolve a provider by its token.
    *
+   * With `strict: false`, a token outside of this module is resolved through
+   * the root module when visible there (own, exported by an import or
+   * global), otherwise from the module that declares it.
+   *
    * @template T The resolved instance type.
    * @param {InjectionToken} token - The injection token to resolve.
    * @param {ModuleRefOptions|undefined} options - Optional resolution options.
@@ -74,6 +80,10 @@ export class ModuleRef {
   /**
    * Resolve a provider by its token within a given context.
    *
+   * With `strict: false`, a token outside of this module is resolved through
+   * the root module when visible there (own, exported by an import or
+   * global), otherwise from the module that declares it.
+   *
    * @template T The resolved instance type.
    * @param {InjectionToken} token - The injection token to resolve.
    * @param {ModuleRefContextOptions} options - Resolution options including a required `contextId`
@@ -88,30 +98,31 @@ export class ModuleRef {
     token: InjectionToken<T>,
     options: ModuleRefContextOptions,
   ): Promise<T>;
-  public get<T>(
+  public async get<T>(
     token: InjectionToken<T>,
     options?: ModuleRefOptions | ModuleRefContextOptions,
   ): Promise<T> {
-    {
-      const strict = options?.strict ?? true;
+    const strict = options?.strict ?? true;
+    const contextId = options && "contextId" in options
+      ? options.contextId
+      : undefined;
 
-      if (strict && !this.moduleTokens.has(token)) {
-        throw new Error(
-          `Token "${
-            serializeToken(token)
-          }" is not available in this module's scope. ` +
-            `Use { strict: false } to resolve from the whole application.`,
-        );
-      }
-
-      const container = !strict && !this.moduleTokens.has(token)
-        ? this.rootContainer
-        : this.container;
-
-      return options && "contextId" in options
-        ? container.resolveWithContext(token, options.contextId)
-        : container.resolve(token);
+    if (this.moduleTokens.has(token)) {
+      return contextId === undefined
+        ? await this.container.resolve(token)
+        : await this.container.resolveWithContext(token, contextId);
     }
+
+    if (strict) {
+      throw new Error(
+        `Token "${
+          serializeToken(token)
+        }" is not available in this module's scope. ` +
+          `Use { strict: false } to resolve from the whole application.`,
+      );
+    }
+
+    return await resolveFromGraph(this.rootContainer, token, contextId);
   }
 
   /**
@@ -164,18 +175,26 @@ export class ModuleRef {
   }
 
   /**
-   * Check if a token is available from the whole application container.
+   * Check if a token is available from the whole application: visible in the
+   * root module (own, exported by an import or global) or declared by any
+   * module, i.e. whether `get(token, { strict: false })` finds a provider.
    *
    * @param {InjectionToken} token - The injection token to resolve
-   * @returns {boolean} The function returns `true` when the application container
-   *          contains the `token`, otherwise `false`.
+   * @returns {boolean} The function returns `true` when the application
+   *          provides the `token`, otherwise `false`.
    */
   public hasGlobal(token: InjectionToken): boolean {
-    return this.rootContainer.canResolve(token);
+    return this.rootContainer.canResolve(token) ||
+      findDeclaringContainer(this.rootContainer, token) !== undefined;
   }
 
   /**
    * Resolve all providers with a specific tag.
+   *
+   * By default only the providers of this module are resolved. With
+   * `strict: false`, the tagged providers of every module and the global
+   * ones are resolved like {@linkcode get} does; providers that cannot be
+   * resolved (missing token) are skipped.
    *
    * @template T The instance type. Note: this type will be used for **all** instances.
    * @param {Tag} tag - The tag to search for.
@@ -197,6 +216,11 @@ export class ModuleRef {
   ): Promise<T[]>;
   /**
    * Resolve all providers with a specific tag within a given context.
+   *
+   * By default only the providers of this module are resolved. With
+   * `strict: false`, the tagged providers of every module and the global
+   * ones are resolved like {@linkcode get} does; providers that cannot be
+   * resolved (missing token) are skipped.
    *
    * @template T The instance type. Note: this type will be used for **all** instances.
    * @param {Tag} tag - The tag to search for.
@@ -227,7 +251,21 @@ export class ModuleRef {
       : undefined;
 
     if (!strict) {
-      return await this.rootContainer.getByTag<T>(tag, contextId);
+      const instances: T[] = [];
+
+      for (const token of this.rootContainer.getTokensByTag(tag, true)) {
+        try {
+          instances.push(
+            await resolveFromGraph(this.rootContainer, token, contextId) as T,
+          );
+        } catch (e) {
+          if (!(e instanceof TokenNotFoundError)) {
+            throw e;
+          }
+        }
+      }
+
+      return instances;
     }
 
     const tokens = this.container
@@ -249,6 +287,10 @@ export class ModuleRef {
   /**
    * Get all provider tokens registered with a specific tag.
    *
+   * By default only the tokens of this module are returned. With
+   * `strict: false`, the tagged tokens of every module and the global ones
+   * are returned, each token once.
+   *
    * @param {Tag} tag - The tag to search for.
    * @param {ModuleRefOptions|undefined} options - Optional lookup options.
    * @returns {InjectionToken[]} The function returns an array of provider tokens
@@ -269,7 +311,7 @@ export class ModuleRef {
     const strict = options?.strict ?? true;
 
     if (!strict) {
-      return this.rootContainer.getTokensByTag(tag) as T[];
+      return this.rootContainer.getTokensByTag(tag, true) as T[];
     }
 
     return this.container

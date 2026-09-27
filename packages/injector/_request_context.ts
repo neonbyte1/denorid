@@ -2,6 +2,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface RequestContextData {
   id: string;
+  /**
+   * Request-scoped resolutions of the request, keyed by provider
+   * registration (see `Container`).
+   */
   instances: Map<unknown, unknown>;
 }
 

@@ -2,7 +2,7 @@ import {
   assertEquals,
   assertExists,
   assertInstanceOf,
-  assertThrows,
+  assertRejects,
 } from "@std/assert";
 import { describe, it } from "node:test";
 import {
@@ -46,7 +46,7 @@ describe("ModuleRef", () => {
       assertInstanceOf(simple, SimpleService);
     });
 
-    it("should throw for non-module token (strict: true)", async () => {
+    it("should reject for non-module token (strict: true)", async () => {
       @Module({
         providers: [ServiceWithModuleRef],
         exports: [ServiceWithModuleRef],
@@ -55,12 +55,10 @@ describe("ModuleRef", () => {
 
       const ctx = await InjectorContext.create(AppModule);
       const service = await ctx.resolve(ServiceWithModuleRef);
+      const result = service.moduleRef.get(SimpleService, { strict: true });
 
-      assertThrows(
-        () => service.moduleRef.get(SimpleService, { strict: true }),
-        Error,
-        "not available",
-      );
+      assertInstanceOf(result, Promise);
+      await assertRejects(() => result, Error, "not available");
     });
 
     it("should resolve token with contextId using resolveWithContext", async () => {
@@ -131,7 +129,7 @@ describe("ModuleRef", () => {
       });
 
       assertInstanceOf(host, HostService);
-      assertThrows(
+      await assertRejects(
         () => service.moduleRef.get(HostService),
         Error,
         "not available",

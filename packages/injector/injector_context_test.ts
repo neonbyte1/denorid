@@ -4,8 +4,8 @@ import {
   assertExists,
   assertInstanceOf,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
-  assertThrows,
 } from "@std/assert";
 import { Logger } from "@denorid/logger";
 import { stub } from "@std/testing/mock";
@@ -13,12 +13,15 @@ import { describe, it } from "node:test";
 import {
   noopLogger,
   RequestScopedService,
+  ServiceWithModuleRef,
   SimpleService,
+  TAG_A,
+  TaggedServiceA,
   TransientService,
 } from "./_test_fixtures.ts";
 import type { Type } from "./common.ts";
 import { Container } from "./container.ts";
-import { Global, Inject, Injectable, Module } from "./decorators.ts";
+import { Global, Inject, Injectable, Module, Tags } from "./decorators.ts";
 import {
   LifecycleError,
   ModuleCompilationError,
@@ -215,15 +218,15 @@ describe("InjectorContext", () => {
       assertInstanceOf(module, AppModule);
     });
 
-    it("should throw for non-exported own token", async () => {
+    it("should reject for non-exported own token", async () => {
       @Module({ providers: [SimpleService] })
       class AppModule {}
 
       const ctx = await InjectorContext.create(AppModule);
-      assertThrows(
-        () => ctx.resolve(SimpleService),
-        TokenNotFoundError,
-      );
+      const result = ctx.resolve(SimpleService);
+
+      assertInstanceOf(result, Promise);
+      await assertRejects(() => result, TokenNotFoundError);
     });
 
     it("should resolve child exports", async () => {
@@ -280,16 +283,15 @@ describe("InjectorContext", () => {
   });
 
   describe("resolveWithinContext", () => {
-    it("should throw TokenNotFoundError for non-exported own token", async () => {
+    it("should reject with TokenNotFoundError for non-exported own token", async () => {
       @Module({ providers: [SimpleService] })
       class AppModule {}
 
       const ctx = await InjectorContext.create(AppModule);
+      const result = ctx.resolveWithinContext(SimpleService, "ctx-1");
 
-      assertThrows(
-        () => ctx.resolveWithinContext(SimpleService, "ctx-1"),
-        TokenNotFoundError,
-      );
+      assertInstanceOf(result, Promise);
+      await assertRejects(() => result, TokenNotFoundError);
     });
 
     it("should resolve exported transient and cache per contextId", async () => {
@@ -679,6 +681,241 @@ describe("InjectorContext", () => {
         () => ctx.onApplicationShutdown(),
         LifecycleError,
       );
+    });
+  });
+
+  describe("disposal", () => {
+    it("closes the context at the end of an `await using` block", async () => {
+      const order: string[] = [];
+
+      @Injectable()
+      class Service implements OnBeforeApplicationShutdown, OnModuleDestroy {
+        public onBeforeApplicationShutdown(): void {
+          order.push("before");
+        }
+
+        public onModuleDestroy(): void {
+          order.push("destroy");
+        }
+      }
+
+      @Module({ providers: [Service] })
+      class AppModule {}
+
+      {
+        await using _ctx = await InjectorContext.create(AppModule);
+      }
+
+      assertEquals(order, ["before", "destroy"]);
+    });
+
+    it("disposes owned instances after the shutdown hooks, newest first", async () => {
+      const order: string[] = [];
+
+      @Injectable()
+      class Database implements OnApplicationShutdown, AsyncDisposable {
+        public onApplicationShutdown(): void {
+          order.push("shutdown:db");
+        }
+
+        public [Symbol.asyncDispose](): Promise<void> {
+          order.push("dispose:db");
+          return Promise.resolve();
+        }
+      }
+
+      @Injectable()
+      class Repository implements Disposable {
+        @Inject(Database)
+        public readonly db!: Database;
+
+        public [Symbol.dispose](): void {
+          order.push("dispose:repo");
+        }
+      }
+
+      @Module({
+        providers: [
+          Database,
+          Repository,
+          {
+            provide: "pool",
+            useFactory: (): Disposable => ({
+              [Symbol.dispose]: () => order.push("dispose:pool"),
+            }),
+          },
+        ],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      await ctx.close();
+
+      assertEquals(order, [
+        "shutdown:db",
+        "dispose:pool",
+        "dispose:repo",
+        "dispose:db",
+      ]);
+    });
+
+    it("prefers Symbol.asyncDispose over Symbol.dispose", async () => {
+      const calls: string[] = [];
+
+      @Injectable()
+      class Both implements AsyncDisposable, Disposable {
+        public [Symbol.asyncDispose](): Promise<void> {
+          calls.push("async");
+          return Promise.resolve();
+        }
+
+        public [Symbol.dispose](): void {
+          calls.push("sync");
+        }
+      }
+
+      @Module({ providers: [Both] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      await ctx.close();
+
+      assertEquals(calls, ["async"]);
+    });
+
+    it("leaves values and aliases to their owner", async () => {
+      const disposed: string[] = [];
+      const external: Disposable = {
+        [Symbol.dispose]: () => disposed.push("value"),
+      };
+
+      @Injectable()
+      class Owned implements Disposable {
+        public [Symbol.dispose](): void {
+          disposed.push("owned");
+        }
+      }
+
+      @Module({
+        providers: [
+          Owned,
+          { provide: "external", useValue: external },
+          { provide: "alias", useExisting: Owned },
+        ],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      await ctx.close();
+
+      assertEquals(disposed, ["owned"]);
+    });
+
+    it("disposes every owned instance and reports failed disposers", async () => {
+      const disposed: string[] = [];
+
+      @Injectable()
+      class Healthy implements Disposable {
+        public [Symbol.dispose](): void {
+          disposed.push("healthy");
+        }
+      }
+
+      @Injectable()
+      class Broken implements AsyncDisposable {
+        public [Symbol.asyncDispose](): Promise<void> {
+          return Promise.reject(new Error("dispose failed"));
+        }
+      }
+
+      @Module({ providers: [Healthy, Broken] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const error = await assertRejects(() => ctx.close(), LifecycleError);
+
+      assertEquals(disposed, ["healthy"]);
+      assertEquals(error.errors.map((e) => e.message), ["dispose failed"]);
+    });
+  });
+
+  describe("close", () => {
+    it("runs the shutdown phase when onBeforeApplicationShutdown fails", async () => {
+      const order: string[] = [];
+
+      @Injectable()
+      class Service implements OnBeforeApplicationShutdown, OnModuleDestroy {
+        public onBeforeApplicationShutdown(): void {
+          throw new Error("before failed");
+        }
+
+        public onModuleDestroy(): void {
+          order.push("destroy");
+          throw new Error("destroy failed");
+        }
+      }
+
+      @Module({ providers: [Service] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const error = await assertRejects(() => ctx.close(), LifecycleError);
+
+      assertEquals(order, ["destroy"]);
+      assertEquals(error.phase, "shutdown");
+      assertEquals(error.errors.map((e) => e.message), [
+        "before failed",
+        "destroy failed",
+      ]);
+    });
+
+    it("shares one shutdown between concurrent calls", async () => {
+      const order: string[] = [];
+      const { promise: released, resolve: release } = Promise.withResolvers<
+        void
+      >();
+
+      @Injectable()
+      class Service implements OnBeforeApplicationShutdown, OnModuleDestroy {
+        public async onBeforeApplicationShutdown(): Promise<void> {
+          order.push("before:start");
+          await released;
+          order.push("before:end");
+        }
+
+        public onModuleDestroy(): void {
+          order.push("destroy");
+        }
+      }
+
+      @Module({ providers: [Service] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const first = ctx.close("SIGTERM");
+      const second = ctx.close("SIGINT");
+
+      release();
+      await Promise.all([first, second]);
+
+      assertEquals(order, ["before:start", "before:end", "destroy"]);
+    });
+
+    it("reports errors of overridden phases that are not LifecycleErrors", async () => {
+      @Module({})
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      using _before = stub(
+        ctx,
+        "onBeforeApplicationShutdown",
+        () => Promise.reject(new TypeError("phase crashed")),
+      );
+
+      const error = await assertRejects(() => ctx.close(), LifecycleError);
+
+      assertEquals(error.errors.map((e) => e.message), ["phase crashed"]);
     });
   });
 
@@ -1141,6 +1378,763 @@ describe("InjectorContext", () => {
         () => ctx.onApplicationShutdown(),
         LifecycleError,
       );
+    });
+  });
+
+  describe("global module instances", () => {
+    it("shares one instance between importing and non-importing modules", async () => {
+      let created = 0;
+
+      @Injectable()
+      class GlobalService {
+        public readonly id = ++created;
+      }
+
+      @Global()
+      @Module({ providers: [GlobalService], exports: [GlobalService] })
+      class GlobalModule {}
+
+      @Injectable()
+      class FeatureService {
+        @Inject(GlobalService)
+        public global!: GlobalService;
+      }
+
+      @Module({ providers: [FeatureService], exports: [FeatureService] })
+      class FeatureModule {}
+
+      @Module({
+        imports: [GlobalModule, FeatureModule],
+        exports: [GlobalService, FeatureService],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const feature = await ctx.resolve(FeatureService);
+
+      assertStrictEquals(feature.global, await ctx.resolve(GlobalService));
+      assertEquals(created, 1);
+    });
+
+    it("reports and forwards the mode of global providers", async () => {
+      @Global()
+      @Module({ providers: [TransientService], exports: [TransientService] })
+      class GlobalModule {}
+
+      @Module({ providers: [ServiceWithModuleRef] })
+      class FeatureModule {}
+
+      @Module({ imports: [GlobalModule, FeatureModule] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const { moduleRef } = await ctx.resolveInternal(ServiceWithModuleRef);
+      const options = { contextId: "ctx-1", strict: false };
+      const first = await moduleRef.get(TransientService, options);
+
+      assertEquals(
+        ctx.container.getProviderMode(TransientService),
+        "transient",
+      );
+      assertStrictEquals(await moduleRef.get(TransientService, options), first);
+      assert(
+        first !== await moduleRef.get(TransientService, { strict: false }),
+      );
+    });
+
+    it("lists a tagged global module provider once", async () => {
+      @Global()
+      @Module({ providers: [TaggedServiceA], exports: [TaggedServiceA] })
+      class GlobalModule {}
+
+      @Module({ imports: [GlobalModule] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      assertEquals(ctx.container.getTokensByTag(TAG_A, true), [
+        TaggedServiceA,
+      ]);
+      assertEquals(
+        (await ctx.getHostModuleRef().getByTag(TAG_A, { strict: false }))
+          .length,
+        1,
+      );
+    });
+
+    it("initializes, bootstraps and disposes the global copy of a dropped global variant", async () => {
+      const calls: string[] = [];
+      const NAME = Symbol("NAME");
+
+      @Module({
+        providers: [{ provide: NAME, useValue: "host" }],
+        exports: [NAME],
+      })
+      class NameModule {}
+
+      @Injectable()
+      class HostService
+        implements OnModuleInit, OnApplicationBootstrap, Disposable {
+        @Inject(NAME)
+        public name!: string;
+
+        public constructor(public readonly ref: ModuleRef) {}
+
+        public onModuleInit(): void {
+          calls.push("init");
+        }
+
+        public onApplicationBootstrap(): void {
+          calls.push("bootstrap");
+        }
+
+        public [Symbol.dispose](): void {
+          calls.push("dispose");
+        }
+      }
+
+      @Module({})
+      class HostModule {}
+
+      @Injectable()
+      class Consumer {
+        @Inject(HostService)
+        public host!: HostService;
+      }
+
+      @Module({ providers: [Consumer], exports: [Consumer] })
+      class ConsumerModule {}
+
+      @Module({
+        imports: [
+          HostModule,
+          {
+            module: HostModule,
+            global: true,
+            imports: [NameModule],
+            providers: [HostService],
+          },
+          ConsumerModule,
+        ],
+        exports: [Consumer],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const { host } = await ctx.resolve(Consumer);
+
+      assertEquals(calls, ["init"]);
+      assertEquals(host.name, "host");
+      assertStrictEquals(await host.ref.get(HostService), host);
+
+      await ctx.onApplicationBootstrap();
+      await ctx.close();
+
+      assertEquals(calls, ["init", "bootstrap", "dispose"]);
+    });
+
+    it("runs hooks on providers registered globally, never on the context itself", async () => {
+      const calls: string[] = [];
+
+      @Injectable()
+      class GlobalHooks implements OnApplicationBootstrap, OnModuleDestroy {
+        public onApplicationBootstrap(): void {
+          calls.push("bootstrap");
+        }
+
+        public onModuleDestroy(): void {
+          calls.push("destroy");
+        }
+      }
+
+      @Injectable()
+      class Consumer {
+        @Inject(GlobalHooks)
+        public hooks!: GlobalHooks;
+
+        @Inject(InjectorContext)
+        public ctx!: InjectorContext;
+      }
+
+      @Module({ providers: [Consumer] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule, {
+        beforeInit: (ctx) => {
+          ctx.registerGlobal(GlobalHooks, {
+            provide: InjectorContext,
+            useValue: ctx,
+          });
+        },
+      });
+
+      assertStrictEquals((await ctx.resolveInternal(Consumer)).ctx, ctx);
+
+      await ctx.onApplicationBootstrap();
+      await ctx.close();
+
+      assertEquals(calls, ["bootstrap", "destroy"]);
+    });
+  });
+
+  describe("aliases during init", () => {
+    it("skips an alias of a request-scoped provider and keeps it per request", async () => {
+      @Module({
+        providers: [RequestScopedService, {
+          provide: "ALIAS",
+          useExisting: RequestScopedService,
+        }],
+      })
+      class AppModule {}
+
+      using errorStub = stub(Logger.prototype, "error");
+
+      const ctx = await InjectorContext.create(AppModule);
+      const resolve = (id: string): Promise<RequestScopedService> =>
+        ctx.runInRequestScopeAsync(id, () => ctx.resolveInternal("ALIAS"));
+
+      assertEquals(errorStub.calls.length, 0);
+      assert((await resolve("req-1")).id !== (await resolve("req-2")).id);
+    });
+  });
+
+  describe("transient providers", () => {
+    it("are neither initialized nor tracked for lifecycle hooks", async () => {
+      const calls: string[] = [];
+
+      @Injectable({ mode: "transient" })
+      class Worker
+        implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
+        public onModuleInit(): void {
+          calls.push("init");
+        }
+
+        public onApplicationBootstrap(): void {
+          calls.push("bootstrap");
+        }
+
+        public onModuleDestroy(): void {
+          calls.push("destroy");
+        }
+      }
+
+      @Module({ providers: [Worker], exports: [Worker] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      await ctx.resolve(Worker);
+      await ctx.resolveWithinContext(Worker, "ctx-1");
+      ctx.clearContext("ctx-1");
+      await ctx.onApplicationBootstrap();
+      await ctx.close();
+
+      assertEquals(calls, []);
+    });
+  });
+
+  describe("clearContext across modules", () => {
+    it("releases the context cache of imported modules", async () => {
+      @Module({ providers: [TransientService], exports: [TransientService] })
+      class FeatureModule {}
+
+      @Module({ imports: [FeatureModule] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const first = await ctx.resolveWithinContext(TransientService, "ctx-1");
+
+      assertStrictEquals(
+        await ctx.resolveWithinContext(TransientService, "ctx-1"),
+        first,
+      );
+
+      ctx.clearContext("ctx-1");
+
+      assert(
+        first !== await ctx.resolveWithinContext(TransientService, "ctx-1"),
+      );
+    });
+  });
+
+  describe("constructor-injected ModuleRef", () => {
+    it("belongs to the module declaring a provider resolved after init", async () => {
+      @Injectable({ mode: "request" })
+      class RequestService {
+        public constructor(public readonly ref?: ModuleRef) {}
+      }
+
+      @Module({ providers: [RequestService], exports: [RequestService] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const service = await ctx.runInRequestScopeAsync(
+        "req-1",
+        () => ctx.resolve(RequestService),
+      );
+
+      assertStrictEquals(service.ref, ctx.getHostModuleRef());
+    });
+
+    it("belongs to the declaring module when another module resolves the provider", async () => {
+      const LIB_DEP = Symbol("LIB_DEP");
+
+      @Injectable({ mode: "transient" })
+      class LibHelper {
+        public constructor(public readonly ref: ModuleRef) {}
+      }
+
+      @Module({
+        providers: [LibHelper, { provide: LIB_DEP, useValue: "lib" }],
+        exports: [LibHelper],
+      })
+      class LibModule {}
+
+      @Injectable()
+      class AppService {
+        @Inject(LibHelper)
+        public helper!: LibHelper;
+      }
+
+      @Module({
+        imports: [LibModule],
+        providers: [AppService],
+        exports: [AppService],
+      })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+      const { helper } = await ctx.resolve(AppService);
+
+      assertEquals(await helper.ref.get(LIB_DEP), "lib");
+      assert(!helper.ref.has(AppService));
+    });
+  });
+
+  describe("lifecycle order across modules", () => {
+    it("bootstraps dependencies first and tears them down last", async () => {
+      const order: string[] = [];
+
+      class Tracked
+        implements
+          OnModuleInit,
+          OnApplicationBootstrap,
+          OnBeforeApplicationShutdown,
+          OnModuleDestroy,
+          OnApplicationShutdown,
+          Disposable {
+        public constructor(private readonly name: string) {}
+
+        public onModuleInit(): void {
+          order.push(`init:${this.name}`);
+        }
+
+        public onApplicationBootstrap(): void {
+          order.push(`bootstrap:${this.name}`);
+        }
+
+        public onBeforeApplicationShutdown(): void {
+          order.push(`before:${this.name}`);
+        }
+
+        public onModuleDestroy(): void {
+          order.push(`destroy:${this.name}`);
+        }
+
+        public onApplicationShutdown(): void {
+          order.push(`shutdown:${this.name}`);
+        }
+
+        public [Symbol.dispose](): void {
+          order.push(`dispose:${this.name}`);
+        }
+      }
+
+      @Injectable()
+      class DbService extends Tracked {
+        public constructor() {
+          super("db");
+        }
+      }
+
+      @Module({ providers: [DbService], exports: [DbService] })
+      class DbModule {}
+
+      @Injectable()
+      class AppService extends Tracked {
+        @Inject(DbService)
+        public db!: DbService;
+
+        public constructor() {
+          super("app");
+        }
+      }
+
+      @Module({ imports: [DbModule], providers: [AppService] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      await ctx.onApplicationBootstrap();
+      await ctx.close();
+
+      assertEquals(order, [
+        "init:db",
+        "init:app",
+        "bootstrap:db",
+        "bootstrap:app",
+        "before:app",
+        "before:db",
+        "destroy:app",
+        "destroy:db",
+        "shutdown:app",
+        "shutdown:db",
+        "dispose:app",
+        "dispose:db",
+      ]);
+    });
+
+    it("runs hooks on the imports of a dropped module variant", async () => {
+      const calls: string[] = [];
+
+      @Injectable()
+      class ExtraService implements OnApplicationBootstrap, OnModuleDestroy {
+        public onApplicationBootstrap(): void {
+          calls.push("bootstrap");
+        }
+
+        public onModuleDestroy(): void {
+          calls.push("destroy");
+        }
+      }
+
+      @Module({ providers: [ExtraService] })
+      class ExtraModule {}
+
+      @Module({})
+      class HybridModule {
+        public static forRoot(): DynamicModule {
+          return { module: HybridModule, imports: [ExtraModule] };
+        }
+      }
+
+      @Module({ imports: [HybridModule, HybridModule.forRoot()] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      await ctx.onApplicationBootstrap();
+      await ctx.close();
+
+      assertEquals(calls, ["bootstrap", "destroy"]);
+    });
+  });
+
+  describe("tryResolve errors", () => {
+    it("rethrows errors other than TokenNotFoundError", async () => {
+      @Module({
+        providers: [{
+          provide: "BROKEN",
+          useFactory: (): never => {
+            throw new TypeError("factory crashed");
+          },
+        }],
+        exports: ["BROKEN"],
+      })
+      class AppModule {}
+
+      using _errorStub = stub(Logger.prototype, "error");
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      await assertRejects(
+        () => ctx.tryResolve("BROKEN"),
+        TypeError,
+        "factory crashed",
+      );
+      assertEquals(await ctx.tryResolve("MISSING"), undefined);
+    });
+  });
+
+  describe("shutdown", () => {
+    it("clears every container and runs the hooks once", async () => {
+      const calls: string[] = [];
+
+      @Injectable()
+      class ChildService implements OnModuleDestroy {
+        public onModuleDestroy(): void {
+          calls.push("destroy");
+        }
+      }
+
+      @Module({ providers: [ChildService], exports: [ChildService] })
+      class ChildModule {}
+
+      @Module({ imports: [ChildModule], exports: [ChildService] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule, {
+        beforeInit: (ctx) => {
+          ctx.registerGlobal({ provide: "GLOBAL", useValue: "global" });
+        },
+      });
+
+      await ctx.close();
+      await ctx.onApplicationShutdown();
+
+      assertEquals(calls, ["destroy"]);
+      await assertRejects(() => ctx.resolve(ChildService), TokenNotFoundError);
+      await assertRejects(() => ctx.resolve("GLOBAL"), TokenNotFoundError);
+    });
+  });
+
+  describe("module graph resolution", () => {
+    const TAG = Symbol("GRAPH_TAG");
+
+    @Injectable()
+    @Tags(TAG)
+    class HiddenService {}
+
+    @Module({ providers: [HiddenService] })
+    class HiddenModule {}
+
+    @Module({ imports: [HiddenModule] })
+    class MiddleModule {}
+
+    @Module({ imports: [MiddleModule], providers: [ServiceWithModuleRef] })
+    class AppModule {}
+
+    it("resolves providers of nested non-exported modules internally", async () => {
+      const ctx = await InjectorContext.create(AppModule);
+      const { moduleRef } = await ctx.resolveInternal(ServiceWithModuleRef);
+      const hidden = await ctx.resolveInternal(HiddenService);
+
+      assertInstanceOf(hidden, HiddenService);
+      assertStrictEquals(
+        await moduleRef.get(HiddenService, { strict: false }),
+        hidden,
+      );
+      assert(moduleRef.hasGlobal(HiddenService));
+      assert(!moduleRef.hasGlobal("UNKNOWN"));
+      await assertRejects(() => ctx.resolve(HiddenService), TokenNotFoundError);
+      await assertRejects(
+        () => moduleRef.get("UNKNOWN", { strict: false }),
+        TokenNotFoundError,
+      );
+    });
+
+    it("discovers tagged providers of nested non-exported modules", async () => {
+      const ctx = await InjectorContext.create(AppModule);
+      const moduleRef = ctx.getHostModuleRef();
+
+      assertEquals(ctx.container.getTokensByTag(TAG, true), [HiddenService]);
+      assertEquals(moduleRef.getTokensByTag(TAG, { strict: false }), [
+        HiddenService,
+      ]);
+      assertStrictEquals(
+        (await moduleRef.getByTag(TAG, { strict: false }))[0],
+        await ctx.resolveInternal(HiddenService),
+      );
+    });
+
+    it("skips tagged providers that cannot be resolved", async () => {
+      const BROKEN_TAG = Symbol("BROKEN_TAG");
+
+      @Injectable()
+      @Tags(BROKEN_TAG)
+      class Missing {
+        @Inject("MISSING")
+        public missing!: unknown;
+      }
+
+      @Injectable()
+      @Tags(BROKEN_TAG)
+      class Crashing {
+        public constructor() {
+          throw new TypeError("crashed");
+        }
+      }
+
+      @Module({ providers: [Missing] })
+      class MissingModule {}
+
+      @Module({ providers: [Crashing] })
+      class CrashingModule {}
+
+      @Module({ imports: [MissingModule] })
+      class SkippingModule {}
+
+      @Module({ imports: [MissingModule, CrashingModule] })
+      class FailingModule {}
+
+      using _errorStub = stub(Logger.prototype, "error");
+
+      const skipping = await InjectorContext.create(SkippingModule);
+      const failing = await InjectorContext.create(FailingModule);
+
+      assertEquals(
+        await skipping.getHostModuleRef().getByTag(BROKEN_TAG, {
+          strict: false,
+        }),
+        [],
+      );
+      await assertRejects(
+        () =>
+          failing.getHostModuleRef().getByTag(BROKEN_TAG, { strict: false }),
+        TypeError,
+        "crashed",
+      );
+    });
+  });
+
+  describe("overrides", () => {
+    it("replaces providers of nested and global modules", async () => {
+      const NESTED = Symbol("NESTED");
+      const GLOBAL = Symbol("GLOBAL");
+
+      @Module({
+        providers: [{ provide: NESTED, useValue: "original" }],
+        exports: [NESTED],
+      })
+      class NestedModule {}
+
+      @Global()
+      @Module({
+        providers: [{ provide: GLOBAL, useValue: "original" }],
+        exports: [GLOBAL],
+      })
+      class GlobalModule {}
+
+      @Module({ imports: [NestedModule, GlobalModule] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule, {
+        overrides: [
+          { provide: NESTED, useValue: "first" },
+          { provide: NESTED, useValue: "nested" },
+          { provide: GLOBAL, useValue: "global" },
+          { provide: "UNDECLARED", useValue: "ignored" },
+        ],
+      });
+
+      assertEquals(await ctx.resolve(NESTED), "nested");
+      assertEquals(await ctx.resolve(GLOBAL), "global");
+      assertEquals(await ctx.tryResolve("UNDECLARED"), undefined);
+    });
+  });
+
+  describe("scope bubbling", () => {
+    it("makes a singleton controller of a request-scoped state request-scoped", async () => {
+      const calls: string[] = [];
+
+      @Injectable({ mode: "request" })
+      class RequestState {
+        public readonly id = crypto.randomUUID();
+      }
+
+      @Injectable()
+      class ItemsController implements OnModuleInit, OnModuleDestroy {
+        @Inject(RequestState)
+        public state!: RequestState;
+
+        public onModuleInit(): void {
+          calls.push("init");
+        }
+
+        public onModuleDestroy(): void {
+          calls.push("destroy");
+        }
+      }
+
+      @Module({
+        providers: [RequestState, ItemsController],
+        exports: [ItemsController],
+      })
+      class AppModule {}
+
+      using errorStub = stub(Logger.prototype, "error");
+
+      const ctx = await InjectorContext.create(AppModule);
+      const ids = await Promise.all(
+        ["req-1", "req-2"].map((id) =>
+          ctx.runInRequestScopeAsync(
+            id,
+            async () => (await ctx.resolve(ItemsController)).state.id,
+          )
+        ),
+      );
+
+      assert(ctx.container.isRequestScoped(ItemsController));
+
+      await ctx.onApplicationBootstrap();
+      await ctx.close();
+
+      assertEquals(errorStub.calls.length, 0);
+      assert(ids[0] !== ids[1]);
+      assertEquals(calls, []);
+    });
+
+    it("bubbles across exported and global modules", async () => {
+      @Injectable({ mode: "request" })
+      class GlobalState {
+        public readonly id = crypto.randomUUID();
+      }
+
+      @Global()
+      @Module({ providers: [GlobalState], exports: [GlobalState] })
+      class GlobalStateModule {}
+
+      @Module({
+        providers: [RequestScopedService],
+        exports: [RequestScopedService],
+      })
+      class StateModule {}
+
+      @Injectable()
+      class ViaImport {
+        @Inject(RequestScopedService)
+        public state!: RequestScopedService;
+      }
+
+      @Injectable()
+      class ViaGlobal {
+        @Inject(GlobalState)
+        public state!: GlobalState;
+      }
+
+      @Module({
+        imports: [StateModule],
+        providers: [ViaImport],
+        exports: [ViaImport],
+      })
+      class ImportingModule {}
+
+      @Module({ providers: [ViaGlobal], exports: [ViaGlobal] })
+      class FeatureModule {}
+
+      @Module({
+        imports: [GlobalStateModule, ImportingModule, FeatureModule],
+        exports: [ViaImport, ViaGlobal],
+      })
+      class AppModule {}
+
+      using errorStub = stub(Logger.prototype, "error");
+
+      const ctx = await InjectorContext.create(AppModule);
+      const [first, second] = await Promise.all(
+        ["req-1", "req-2"].map((id) =>
+          ctx.runInRequestScopeAsync(id, async () => [
+            (await ctx.resolve(ViaImport)).state.id,
+            (await ctx.resolve(ViaGlobal)).state.id,
+          ])
+        ),
+      );
+
+      assertEquals(errorStub.calls.length, 0);
+      assert(ctx.container.isRequestScoped(ViaImport));
+      assert(ctx.container.isRequestScoped(ViaGlobal));
+      assert(first[0] !== second[0]);
+      assert(first[1] !== second[1]);
     });
   });
 });
