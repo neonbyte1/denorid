@@ -73,7 +73,7 @@ describe("ControllerMapping", () => {
     }
   }
 
-  /** Request context serving path parameters and query values, recording reads. */
+  /** Request context serving path parameters, query values and headers, recording reads. */
   class TestRequestContext extends RequestContext {
     public readonly reads: string[] = [];
 
@@ -81,6 +81,7 @@ describe("ControllerMapping", () => {
       private readonly input: {
         params?: Record<string, string>;
         queries?: Record<string, string[]>;
+        headers?: Record<string, string>;
       } = {},
     ) {
       super("req-1", undefined);
@@ -95,7 +96,9 @@ describe("ControllerMapping", () => {
     }
 
     public override headers(): Record<string, string> {
-      throw new Error("Method not implemented");
+      this.reads.push("headers");
+
+      return this.input.headers ?? {};
     }
 
     public override header(_key: string): string | undefined {
@@ -502,6 +505,7 @@ describe("ControllerMapping", () => {
       tags: z.array(z.string()).optional(),
     });
     const Body = z.object({ name: z.string().min(1) });
+    const TenantHeaders = z.object({ "x-tenant-id": z.uuid() });
 
     function createMapping(): TestControllerMapping {
       const { ctx } = createMockContext([]);
@@ -540,14 +544,17 @@ describe("ControllerMapping", () => {
         : error.response;
     }
 
-    it("exposes the parsed path parameters, query and body", async () => {
+    it("exposes the parsed path parameters, query, headers and body", async () => {
+      const tenant = crypto.randomUUID();
       const context = new TestRequestContext({
         params: { id: "7" },
         queries: { limit: ["5"], tags: ["a"] },
+        headers: { "x-tenant-id": tenant, accept: "application/json" },
       });
       const { validated, readBody } = validate(context, {
         params: Params,
         query: Query,
+        headers: TenantHeaders,
         validation: { type: "json", dto: Body },
       });
 
@@ -555,8 +562,10 @@ describe("ControllerMapping", () => {
 
       assertEquals(context.validated(Params), { id: 7 });
       assertEquals(context.validated(Query), { limit: 5, tags: ["a"] });
+      assertEquals(context.validated(TenantHeaders), { "x-tenant-id": tenant });
       assertEquals(context.validated(Body), { name: "Ada" });
       assertStrictEquals(context.dto, context.validated(Body));
+      assertEquals(context.reads, ["params", "queries", "headers"]);
       assertSpyCall(readBody, 0, { args: ["json"] });
     });
 
@@ -572,7 +581,7 @@ describe("ControllerMapping", () => {
       assertEquals(context.dto, { name: "Ada" });
     });
 
-    it("rejects invalid path parameters before reading the query and the body", async () => {
+    it("rejects invalid path parameters before reading the query, the headers and the body", async () => {
       const context = new TestRequestContext({
         params: { id: "abc" },
         queries: { limit: ["5"] },
@@ -580,6 +589,7 @@ describe("ControllerMapping", () => {
       const { validated, readBody } = validate(context, {
         params: Params,
         query: Query,
+        headers: TenantHeaders,
         validation: { type: "json", dto: Body },
       });
 
@@ -593,10 +603,11 @@ describe("ControllerMapping", () => {
       assertSpyCalls(readBody, 0);
     });
 
-    it("rejects an invalid query before reading the body", async () => {
+    it("rejects an invalid query before reading the headers and the body", async () => {
       const context = new TestRequestContext({ queries: { limit: ["500"] } });
       const { validated, readBody } = validate(context, {
         query: Query,
+        headers: TenantHeaders,
         validation: { type: "json", dto: Body },
       });
 
@@ -606,6 +617,54 @@ describe("ControllerMapping", () => {
       );
 
       assertMatch(String(messageOf(error)), /^limit: /);
+      assertEquals(context.reads, ["queries"]);
+      assertSpyCalls(readBody, 0);
+    });
+
+    it("validates the headers by lowercase name, joining names that only differ in case", async () => {
+      const AllHeaders = z.record(z.string(), z.string());
+      const tenant = crypto.randomUUID();
+      const context = new TestRequestContext({
+        headers: {
+          "X-Tenant-Id": tenant,
+          "X-Trace": "a",
+          "x-trace": "b",
+          accept: "application/json",
+        },
+      });
+
+      await validate(context, { headers: TenantHeaders }).validated;
+      await validate(context, { headers: AllHeaders }).validated;
+
+      assertEquals(context.validated(TenantHeaders), { "x-tenant-id": tenant });
+      assertEquals(context.validated(AllHeaders), {
+        "x-tenant-id": tenant,
+        "x-trace": "a, b",
+        accept: "application/json",
+      });
+    });
+
+    it("rejects invalid headers after the path parameters and the query and before reading the body", async () => {
+      const context = new TestRequestContext({
+        params: { id: "7" },
+        queries: { limit: ["5"] },
+        headers: { "X-Tenant-Id": "not-a-uuid" },
+      });
+      const { validated, readBody } = validate(context, {
+        params: Params,
+        query: Query,
+        headers: TenantHeaders,
+        validation: { type: "json", dto: Body },
+      });
+
+      const error = await assertRejects(
+        () => validated,
+        ZodValidationException,
+      );
+
+      assertEquals(error.status, 400);
+      assertMatch(String(messageOf(error)), /^x-tenant-id: /);
+      assertEquals(context.reads, ["params", "queries", "headers"]);
       assertSpyCalls(readBody, 0);
     });
 

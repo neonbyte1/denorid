@@ -117,3 +117,42 @@ export function Params(schema: ZodType): MethodDecorator {
     },
   });
 }
+
+/**
+ * Decorator that validates the request headers against a Zod schema before
+ * the route handler runs. A failed validation answers `400 Bad Request`; the
+ * parsed value is read with `ctx.validated(schema)`.
+ *
+ * The schema receives every header with its name in lowercase, so the keys
+ * of the schema must be lowercase (`"x-tenant-id"`). Every value is a string;
+ * a header sent several times arrives as one comma-separated value. Unknown
+ * headers are stripped by `z.object()`, so the parsed value only holds the
+ * declared ones.
+ *
+ * Named `RequestHeaders` so it does not shadow the global `Headers` class.
+ *
+ * @example
+ * ```ts
+ * const TenantHeaders = z.object({ "x-tenant-id": z.uuid() });
+ *
+ * \@Controller("/threads")
+ * class ThreadController {
+ *   \@Get()
+ *   \@RequestHeaders(TenantHeaders)
+ *   public list(ctx: RequestContext): unknown {
+ *     return { tenant: ctx.validated(TenantHeaders)["x-tenant-id"] };
+ *   }
+ * }
+ * ```
+ *
+ * @param {ZodType} schema - The Zod schema the request headers are validated against.
+ * @return {MethodDecorator} A method decorator that registers header validation for the route.
+ */
+export function RequestHeaders(schema: ZodType): MethodDecorator {
+  return createRequestMappingDecorator({
+    name: "RequestHeaders",
+    initializer: (entry): void => {
+      entry.headers = schema;
+    },
+  });
+}

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getRequestMappingMetadata as getMetadata } from "./_request_mapping.ts";
 import { HttpMethod } from "./method.ts";
 import { Get } from "./request_mapping.ts";
-import { Body, Form, Params, Query } from "./validation.ts";
+import { Body, Form, Params, Query, RequestHeaders } from "./validation.ts";
 
 describe("HTTP: Body decorator", () => {
   it("should throw when decorating a static method", () => {
@@ -108,7 +108,7 @@ describe("HTTP: Form decorator", () => {
   });
 });
 
-describe("HTTP: Query and Params decorators", () => {
+describe("HTTP: Query, Params and RequestHeaders decorators", () => {
   it("should throw when decorating a static method", () => {
     const schema = z.object({});
 
@@ -124,12 +124,19 @@ describe("HTTP: Query and Params decorators", () => {
         public static stub(): void {}
       }
     }, Error);
+    assertThrows(() => {
+      class _ {
+        @RequestHeaders(schema)
+        public static stub(): void {}
+      }
+    }, Error);
   });
 
   it("should add the schemas to the route entry of the method, in any decorator order", () => {
     const ListQuery = z.object({ limit: z.coerce.number() });
     const ItemParams = z.object({ id: z.uuid() });
     const ItemQuery = z.object({ expand: z.string().optional() });
+    const TenantHeaders = z.object({ "x-tenant-id": z.uuid() });
 
     class ExampleController {
       @Query(ListQuery)
@@ -139,17 +146,23 @@ describe("HTTP: Query and Params decorators", () => {
       @Get(":id")
       @Params(ItemParams)
       @Query(ItemQuery)
+      @RequestHeaders(TenantHeaders)
       public get(): void {}
+
+      @RequestHeaders(TenantHeaders)
+      @Get("/tenant")
+      public tenant(): void {}
     }
 
     const metadata = getMetadata(ExampleController);
     assertExists(metadata);
     assertEquals(
-      metadata.map(({ name, method, query, params }) => ({
+      metadata.map(({ name, method, query, params, headers }) => ({
         name,
         method,
         query,
         params,
+        headers,
       })),
       [
         {
@@ -157,12 +170,21 @@ describe("HTTP: Query and Params decorators", () => {
           method: HttpMethod.GET,
           query: ListQuery,
           params: undefined,
+          headers: undefined,
         },
         {
           name: "get",
           method: HttpMethod.GET,
           query: ItemQuery,
           params: ItemParams,
+          headers: TenantHeaders,
+        },
+        {
+          name: "tenant",
+          method: HttpMethod.GET,
+          query: undefined,
+          params: undefined,
+          headers: TenantHeaders,
         },
       ],
     );

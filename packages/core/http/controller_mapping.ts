@@ -35,6 +35,30 @@ export type HttpRouteFn = (ctx: RequestContext) => Promise<unknown> | unknown;
 export type HttpController = Record<PropertyKey, HttpRouteFn>;
 
 /**
+ * Creates the input of a `@RequestHeaders()` schema: every header of the
+ * request with its name in lowercase. Adapters may keep the sent casing, so
+ * names that only differ in case are joined with `, `, the way HTTP combines
+ * a repeated header.
+ *
+ * @param {Record<string, string>} headers - The headers of the request.
+ * @return {Record<string, string>} The headers keyed by lowercase name.
+ */
+function createHeaderInput(
+  headers: Record<string, string>,
+): Record<string, string> {
+  const input = new Map<string, string>();
+
+  for (const [name, value] of Object.entries(headers)) {
+    const key = name.toLowerCase();
+    const previous = input.get(key);
+
+    input.set(key, previous === undefined ? value : `${previous}, ${value}`);
+  }
+
+  return Object.fromEntries(input);
+}
+
+/**
  * Base class for HTTP adapter-specific controller mappings.
  *
  * Iterates over all controllers registered in the injector context and
@@ -118,8 +142,8 @@ export abstract class ControllerMapping {
    * Every entry of the controller path is an alternative base path: the
    * routes are registered once per entry (a missing path counts as one empty
    * path). Route entries without an HTTP method (only `@HttpCode()`,
-   * `@Body()`, `@Form()`, `@Query()`, `@Params()` or `@UseGuards()` on a
-   * method) are not routes and are skipped.
+   * `@Body()`, `@Form()`, `@Query()`, `@Params()`, `@RequestHeaders()` or
+   * `@UseGuards()` on a method) are not routes and are skipped.
    *
    * @param {Type<HttpController>} controllerClass - The controller class to register.
    * @param {string} basePath - The global path prefix to prepend.
@@ -188,9 +212,10 @@ export abstract class ControllerMapping {
   /**
    * Validates the inputs of a request against the schemas declared on the
    * route, in this order: the path parameters (`@Params()`), the query
-   * string (`@Query()`, see the `@Query()` decorator for the array rule) and
-   * the body (`@Body()` or `@Form()`). Parts without schema are skipped; the
-   * body is only read when the route declares a body schema.
+   * string (`@Query()`, see the `@Query()` decorator for the array rule), the
+   * headers (`@RequestHeaders()`, keyed by lowercase name) and the body
+   * (`@Body()` or `@Form()`). Parts without schema are skipped; the body is
+   * only read when the route declares a body schema.
    *
    * Every parsed value is available through `context.validated(schema)`;
    * the parsed body is also assigned to `context.dto`. Adapters call it
@@ -218,6 +243,14 @@ export abstract class ControllerMapping {
         context,
         route.query,
         createQueryInput(route.query, context.queries()),
+      );
+    }
+
+    if (route.headers !== undefined) {
+      await this.parseInput(
+        context,
+        route.headers,
+        createHeaderInput(context.headers()),
       );
     }
 
