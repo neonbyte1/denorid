@@ -11,9 +11,15 @@ import {
   MessagePattern,
   serializePattern,
 } from "@denorid/core/microservices";
-import type { InjectorContext, Type } from "@denorid/injector";
+import {
+  Injectable,
+  InjectorContext,
+  Module,
+  type Type,
+} from "@denorid/injector";
+import { Logger } from "@denorid/logger";
 import { assertEquals, assertRejects } from "@std/assert";
-import { spy } from "@std/testing/mock";
+import { spy, stub } from "@std/testing/mock";
 import { beforeEach, describe, it } from "node:test";
 import { Server } from "./server.ts";
 
@@ -696,6 +702,49 @@ describe(Server.name, () => {
       );
 
       assertEquals(methodGuardCalls, []);
+    });
+  });
+
+  describe("dispatch - class guard resolution", () => {
+    useServer();
+
+    it("resolves a class guard provided by a feature module the host module does not see", async () => {
+      using _log = stub(Logger.prototype, "log");
+      const seen: string[] = [];
+
+      @Injectable()
+      class FeatureGuard implements CanActivate {
+        public canActivate(): boolean {
+          seen.push("guard");
+
+          return true;
+        }
+      }
+
+      @MessageController()
+      @UseGuards(FeatureGuard)
+      class FeatureCtrl {
+        @MessagePattern("feature.run")
+        run(): string {
+          return "ran";
+        }
+      }
+
+      @Module({ providers: [FeatureCtrl, FeatureGuard] })
+      class FeatureModule {}
+
+      @Module({ imports: [FeatureModule] })
+      class AppModule {}
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      server.registerHandlers([FeatureCtrl], ctx);
+
+      assertEquals(
+        await server.dispatchPublic(serializePattern("feature.run"), {}),
+        "ran",
+      );
+      assertEquals(seen, ["guard"]);
     });
   });
 });

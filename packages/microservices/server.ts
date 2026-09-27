@@ -155,7 +155,7 @@ export abstract class Server<
             if (isClass<CanActivate>(guard)) {
               const guardInstance = await this.ctx.getHostModuleRef().get(
                 guard,
-                { contextId },
+                { contextId, strict: false },
               );
               allowed = await guardInstance.canActivate(executionCtx);
             } else if (isFunction<CanActivateFn>(guard)) {
