@@ -1,9 +1,10 @@
 /**
  * OpenAPI 3.2 documentation for denorid HTTP applications, in the spirit of
  * `@nestjs/swagger`: the document is generated from what the routes already
- * declare (paths, methods, `@Body()`, `@Form()`, `@Query()` and `@Params()`
- * zod schemas, `@HttpCode()`, guards), completed by a few decorators for
- * what the framework cannot know (responses, tags, security).
+ * declare (paths, methods, `@Body()`, `@Form()`, `@Query()`, `@Params()` and
+ * `@RequestHeaders()` zod schemas, `@HttpCode()`, guards, controller hosts),
+ * completed by a few decorators for what the framework cannot know
+ * (responses and streams, tags, security).
  *
  * Zod schemas with an `id` (`.meta({ id: "User" })`) become reusable
  * `components.schemas`; `.describe()` and `.meta()` fields end up in the

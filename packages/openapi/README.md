@@ -93,17 +93,19 @@ every controller: with `basePath: "/api"` they move to `/api/docs`.
 
 Everything the framework already knows ends up in the document:
 
-| Source                       | Document                                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------- |
-| Controller and route paths   | Paths, including the base path; `:id` becomes `{id}`                            |
-| `@Get()`, `@Post()`, ...     | Operations                                                                      |
-| `@Params(schema)`            | Path parameters (without it, strings with the `{pattern}`)                      |
-| `@Query(schema)`             | Query parameters, one per property (other schemas: one `querystring` parameter) |
-| `@Body(schema)`              | `application/json` request body                                                 |
-| `@Form(schema)`              | `multipart/form-data` and url-encoded request body                              |
-| `@HttpCode()`                | Success response (`200` without it)                                             |
-| `@Params`/`@Query`/`@Body`   | `400 Bad Request` (failed validation)                                           |
-| `@UseGuards()`, global guard | `403 Forbidden` and the `@ApiSecurity()` schemes of the guards                  |
+| Source                       | Document                                                                            |
+| ---------------------------- | ----------------------------------------------------------------------------------- |
+| Controller and route paths   | Paths, including the base path; `:id` becomes `{id}`                                |
+| `@Get()`, `@Post()`, ...     | Operations                                                                          |
+| `@Params(schema)`            | Path parameters (without it, strings with the `{pattern}`)                          |
+| `@Query(schema)`             | Query parameters, one per property (other schemas: one `querystring` parameter)     |
+| `@RequestHeaders(schema)`    | Header parameters, one per property (not `Accept`, `Content-Type`, `Authorization`) |
+| `@Body(schema)`              | `application/json` request body                                                     |
+| `@Form(schema)`              | `multipart/form-data` and url-encoded request body                                  |
+| `@HttpCode()`                | Success response (`200` without it)                                                 |
+| Any input schema             | `400 Bad Request` (failed validation)                                               |
+| `@UseGuards()`, global guard | `403 Forbidden` and the `@ApiSecurity()` schemes of the guards                      |
+| `@Controller({ host })`      | Operation `servers`: `//api.example.com`; a `{host}` variable for a RegExp          |
 
 Request schemas are documented as their input (what they accept), response
 schemas as their output (what parsing returns, `z.infer`). Descriptions and
@@ -133,6 +135,36 @@ The media type of a response defaults to how the adapter sends the handler
 result: `text/plain` for string, number and boolean schemas, `application/json`
 otherwise. Set `contentType` for other formats. Raw request bodies the route
 reads itself can be documented with `@ApiOperation({ requestBody })`.
+
+## Streamed responses
+
+OpenAPI 3.2 describes streams item by item. `itemSchema` documents every item of
+a sequential media type, `application/jsonl` unless `contentType` says otherwise
+(`application/x-ndjson`, `application/json-seq`, ...):
+
+```ts
+@Get("/logs")
+@ApiResponse(StatusCode.Ok, { itemSchema: LogEntry })
+public logs(): Response {}
+```
+
+`events` documents a stream of server-sent events (`text/event-stream`) by event
+name. Each schema describes the `data` of its event: string schemas as sent,
+other schemas as JSON (`contentMediaType` and `contentSchema`). The `message`
+event also covers events sent without an `event` field, which browsers dispatch
+as `message`.
+
+```ts
+@Get("/chat")
+@ApiResponse(StatusCode.Ok, {
+  events: {
+    message: ChatMessage,
+    typing: z.object({ userId: z.uuid() }),
+    ping: z.string(),
+  },
+})
+public chat(): Response {}
+```
 
 ## Schemas and components
 
@@ -200,6 +232,19 @@ OpenApiModule.forRoot({
 | `document` | -        | Top-level fields: `info` (required), `servers`, `tags`, `security`, `components`... |
 | `ui`       | `true`   | Serves Swagger UI. The page loads Swagger UI pinned from jsDelivr, with SRI hashes. |
 
+`forRootAsync()` creates the document fields with a factory; `path` and `ui`
+define routes and stay static:
+
+```ts
+OpenApiModule.forRootAsync({
+  imports: [ConfigModule],
+  inject: [ConfigService],
+  useFactory: (config: ConfigService) => ({
+    info: { title: "Forum API", version: config.get("VERSION") },
+  }),
+});
+```
+
 ## Writing the document to a file
 
 The document is created from the registered routes, which exist once the
@@ -219,7 +264,13 @@ await app.close();
 
 ## Limitations
 
-- Controller `host` restrictions are not documented.
+- A controller `host` is documented as operation `servers` relative to the
+  scheme of the documentation page (`//api.example.com`). A RegExp host cannot
+  be written as a URL: it becomes a `//{host}` server whose variable has to be
+  filled in. Controllers with an empty `host` list serve nothing and are left
+  out.
+- `@RequestHeaders()` schemas that are not objects (e.g. `z.record()`) cannot be
+  split into header parameters and are not documented.
 - Path segments are read in the `:name`, `:name{pattern}` and `:name?` syntax;
   wildcards (`*`) are kept as literal segments.
 - Only the first route registered for a method and path is documented, since it
