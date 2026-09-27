@@ -5,6 +5,7 @@ import type {
   ModuleRefOptions,
   Tag,
 } from "@denorid/injector";
+import process from "node:process";
 import type { ApplicationContext } from "../application_context.ts";
 import {
   ConsoleCommandRunner,
@@ -88,7 +89,7 @@ export class TestingModule implements ApplicationContext {
    * @inheritdoc
    */
   public async runCommandLine(
-    argv: string[] = Deno.args,
+    argv: string[] = process.argv.slice(2),
     options?: ConsoleCommandRunnerOptions,
   ): Promise<number> {
     await this.init();

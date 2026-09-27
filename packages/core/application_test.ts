@@ -1,5 +1,6 @@
 import { Module } from "@denorid/injector";
 import { assertEquals, assertStringIncludes } from "@std/assert";
+import process from "node:process";
 import { describe, it } from "node:test";
 import type { ConsoleWriter } from "./cli/command_runner.ts";
 import {
@@ -62,6 +63,26 @@ describe("Application.runCommandLine", () => {
 
     assertEquals(code, 42);
     assertEquals(ledger, ["PONG"]);
+  });
+
+  it("reads the arguments after the runtime and script path from process.argv when argv is omitted", async () => {
+    ledger.length = 0;
+    const app = await DenoridFactory.create(RootModule);
+    const originalArgv = process.argv;
+    process.argv = ["/usr/bin/runtime", "/app/main.ts", "ping", "--loud"];
+
+    try {
+      const code = await app.runCommandLine(undefined, {
+        stdout: new BufferWriter(),
+        stderr: new BufferWriter(),
+        decorated: false,
+      });
+
+      assertEquals(code, 42);
+      assertEquals(ledger, ["PONG"]);
+    } finally {
+      process.argv = originalArgv;
+    }
   });
 
   it("prints the command list when no command is given and exits 0", async () => {

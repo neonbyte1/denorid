@@ -1,7 +1,14 @@
 import type { InjectionToken, InjectorContext, Tag } from "@denorid/injector";
 import { assertEquals } from "@std/assert";
 import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
+import process from "node:process";
 import { describe, it } from "node:test";
+import type {
+  ConsoleCommandInput,
+  ConsoleCommandInterface,
+} from "../cli/command_interface.ts";
+import type { ConsoleWriter } from "../cli/command_runner.ts";
+import { ConsoleCommand } from "../cli/decorator.ts";
 import { TestingModule } from "./testing_module.ts";
 
 function makeCtx(overrides?: Record<string, unknown>): InjectorContext {
@@ -16,6 +23,35 @@ function makeCtx(overrides?: Record<string, unknown>): InjectorContext {
     onApplicationShutdown: () => Promise.resolve(),
     ...overrides,
   } as unknown as InjectorContext;
+}
+
+@ConsoleCommand({
+  command: "greet",
+  options: [{ name: "name", type: "string" }],
+})
+class GreetCommand implements ConsoleCommandInterface {
+  public lastInput?: ConsoleCommandInput;
+
+  public execute(input: ConsoleCommandInput): number {
+    this.lastInput = input;
+    return 5;
+  }
+}
+
+class TextWriter implements ConsoleWriter {
+  public text: string = "";
+
+  public write(p: Uint8Array): number {
+    this.text += new TextDecoder().decode(p);
+    return p.length;
+  }
+}
+
+function makeCommandCtx(command: GreetCommand): InjectorContext {
+  return makeCtx({
+    container: { getTokensByTag: () => [GreetCommand] },
+    resolveInternal: (_token: InjectionToken) => Promise.resolve(command),
+  });
 }
 
 describe(TestingModule.name, () => {
@@ -120,6 +156,75 @@ describe(TestingModule.name, () => {
       await module.close();
 
       assertEquals(calls, ["before", "shutdown"]);
+    });
+  });
+
+  describe("[Symbol.asyncDispose]()", () => {
+    it("runs the shutdown hooks when an `await using` block exits", async () => {
+      const calls: string[] = [];
+      const ctx = makeCtx({
+        onBeforeApplicationShutdown: () => {
+          calls.push("before");
+          return Promise.resolve();
+        },
+        onApplicationShutdown: () => {
+          calls.push("shutdown");
+          return Promise.resolve();
+        },
+      });
+
+      {
+        await using _module = new TestingModule(ctx);
+        assertEquals(calls, []);
+      }
+
+      assertEquals(calls, ["before", "shutdown"]);
+    });
+  });
+
+  describe("runCommandLine()", () => {
+    it("bootstraps the context, runs the given argv and returns the exit code", async () => {
+      const command = new GreetCommand();
+      const ctx = makeCommandCtx(command);
+      const bootstrapSpy = spy(ctx, "onApplicationBootstrap");
+      const stderr = new TextWriter();
+      const module = new TestingModule(ctx);
+
+      const code = await module.runCommandLine(["greet", "--name=Ada"], {
+        stdout: new TextWriter(),
+        stderr,
+        decorated: false,
+      });
+
+      assertEquals(code, 5);
+      assertEquals(command.lastInput?.options.name, "Ada");
+      assertSpyCalls(bootstrapSpy, 1);
+      assertEquals(stderr.text, "");
+    });
+
+    it("reads the arguments after the runtime and script path from process.argv when argv is omitted", async () => {
+      const command = new GreetCommand();
+      const module = new TestingModule(makeCommandCtx(command));
+      const originalArgv = process.argv;
+      process.argv = [
+        "/usr/bin/runtime",
+        "/app/main.ts",
+        "greet",
+        "--name=Bob",
+      ];
+
+      try {
+        const code = await module.runCommandLine(undefined, {
+          stdout: new TextWriter(),
+          stderr: new TextWriter(),
+          decorated: false,
+        });
+
+        assertEquals(code, 5);
+        assertEquals(command.lastInput?.options.name, "Bob");
+      } finally {
+        process.argv = originalArgv;
+      }
     });
   });
 });

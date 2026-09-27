@@ -7,6 +7,7 @@ import type {
   Type,
 } from "@denorid/injector";
 import { Logger, type LoggerService, type LogLevel } from "@denorid/logger";
+import process from "node:process";
 import type { ApplicationContext } from "./application_context.ts";
 import {
   ConsoleCommandRunner,
@@ -154,7 +155,7 @@ export class Application<
    * @inheritdoc
    */
   public async runCommandLine(
-    argv: string[] = Deno.args,
+    argv: string[] = process.argv.slice(2),
     options?: ConsoleCommandRunnerOptions,
   ): Promise<number> {
     await this.init();

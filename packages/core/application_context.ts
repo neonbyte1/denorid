@@ -80,7 +80,7 @@ export interface ApplicationContext extends AsyncDisposable {
    * Honours the global `--no-color` and `-h`/`--help` flags. When no command
    * is provided, prints the command listing and resolves to exit code `0`.
    *
-   * @param {string[]} [argv] - Argv slice (defaults to `Deno.args`).
+   * @param {string[]} [argv] - Argv slice (defaults to `process.argv.slice(2)` from `node:process`, i.e. the arguments after the runtime and script path).
    * @param {ConsoleCommandRunnerOptions} [options] - Runner overrides (writers, decoration, app name).
    * @returns {Promise<number>} Exit code returned by the command (0 = success).
    */
