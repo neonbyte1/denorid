@@ -6,7 +6,12 @@
  * packages (`@denorid/platform-hono`, `@denorid/platform-socket-io`).
  */
 export * from "./adapter.ts";
+export * from "./context.ts";
 export * from "./exception.ts";
+export * from "./gateway.ts";
 export * from "./gateway_options.ts";
 export * from "./interfaces.ts";
+export * from "./message_body.ts";
+export * from "./subscribe_message.ts";
+export * from "./web_socket_server.ts";
 export * from "./ws_host_arguments.ts";
