@@ -250,6 +250,63 @@ describe("parseCommandArgs()", () => {
         'The "--count" option expects a numeric value, got "abc".',
       );
     });
+
+    it("rejects empty and blank values on a numeric option instead of reading 0", () => {
+      const counter: InputOption = {
+        name: "count",
+        shortcut: "c",
+        type: "number",
+      };
+
+      for (
+        const argv of [["--count="], ["--count", ""], ["-c="], ["-c", "  "]]
+      ) {
+        assertThrows(
+          () => parseCommandArgs(argv, [counter]),
+          CommandParseError,
+          'The "--count" option expects a numeric value, got "',
+        );
+      }
+    });
+
+    it("takes a negative number after a numeric option as its value", () => {
+      const counter: InputOption = {
+        name: "count",
+        shortcut: "c",
+        type: "number",
+        array: true,
+      };
+
+      assertEquals(
+        parseCommandArgs(["--count", "-5", "-c", "-1.5"], [counter]).options
+          .count,
+        [-5, -1.5],
+      );
+    });
+
+    it("does not take a flag or a negative number of a non-numeric option as value", () => {
+      const counter: InputOption = {
+        name: "count",
+        shortcut: "c",
+        type: "number",
+      };
+
+      assertThrows(
+        () => parseCommandArgs(["--count", "-f"], [counter, boolOpt]),
+        CommandParseError,
+        'The "--count" option requires a value.',
+      );
+      assertThrows(
+        () => parseCommandArgs(["-c", "-f"], [counter, boolOpt]),
+        CommandParseError,
+        'The "-c" option requires a value.',
+      );
+      assertThrows(
+        () => parseCommandArgs(["--scope", "-5"], [stringOpt]),
+        CommandParseError,
+        'The "--scope" option requires a value.',
+      );
+    });
   });
 
   describe("arrays", () => {
@@ -311,6 +368,25 @@ describe("parseCommandArgs()", () => {
       assertEquals(result.options.tag, []);
     });
 
+    it("wraps a scalar default of an array option in an array", () => {
+      const result = parseCommandArgs([], [{
+        name: "tag",
+        array: true,
+        default: "x",
+      }]);
+
+      assertEquals(result.options.tag, ["x"]);
+    });
+
+    it("hands out a copy of an array default", () => {
+      const tag: InputOption = { name: "tag", array: true, default: ["a"] };
+
+      (parseCommandArgs([], [tag]).options.tag as string[]).push("b");
+
+      assertEquals(tag.default, ["a"]);
+      assertEquals(parseCommandArgs([], [tag]).options.tag, ["a"]);
+    });
+
     it("throws when a required option is omitted", () => {
       assertThrows(
         () =>
@@ -330,38 +406,6 @@ describe("parseCommandArgs()", () => {
       );
 
       assertEquals(result.options.scope, "all");
-    });
-  });
-
-  describe("invalid definitions", () => {
-    it("rejects duplicate long-name declarations", () => {
-      assertThrows(
-        () =>
-          parseCommandArgs(
-            ["--scope", "a"],
-            [
-              { name: "scope", type: "string" },
-              { name: "scope", type: "string" },
-            ],
-          ),
-        CommandParseError,
-        'The "--scope" option is declared more than once.',
-      );
-    });
-
-    it("rejects duplicate shortcut declarations", () => {
-      assertThrows(
-        () =>
-          parseCommandArgs(
-            [],
-            [
-              { name: "alpha", shortcut: "a", type: "boolean" },
-              { name: "all", shortcut: "a", type: "boolean" },
-            ],
-          ),
-        CommandParseError,
-        'The "-a" shortcut is declared more than once.',
-      );
     });
   });
 });

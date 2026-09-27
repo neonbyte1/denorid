@@ -1,4 +1,5 @@
-import type { InjectorContext, Type } from "@denorid/injector";
+import { InjectorContext, Module, type Type } from "@denorid/injector";
+import { Logger } from "@denorid/logger";
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { stub } from "@std/testing/mock";
 import process from "node:process";
@@ -93,8 +94,8 @@ const trappedMeta = (TrappedCommand as unknown as {
   [Symbol.metadata]: Record<symbol, unknown>;
 })[Symbol.metadata];
 const trappedOption: InputOption = Object.defineProperty(
-  {} as InputOption,
-  "name",
+  { name: "trap" } as InputOption,
+  "required",
   {
     get(): never {
       throw new TypeError("simulated non-parse failure");
@@ -370,6 +371,59 @@ describe("ConsoleCommandRunner.run()", () => {
       assertEquals(code, 1);
       assertStringIncludes(stderr.text(), "kaboom");
     });
+
+    it("reports a command that cannot be resolved and returns 1", async () => {
+      const failure = new Error("No provider found for token ClearCache");
+      const stderr = new BufferWriter();
+      const ctx = {
+        container: { getTokensByTag: () => [ClearCache] },
+        resolveInternal: (): Promise<never> => Promise.reject(failure),
+      } as unknown as InjectorContext;
+      const runner = new ConsoleCommandRunner(ctx, {
+        stdout: new BufferWriter(),
+        stderr,
+        decorated: false,
+      });
+
+      const code = await runner.run(["cache:clear"]);
+
+      assertEquals(code, 1);
+      assertStringIncludes(
+        stderr.text(),
+        " [ERROR] No provider found for token ClearCache ",
+      );
+      assertStringIncludes(stderr.text(), failure.stack!);
+    });
+
+    it("prints error messages verbatim, including tag-like text", async () => {
+      const message = "Unexpected </div> after <info> in template";
+
+      @ConsoleCommand({ command: "render" })
+      class RenderCommand implements ConsoleCommandInterface {
+        public execute(): number {
+          throw new Error(message);
+        }
+      }
+
+      for (const decorated of [false, true]) {
+        const { runner, stderr } = makeRunner({
+          tokens: [RenderCommand],
+          instances: new Map([[RenderCommand, new RenderCommand()]]),
+          decorated,
+        });
+
+        assertEquals(await runner.run(["render"]), 1);
+
+        const [, block] = stderr.text().split("\n");
+
+        assertEquals(
+          block,
+          decorated
+            ? `\x1b[37;41m [ERROR] ${message} \x1b[0m`
+            : ` [ERROR] ${message} `,
+        );
+      }
+    });
   });
 
   describe("errors", () => {
@@ -562,6 +616,42 @@ describe("ConsoleCommandRunner.run()", () => {
         'Command "unknown:cmd" is not defined.',
       );
       assertEquals(stdoutChunks, []);
+    });
+  });
+
+  describe("with an injector context", () => {
+    it("runs a command of a nested module that does not export it", async () => {
+      const runs: ConsoleCommandInput[] = [];
+
+      @ConsoleCommand({ command: "db:seed" })
+      class SeedCommand implements ConsoleCommandInterface {
+        public execute(input: ConsoleCommandInput): number {
+          runs.push(input);
+          return 3;
+        }
+      }
+
+      @Module({ providers: [SeedCommand] })
+      class SeedModule {}
+
+      @Module({ imports: [SeedModule] })
+      class DbModule {}
+
+      @Module({ imports: [DbModule] })
+      class AppModule {}
+
+      using _log = stub(Logger.prototype, "log");
+      await using ctx = await InjectorContext.create(AppModule);
+      const stderr = new BufferWriter();
+      const runner = new ConsoleCommandRunner(ctx, {
+        stdout: new BufferWriter(),
+        stderr,
+        decorated: false,
+      });
+
+      assertEquals(await runner.run(["db:seed", "--", "x"]), 3);
+      assertEquals(runs.map(({ args }) => args), [["x"]]);
+      assertEquals(stderr.text(), "");
     });
   });
 });

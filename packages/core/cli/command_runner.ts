@@ -2,6 +2,7 @@ import type { InjectorContext } from "@denorid/injector";
 import process from "node:process";
 import {
   CommandParseError,
+  type ParsedInput,
   parseCommandArgs,
   preScanArgv,
 } from "./_argv_parser.ts";
@@ -54,6 +55,9 @@ export class ConsoleCommandRunner {
   /**
    * @param {InjectorContext} ctx - Bootstrapped injector context containing the command tokens.
    * @param {ConsoleCommandRunnerOptions} [options] - Optional configuration overrides.
+   * @throws {Error} When the command definitions are invalid: duplicate or
+   *   reserved command names (`list`, `help`), or options declared twice or
+   *   clashing with the global `--help`/`-h`/`--no-color` options.
    */
   public constructor(
     ctx: InjectorContext,
@@ -71,13 +75,18 @@ export class ConsoleCommandRunner {
    * Executes the command line described by `argv`.
    *
    * Resolution rules (mirroring Symfony):
-   *  - No command, `--help`, or `list` → render the command list, exit `0`.
-   *  - `help <name>` → render help for `<name>`.
-   *  - `<name> --help` / `<name> -h` → render help for `<name>`.
-   *  - Otherwise → resolve the command and call `execute`.
+   *  - No command, `--help`, or `list`: render the command list, exit `0`.
+   *  - `help <name>`: render help for `<name>`.
+   *  - `<name> --help` / `<name> -h`: render help for `<name>`.
+   *  - Otherwise: resolve the command and call `execute`.
    *
    * The global `--no-color` flag is honoured anywhere on the command line and
    * takes effect for help/error output as well as the command body.
+   *
+   * Failures print an `[ERROR]` block to stderr and exit `1`: an unknown
+   * command, invalid argv (followed by the command help), and errors thrown
+   * while resolving the command from the container or by `execute` (followed
+   * by the stack).
    *
    * @param {string[]} argv - Argv slice excluding the runtime and script path (i.e. `process.argv.slice(2)`).
    * @returns {Promise<number>} Exit code (0 = success).
@@ -151,25 +160,24 @@ export class ConsoleCommandRunner {
     entry: CommandEntry,
     rest: string[],
   ): Promise<number> {
-    const allOptions = [...entry.options, ...GLOBAL_OPTIONS];
-    let parsed;
+    let parsed: ParsedInput;
 
     try {
-      parsed = parseCommandArgs(rest, allOptions);
+      parsed = parseCommandArgs(rest, [...entry.options, ...GLOBAL_OPTIONS]);
     } catch (error) {
-      if (error instanceof CommandParseError) {
-        await this.writeError(error.message);
-        await this.write(this.stdout, this.help.renderCommandHelp(entry));
-        return 1;
+      if (!(error instanceof CommandParseError)) {
+        throw error;
       }
-      throw error;
+
+      await this.writeError(error.message);
+      await this.write(this.stdout, this.help.renderCommandHelp(entry));
+      return 1;
     }
 
-    const instance = await this.ctx.resolveInternal<ConsoleCommandInterface>(
-      entry.token,
-    );
-
     try {
+      const instance = await this.ctx.resolveInternal<ConsoleCommandInterface>(
+        entry.token,
+      );
       const code = await instance.execute({
         options: parsed.options,
         args: parsed.args,
@@ -192,7 +200,9 @@ export class ConsoleCommandRunner {
   }
 
   private async writeError(message: string): Promise<void> {
-    const block = this.formatter.format(`<error> [ERROR] ${message} </error>`);
+    // `apply` does not parse markup: `message` is arbitrary text (exception
+    // messages, argv) that may contain `<tag>` literals.
+    const block = this.formatter.apply(` [ERROR] ${message} `, "error");
     await this.write(this.stderr, `\n${block}\n\n`);
   }
 

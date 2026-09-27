@@ -105,7 +105,11 @@ export function preScanArgv(argv: string[]): PreScannedArgv {
  *  - `--name=value`, `--name value`, `-x value`, `-x=value`, `-xvz` (combined boolean shortcuts).
  *  - `--` ends option parsing; remaining tokens are appended to {@linkcode ParsedInput.args}.
  *  - Boolean options never take a value; non-boolean options always take exactly one.
+ *  - A separate value may not start with `-`, except negative numbers of number options (`--offset -5`).
  *  - Array options accept repeated occurrences (collected in declaration order).
+ *
+ * Option definitions are expected to be valid (unique names and shortcuts);
+ * the command registry validates them when commands are discovered.
  *
  * @param {string[]} argv - Argv slice belonging to the command (after the command name).
  * @param {InputOption[]} optionDefs - Options declared on the command.
@@ -159,20 +163,9 @@ function indexOptions(optionDefs: InputOption[]): IndexedOptions {
   const byShortcut: Map<string, InputOption> = new Map();
 
   for (const opt of optionDefs) {
-    if (byName.has(opt.name)) {
-      throw new CommandParseError(
-        `The "--${opt.name}" option is declared more than once.`,
-      );
-    }
-
     byName.set(opt.name, opt);
 
     if (opt.shortcut) {
-      if (byShortcut.has(opt.shortcut)) {
-        throw new CommandParseError(
-          `The "-${opt.shortcut}" shortcut is declared more than once.`,
-        );
-      }
       byShortcut.set(opt.shortcut, opt);
     }
   }
@@ -214,7 +207,7 @@ function consumeLongOption(
 
   const next = argv[index + 1];
 
-  if (next === undefined || next.startsWith("-")) {
+  if (!isSeparateValue(next, def)) {
     throw new CommandParseError(
       `The "--${name}" option requires a value.`,
     );
@@ -267,7 +260,7 @@ function consumeShortOption(
     }
 
     const next = argv[index + 1];
-    if (next === undefined || next.startsWith("-")) {
+    if (!isSeparateValue(next, def)) {
       throw new CommandParseError(
         `The "-${body}" option requires a value.`,
       );
@@ -321,9 +314,33 @@ function record(
   }
 }
 
+/**
+ * Tells whether the token after a value-taking option is its value. Tokens
+ * starting with `-` are options, except negative numbers of number options.
+ *
+ * @param {string | undefined} token - Token following the option.
+ * @param {InputOption} def - Definition of the option.
+ * @returns {boolean} `true` when `token` is the value of the option.
+ */
+function isSeparateValue(
+  token: string | undefined,
+  def: InputOption,
+): token is string {
+  if (token === undefined) {
+    return false;
+  }
+
+  if (!token.startsWith("-")) {
+    return true;
+  }
+
+  return def.type === "number" && Number.isFinite(Number(token));
+}
+
 function cast(raw: string, def: InputOption): InputOptionValue {
   if (def.type === "number") {
-    const num = Number(raw);
+    // `Number("")` and `Number("  ")` are 0; a blank value is not a number.
+    const num = raw.trim() === "" ? NaN : Number(raw);
     if (!Number.isFinite(num)) {
       throw new CommandParseError(
         `The "--${def.name}" option expects a numeric value, got "${raw}".`,
@@ -352,7 +369,9 @@ function applyDefaults(
     }
 
     if (def.default !== undefined) {
-      out[def.name] = def.default;
+      // Array options always get a fresh array: a scalar default is wrapped,
+      // an array default is copied so commands cannot change the definition.
+      out[def.name] = def.array ? [def.default].flat() : def.default;
 
       continue;
     }
