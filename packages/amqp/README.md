@@ -199,7 +199,8 @@ Handlers honor `@UseGuards()` from `@denorid/core` on the class and the method,
 plus app-wide guards via `AmqpModuleOptions.globalGuards`. Per message the order
 is **global -> controller -> method**; the first guard to return `false` throws
 `ForbiddenException`, which is routed to the framework `ExceptionHandler` and
-the message is `nack`ed (no requeue).
+the message is `nack`ed (no requeue). Class guards are resolved per message from
+the whole application, so they can be provided by any module.
 
 ```ts
 import { UseGuards } from "@denorid/core";
@@ -272,7 +273,12 @@ AmqpModule.forRoot({
 ```
 
 The serializer is shared by the explorer and every client through the
-`AmqpConnection`.
+`AmqpConnection`. Publishers set the message `contentType` from the optional
+`contentType(value)` method, and `deserialize(content, properties)` receives the
+message properties, so a serializer can tell encodings apart. The default
+`JsonAmqpSerializer` uses this to round-trip `Uint8Array` payloads
+(`application/octet-stream`) and encodes values JSON cannot represent at the top
+level (for example the `undefined` returned by a `void` RPC handler) as `null`.
 
 ## Async configuration
 
@@ -286,13 +292,36 @@ AmqpModule.forRootAsync({
 });
 ```
 
+## Failure handling
+
+- Connection and channel `error` events are logged; they never crash the
+  process. A closed connection is dropped, so the next client call connects
+  again, and a client whose channel closed opens a new one on its next call.
+- A consumer whose channel closes unexpectedly (broker restart, lost connection,
+  channel error) is subscribed again after `reconnectDelay` milliseconds
+  (default `1000`), retrying until it succeeds.
+- `RpcClient` rejects the requests waiting on a channel when that channel
+  closes, and rejects a reply it cannot deserialize.
+- A message whose body cannot be deserialized is routed to the
+  `ExceptionHandler` and `nack`ed (an RPC caller gets an `{ err }` reply)
+  instead of blocking the consumer. When an RPC handler succeeds but its result
+  cannot be serialized, the caller gets an `{ err }` reply and the message is
+  still acked.
+
+```ts
+AmqpModule.forRoot({ url: "amqp://localhost", reconnectDelay: 5_000 });
+```
+
 ## Teardown
 
-The shared connection is closed on module destruction, which cascades to every
-consumer and client channel created from it. The explorer also closes its
-consumer channels on graceful shutdown, and `RpcClient` rejects all in-flight
-requests and clears their timers. Manually-instantiated (non-DI) clients do not
-receive the shutdown hook, but their channels are still torn down when the
+Before application shutdown the explorer cancels every consumer, waits for the
+handlers still running (they can still ack and reply), and then closes the
+consumer channels. The shared connection and every client registered through
+`clients` are closed when the DI container disposes them, after all shutdown
+hooks ran, so providers can still publish from their own `onModuleDestroy` /
+`onApplicationShutdown` hooks. `RpcClient.close()` rejects all in-flight
+requests and clears their timers. Close manually-instantiated clients yourself
+(or declare them with `await using`); their channels are also torn down when the
 shared connection closes.
 
 ## License
