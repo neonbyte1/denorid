@@ -284,5 +284,38 @@ describe(ConfigModule.name, () => {
         );
       }
     });
+
+    it("resolves injected providers from its imports for global consumers", async () => {
+      using _files = stubFiles({});
+      using errorStub = stub(Logger.prototype, "error");
+
+      for (const first of [true, false]) {
+        const configModule = ConfigModule.forRootAsync({
+          global: true,
+          imports: [AppNameModule],
+          inject: [APP_NAME],
+          useFactory: (name: string) => ({
+            envFilePath: [],
+            ignoreEnvVars: true,
+            load: [() => ({ name })],
+          }),
+        });
+
+        await withModule(
+          first
+            ? [configModule, GlobalConsumerModule, FeatureModule]
+            : [FeatureModule, GlobalConsumerModule, configModule],
+          async (module) => {
+            const consumer = await module.get(GlobalConsumer);
+            const feature = await module.get(FeatureService);
+
+            assertEquals(consumer.config.get("name"), "from-provider");
+            assertEquals(feature.config.get("name"), "from-provider");
+          },
+        );
+      }
+
+      assertEquals(errorStub.calls.length, 0);
+    });
   });
 });
