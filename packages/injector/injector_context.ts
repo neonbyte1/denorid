@@ -109,16 +109,29 @@ export class InjectorContext implements InjectorContextLifecycle {
     }
 
     const moduleContainers = new Map<Type, Container>();
+    const builtModules = new Set<CompiledModule>();
 
     const buildContainer = (mod: CompiledModule): Container => {
-      if (moduleContainers.has(mod.type)) {
+      if (builtModules.has(mod)) {
         return moduleContainers.get(mod.type)!;
       }
 
+      builtModules.add(mod);
+
       const childContainers: Container[] = [];
 
+      // Build imports first, even for a module class that already has a
+      // container: a later variant (e.g. `X.forRoot()` after plain `X`) is
+      // dropped, but its imports still take part in the init lifecycle and
+      // need a container.
       for (const importedMod of mod.imports) {
         childContainers.push(buildContainer(importedMod));
+      }
+
+      const existing = moduleContainers.get(mod.type);
+
+      if (existing) {
+        return existing;
       }
 
       const container = new Container(logger, {

@@ -829,6 +829,37 @@ describe("InjectorContext", () => {
       const service = await ctx.resolve(SimpleService);
       assertExists(service);
     });
+
+    it("initializes the imports of a dynamic variant built after its static module", async () => {
+      const initialized: string[] = [];
+
+      @Injectable()
+      class ExtraService implements OnModuleInit {
+        public onModuleInit(): void {
+          initialized.push("extra");
+        }
+      }
+
+      @Module({ providers: [ExtraService] })
+      class ExtraModule {}
+
+      @Module({})
+      class HybridModule {
+        static forRoot(): DynamicModule {
+          return { module: HybridModule, imports: [ExtraModule] };
+        }
+      }
+
+      @Module({ imports: [HybridModule] })
+      class FeatureModule {}
+
+      @Module({ imports: [FeatureModule, HybridModule.forRoot()] })
+      class AppModule {}
+
+      await InjectorContext.create(AppModule);
+
+      assertEquals(initialized, ["extra"]);
+    });
   });
 
   describe("ModuleCompiler global providers", () => {
