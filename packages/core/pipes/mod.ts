@@ -16,25 +16,32 @@
  * | `ParseEnumPipe`   | enum member       |
  * | `ParseUuidPipe`   | `string` (UUID)   |
  *
- * @example Using a built-in pipe on a query parameter
+ * @example Using built-in pipes on query and path parameters
  * ```ts
- * import { ParseIntPipe, ParseBoolPipe } from "@denorid/core/pipes";
+ * import { Controller, Get, type RequestContext } from "@denorid/core";
+ * import { ParseBoolPipe, ParseIntPipe } from "@denorid/core/pipes";
  *
- * // Inside a controller handler:
- * // GET /items?page=2&active=true
- * async getItems(
- *   @Query("page", new ParseIntPipe()) page: number,
- *   @Query("active", new ParseBoolPipe()) active: boolean,
- * ) { ... }
+ * @Controller("/items")
+ * class ItemsController {
+ *   // GET /items/42?page=2&active=true
+ *   @Get("/:id")
+ *   public getItems(ctx: RequestContext): unknown {
+ *     const id = ctx.param("id", new ParseIntPipe());
+ *     const page = ctx.query("page", new ParseIntPipe({ optional: true }));
+ *     const active = ctx.query("active", new ParseBoolPipe());
+ *
+ *     return { id, page: page ?? 1, active };
+ *   }
+ * }
  * ```
  *
  * @example Using a custom exception factory
  * ```ts
+ * import { UnprocessableContentException } from "@denorid/core";
  * import { ParseUuidPipe } from "@denorid/core/pipes";
- * import { UnprocessableEntityException } from "@denorid/core";
  *
  * const pipe = new ParseUuidPipe({
- *   exceptionFactory: (msg) => new UnprocessableEntityException(msg),
+ *   exceptionFactory: (msg) => new UnprocessableContentException(msg),
  * });
  * ```
  * @module
