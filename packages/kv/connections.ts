@@ -18,9 +18,13 @@ import {
  *
  * On Deno the native `Deno.openKv` opens the stores (requires `--unstable-kv`
  * or Deno Deploy), on Node.js and Bun the `@deno/kv` package is used.
+ *
+ * The injector disposes the instance it created after every shutdown hook
+ * ran, which closes the stores. Providers can therefore still use their `Kv`
+ * in `onModuleDestroy` and `onApplicationShutdown`.
  */
 @Injectable()
-export class KvConnections {
+export class KvConnections implements Disposable {
   /**
    * Map of all registered connection entries, keyed by connection name.
    */
@@ -97,6 +101,15 @@ export class KvConnections {
         );
       }
     }
+  }
+
+  /**
+   * Closes all open KV connections, see {@link KvConnections.close}.
+   *
+   * @return {void}
+   */
+  public [Symbol.dispose](): void {
+    this.close();
   }
 }
 

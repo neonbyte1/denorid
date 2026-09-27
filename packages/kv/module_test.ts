@@ -1,8 +1,20 @@
+import type { Kv } from "@deno/kv";
 import { Test } from "@denorid/core/testing";
-import { Module } from "@denorid/injector";
-import { assertEquals, assertExists, assertInstanceOf } from "@std/assert";
+import {
+  Injectable,
+  Module,
+  type OnApplicationShutdown,
+  type OnModuleDestroy,
+} from "@denorid/injector";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertThrows,
+} from "@std/assert";
 import { describe, it } from "node:test";
-import { KvConnections } from "./connections.ts";
+import { InjectKv, KvConnections } from "./connections.ts";
+import { ConnectionNotEstablishedException } from "./exceptions.ts";
 import { KvModule } from "./module.ts";
 import { KvQueue } from "./queue/mod.ts";
 
@@ -83,5 +95,42 @@ describe(KvModule.name, () => {
     } finally {
       await module.close();
     }
+  });
+
+  it("keeps the stores open for shutdown hooks and closes them afterwards", async () => {
+    @Injectable()
+    class Flusher implements OnModuleDestroy, OnApplicationShutdown {
+      @InjectKv()
+      public readonly kv!: Kv;
+
+      public flushed: unknown;
+
+      public async onModuleDestroy(): Promise<void> {
+        await this.kv.set(["flushed"], true);
+      }
+
+      public async onApplicationShutdown(): Promise<void> {
+        this.flushed = (await this.kv.get(["flushed"])).value;
+      }
+    }
+
+    const module = await Test.createTestingModule({
+      imports: [
+        KvModule.forRoot({ connection: { path: ":memory:", queue: true } }),
+      ],
+      providers: [Flusher],
+    })
+      .useCoreGlobals()
+      .compile();
+
+    await module.init();
+
+    const flusher = await module.get(Flusher);
+    const connections = await module.get(KvConnections);
+
+    await module.close();
+
+    assertEquals(flusher.flushed, true);
+    assertThrows(() => connections.get(), ConnectionNotEstablishedException);
   });
 });
