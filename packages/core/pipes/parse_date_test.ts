@@ -22,6 +22,40 @@ describe("ParseDatePipe", () => {
 
       assertInstanceOf(result, Date);
     });
+
+    it("works without options", () => {
+      assertEquals(
+        new ParseDatePipe().transform("2024-01-15")?.toISOString(),
+        "2024-01-15T00:00:00.000Z",
+      );
+    });
+
+    for (
+      const [input, expected] of [
+        ["2024-01-15", "2024-01-15T00:00:00.000Z"],
+        ["2024-02-29", "2024-02-29T00:00:00.000Z"],
+        ["2000-02-29", "2000-02-29T00:00:00.000Z"],
+        ["2024-12-31", "2024-12-31T00:00:00.000Z"],
+        ["2024-01-15T10:30Z", "2024-01-15T10:30:00.000Z"],
+        ["2024-01-15T10:30:15+01:00", "2024-01-15T09:30:15.000Z"],
+        ["2024-01-15T23:59:59-02:30", "2024-01-16T02:29:59.000Z"],
+        ["2024-01-15t10:30:00.123456z", "2024-01-15T10:30:00.123Z"],
+      ] as const
+    ) {
+      it(`parses "${input}" as ${expected}`, () => {
+        assertEquals(
+          new ParseDatePipe().transform(input)?.toISOString(),
+          expected,
+        );
+      });
+    }
+
+    it("parses a date-time without offset as local time", () => {
+      assertEquals(
+        new ParseDatePipe().transform("2024-01-15T10:30")?.getTime(),
+        new Date(2024, 0, 15, 10, 30).getTime(),
+      );
+    });
   });
 
   describe("transform: valid numeric timestamp", () => {
@@ -32,6 +66,19 @@ describe("ParseDatePipe", () => {
       assertInstanceOf(result, Date);
       assertEquals((result as Date).getTime(), ts);
     });
+
+    it("parses 0 as the epoch", () => {
+      assertEquals(new ParseDatePipe().transform(0)?.getTime(), 0);
+    });
+
+    for (const input of ["1705276800000", "0", "-1000"]) {
+      it(`parses the timestamp string "${input}"`, () => {
+        assertEquals(
+          new ParseDatePipe().transform(input)?.getTime(),
+          Number(input),
+        );
+      });
+    }
   });
 
   describe("transform: optional nil handling", () => {
@@ -90,12 +137,49 @@ describe("ParseDatePipe", () => {
       );
     });
 
-    it("throws BadRequestException for empty string (falsy value)", () => {
+    it("throws BadRequestException for empty string", () => {
       assertThrows(
-        () => (new ParseDatePipe({ optional: false })).transform(""),
+        () => (new ParseDatePipe({ optional: true })).transform(""),
         BadRequestException,
+        "Validation failed (no Date provided)",
       );
     });
+
+    for (
+      const input of [
+        "2024-02-30",
+        "2023-02-29",
+        "1900-02-29",
+        "2024-04-31",
+        "2024-13-01",
+        "2024-00-10",
+        "2024-01-00",
+        "2024-01-15T24:00:00Z",
+        "2024-01-15T10:60Z",
+        "2024-01-15T10:00:60Z",
+        "2024-01-15T10:00+0100",
+        "2024-01-15T10:00+24:00",
+        "2024-01-15 10:00",
+        "2024-01",
+        "1.5",
+        "3.5",
+        "foo 2",
+        "Hello 2020",
+        "Jan 5 2024",
+        " 2024-01-15",
+        "99999999999999999999",
+        NaN,
+        Infinity,
+      ]
+    ) {
+      it(`throws BadRequestException for ${JSON.stringify(input)}`, () => {
+        assertThrows(
+          () => new ParseDatePipe().transform(input),
+          BadRequestException,
+          "Validation failed (invalid date format)",
+        );
+      });
+    }
 
     it("calls exceptionFactory with the validation message", () => {
       const factory = spy((_msg: string) => new Error("custom"));
