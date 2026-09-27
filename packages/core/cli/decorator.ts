@@ -1,6 +1,7 @@
 import type { Decorator } from "@denorid/injector";
 import { Injectable, Tags } from "@denorid/injector";
 import { CLI_COMMAND_METADATA, CLI_OPTIONS_METADATA } from "../_constants.ts";
+import { getOwnMetadata } from "../websockets/_metadata.ts";
 import type { ConsoleCommandMetadata } from "./_metadata.ts";
 import type { CommandOptions, InputOption } from "./options.ts";
 
@@ -40,16 +41,20 @@ export function ConsoleCommand(
  * Declares a single {@linkcode InputOption} for the decorated class.
  *
  * Multiple `@Option` decorators stack; they are merged with the `options` array
- * passed to `@ConsoleCommand` when the command is resolved.
+ * passed to `@ConsoleCommand` when the command is resolved. Options inherited
+ * from a parent class are copied first, so the parent's options never change.
  *
  * @param {InputOption} option - Option metadata.
  * @returns {Decorator<ClassDecoratorContext>}
  */
 export function Option(option: InputOption): Decorator<ClassDecoratorContext> {
   return (_: unknown, ctx: ClassDecoratorContext): void => {
-    const existing =
-      (ctx.metadata[CLI_OPTIONS_METADATA] ??= []) as InputOption[];
-
-    existing.unshift(option);
+    getOwnMetadata<InputOption[]>(
+      ctx.metadata,
+      CLI_OPTIONS_METADATA,
+      (inherited: InputOption[] | undefined): InputOption[] => [
+        ...(inherited ?? []),
+      ],
+    ).unshift(option);
   };
 }
