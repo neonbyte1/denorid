@@ -58,6 +58,16 @@ const TEXT_TYPES: Record<string, true> = {
   boolean: true,
 };
 
+/**
+ * Header parameters OpenAPI ignores: the media type negotiation and the
+ * credentials are described by the operation and its security.
+ */
+const IGNORED_HEADERS: Record<string, true> = {
+  accept: true,
+  "content-type": true,
+  authorization: true,
+};
+
 /** Documentation of a class or method without documentation decorators. */
 const NO_METADATA: ApiRouteMetadata = {
   tags: [],
@@ -74,6 +84,8 @@ interface RouteSchemas {
   params?: SchemaObject;
   /** `@Query()` schema. */
   query?: ConvertedSchema;
+  /** Resolved `@RequestHeaders()` schema. */
+  headers?: SchemaObject;
   /** Request body generated from `@Body()` or `@Form()`. */
   requestBody?: RequestBodyObject;
 }
@@ -167,6 +179,32 @@ function createQueryParameters(
 }
 
 /**
+ * Creates the header parameters, one per property of an object
+ * `@RequestHeaders()` schema; `Accept`, `Content-Type` and `Authorization`
+ * are left out, as OpenAPI ignores them. Other schemas cannot be split into
+ * headers and are not documented.
+ *
+ * @param {SchemaObject | undefined} headers - The resolved
+ *   `@RequestHeaders()` schema.
+ * @return {ParameterObject[]} The parameters.
+ */
+function createHeaderParameters(
+  headers: SchemaObject | undefined,
+): ParameterObject[] {
+  if (headers?.type !== "object" || headers.properties === undefined) {
+    return [];
+  }
+
+  const required = headers.required ?? [];
+
+  return Object.entries(headers.properties)
+    .filter(([name]) => !Object.hasOwn(IGNORED_HEADERS, name.toLowerCase()))
+    .map(([name, property]) =>
+      createParameter(name, "header", required.includes(name), property)
+    );
+}
+
+/**
  * Creates a documented response. Without `contentType`, scalar schemas are
  * `text/plain`, the way the HTTP adapter sends strings, numbers and booleans.
  *
@@ -237,11 +275,12 @@ function createResponses(
     responses[status] = { description: STATUS_TEXT[status] ?? "Response" };
   }
 
-  const { validation, query, params } = route.metadata;
+  const { validation, query, params, headers } = route.metadata;
 
   if (
     (validation !== undefined || query !== undefined ||
-      params !== undefined) && !documented.has(StatusCode.BadRequest)
+      params !== undefined || headers !== undefined) &&
+    !documented.has(StatusCode.BadRequest)
   ) {
     responses[StatusCode.BadRequest] = {
       description: STATUS_TEXT[StatusCode.BadRequest],
@@ -333,7 +372,7 @@ function convertRouteSchemas(
   handler: ApiRouteMetadata,
   schemas: SchemaCollector,
 ): RouteSchemas {
-  const { params, query, validation } = route.metadata;
+  const { params, query, headers, validation } = route.metadata;
   let requestBody = handler.operation.requestBody;
 
   if (requestBody === undefined && validation !== undefined) {
@@ -355,6 +394,9 @@ function convertRouteSchemas(
       ? undefined
       : schemas.convert(params, "input").resolved,
     query: query === undefined ? undefined : schemas.convert(query, "input"),
+    headers: headers === undefined
+      ? undefined
+      : schemas.convert(headers, "input").resolved,
     requestBody,
   };
 }
@@ -436,6 +478,7 @@ export function createDocument(
       const parameters = [
         ...createPathParameters(template, routeSchemas.params),
         ...createQueryParameters(routeSchemas.query),
+        ...createHeaderParameters(routeSchemas.headers),
       ];
       const operation: OperationObject = {
         ...(tags.length > 0 ? { tags } : {}),

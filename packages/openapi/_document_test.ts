@@ -18,7 +18,11 @@ import {
   ApiTags,
 } from "./decorators.ts";
 import type { OpenApiDocumentOptions } from "./module_options.ts";
-import type { OperationObject, SchemaObject } from "./types.ts";
+import type {
+  OperationObject,
+  ParameterObject,
+  SchemaObject,
+} from "./types.ts";
 
 const INFO = { title: "Test API", version: "1.0.0" };
 
@@ -436,6 +440,70 @@ describe("createDocument()", () => {
         },
       });
     });
+
+    it("documents the properties of the @RequestHeaders() schema", () => {
+      const headers = z.object({
+        "x-tenant-id": z.uuid().describe("Tenant"),
+        "x-trace": z.string().optional(),
+        accept: z.string(),
+        "Content-Type": z.string(),
+        authorization: z.string(),
+      });
+
+      assertEquals(
+        operation(
+          [route(PlainController, "find", { metadata: { headers } })],
+          "/",
+        )?.parameters?.map((parameter) => {
+          const { name, in: location, required, description } =
+            parameter as ParameterObject;
+
+          return { name, location, required, description };
+        }),
+        [
+          {
+            name: "x-tenant-id",
+            location: "header",
+            required: true,
+            description: "Tenant",
+          },
+          {
+            name: "x-trace",
+            location: "header",
+            required: false,
+            description: undefined,
+          },
+        ],
+      );
+    });
+
+    it("leaves out @RequestHeaders() schemas without properties", () => {
+      const headers = z.record(z.string(), z.string());
+
+      assertEquals(
+        operation(
+          [route(PlainController, "find", { metadata: { headers } })],
+          "/",
+        )?.parameters,
+        undefined,
+      );
+    });
+
+    it("lists path, query and header parameters in this order", () => {
+      assertEquals(
+        operation(
+          [route(PlainController, "find", {
+            path: "/:id",
+            metadata: {
+              headers: z.object({ "x-a": z.string().optional() }),
+              query: z.object({ b: z.string() }),
+            },
+          })],
+          "/{id}",
+        )?.parameters?.map((parameter) => (parameter as ParameterObject).in),
+        ["path", "query", "header"],
+      );
+    });
   });
 
   describe("request body", () => {
@@ -717,6 +785,7 @@ describe("createDocument()", () => {
 
       assertEquals(statuses({ params: schema }), ["200", "400"]);
       assertEquals(statuses({ query: schema }), ["200", "400"]);
+      assertEquals(statuses({ headers: schema }), ["200", "400"]);
       assertEquals(statuses({ validation: { type: "json", dto: schema } }), [
         "200",
         "400",
