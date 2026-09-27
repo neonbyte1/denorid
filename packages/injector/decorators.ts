@@ -94,10 +94,22 @@ export function Inject<T>(
       );
     }
 
-    const dependencies =
-      (ctx.metadata[INJECTION_METADATA] ??= []) as InjectionDependency[];
+    // A subclass metadata object inherits the parent's entries through its
+    // prototype: copy them instead of mutating the parent's list.
+    const parent = (Object.getPrototypeOf(ctx.metadata) as
+      | DecoratorMetadataObject
+      | null)?.[INJECTION_METADATA] as InjectionDependency[] | undefined;
 
-    if (dependencies.some(({ field }) => field === ctx.name)) {
+    if (!Object.hasOwn(ctx.metadata, INJECTION_METADATA)) {
+      ctx.metadata[INJECTION_METADATA] = [...(parent ?? [])];
+    }
+
+    const dependencies = ctx.metadata[
+      INJECTION_METADATA
+    ] as InjectionDependency[];
+    const existing = dependencies.findIndex(({ field }) => field === ctx.name);
+
+    if (existing !== -1 && !parent?.includes(dependencies[existing])) {
       throw new Error(
         `Cannot inject multiple tokens into the same field: ${
           String(ctx.name)
@@ -113,12 +125,19 @@ export function Inject<T>(
       ? options
       : (expressionOrOptions as InjectOptions | undefined);
 
-    dependencies.push({
+    const dependency: InjectionDependency = {
       field: ctx.name,
       token: token as InjectionToken,
       options: resolvedOptions,
       expression: expression as InjectionExpression | undefined,
-    });
+    };
+
+    // A subclass redeclaring an injected field overrides the parent's entry.
+    if (existing === -1) {
+      dependencies.push(dependency);
+    } else {
+      dependencies[existing] = dependency;
+    }
   };
 }
 
@@ -141,10 +160,14 @@ export function Injectable(
   options?: InjectableOptions,
 ): Decorator<ClassDecoratorContext> {
   return (_: unknown, ctx: ClassDecoratorContext): void => {
-    ctx.metadata[INJECTABLE_METADATA] ??= {
-      ...(options ?? {}),
-      id: crypto.randomUUID(),
-    } satisfies InjectableMetadata;
+    // Own options only: a subclass must not reuse its parent's mode (and id)
+    // through the inherited metadata. Re-applying keeps the first options.
+    if (!Object.hasOwn(ctx.metadata, INJECTABLE_METADATA)) {
+      ctx.metadata[INJECTABLE_METADATA] = {
+        ...(options ?? {}),
+        id: crypto.randomUUID(),
+      } satisfies InjectableMetadata;
+    }
   };
 }
 
@@ -188,7 +211,9 @@ export function Module(
     // and therefore we should apply the decorator as well.
     Injectable()(target, ctx);
 
-    ctx.metadata[MODULE_METADATA] ??= metadata;
+    if (!Object.hasOwn(ctx.metadata, MODULE_METADATA)) {
+      ctx.metadata[MODULE_METADATA] = metadata;
+    }
   };
 }
 
