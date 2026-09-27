@@ -39,7 +39,8 @@ export class UnauthorizedException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.Unauthorized],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.Unauthorized],
       );
 
     super(

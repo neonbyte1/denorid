@@ -39,7 +39,8 @@ export class RangeNotSatisfiableException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.RangeNotSatisfiable],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.RangeNotSatisfiable],
       );
 
     super(

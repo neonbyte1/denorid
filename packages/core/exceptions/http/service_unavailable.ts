@@ -39,7 +39,8 @@ export class ServiceUnavailableException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.ServiceUnavailable],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.ServiceUnavailable],
       );
 
     super(

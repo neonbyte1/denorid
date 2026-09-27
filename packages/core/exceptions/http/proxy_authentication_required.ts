@@ -39,8 +39,8 @@ export class ProxyAuthenticationRequiredException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ??
-          STATUS_TEXT[StatusCode.ProxyAuthenticationRequired],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.ProxyAuthenticationRequired],
       );
 
     super(

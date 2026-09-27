@@ -39,7 +39,8 @@ export class MethodNotAllowedException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.MethodNotAllowed],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.MethodNotAllowed],
       );
 
     super(

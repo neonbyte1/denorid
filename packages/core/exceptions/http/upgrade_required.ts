@@ -39,7 +39,8 @@ export class UpgradeRequiredException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.UpgradeRequired],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.UpgradeRequired],
       );
 
     super(

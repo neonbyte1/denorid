@@ -164,5 +164,44 @@ describe("HttpException", () => {
       assertEquals(result.description, undefined);
       assertEquals(result.httpExceptionOptions, options);
     });
+
+    it("falls back to the default description when options have none", () => {
+      const options = { cause: new Error("cause") };
+      const result = HttpException.extractDescriptionAndOptionsFrom(
+        options,
+        "Not Found",
+      );
+
+      assertEquals(result.description, "Not Found");
+      assertEquals(result.httpExceptionOptions, options);
+    });
+
+    it("prefers the options description over the default", () => {
+      const result = HttpException.extractDescriptionAndOptionsFrom(
+        { description: "my desc" },
+        "Not Found",
+      );
+
+      assertEquals(result.description, "my desc");
+    });
+
+    it("prefers a string description over the default", () => {
+      const result = HttpException.extractDescriptionAndOptionsFrom(
+        "my desc",
+        "Not Found",
+      );
+
+      assertEquals(result.description, "my desc");
+    });
+
+    it("uses the default description and empty options when nothing is given", () => {
+      const result = HttpException.extractDescriptionAndOptionsFrom(
+        undefined,
+        "Not Found",
+      );
+
+      assertEquals(result.description, "Not Found");
+      assertEquals(result.httpExceptionOptions, {});
+    });
   });
 });

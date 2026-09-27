@@ -39,7 +39,8 @@ export class NotImplementedException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.NotImplemented],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.NotImplemented],
       );
 
     super(

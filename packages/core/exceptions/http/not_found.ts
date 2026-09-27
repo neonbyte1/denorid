@@ -39,7 +39,8 @@ export class NotFoundException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.NotFound],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.NotFound],
       );
 
     super(

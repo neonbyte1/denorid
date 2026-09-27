@@ -39,7 +39,8 @@ export class InternalServerErrorException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.InternalServerError],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.InternalServerError],
       );
 
     super(

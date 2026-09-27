@@ -39,8 +39,8 @@ export class UnavailableForLegalReasonsException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ??
-          STATUS_TEXT[StatusCode.UnavailableForLegalReasons],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.UnavailableForLegalReasons],
       );
 
     super(

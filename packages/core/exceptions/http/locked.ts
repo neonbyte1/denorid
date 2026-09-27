@@ -39,7 +39,8 @@ export class LockedException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.Locked],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.Locked],
       );
 
     super(

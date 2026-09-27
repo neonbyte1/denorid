@@ -39,7 +39,8 @@ export class GoneException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.Gone],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.Gone],
       );
 
     super(

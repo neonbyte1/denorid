@@ -42,7 +42,8 @@ export class BadGatewayException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.BadGateway],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.BadGateway],
       );
 
     super(

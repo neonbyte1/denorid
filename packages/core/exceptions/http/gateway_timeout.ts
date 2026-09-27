@@ -39,7 +39,8 @@ export class GatewayTimeoutException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.GatewayTimeout],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.GatewayTimeout],
       );
 
     super(

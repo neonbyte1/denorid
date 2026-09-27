@@ -39,7 +39,8 @@ export class ForbiddenException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.Forbidden],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.Forbidden],
       );
 
     super(

@@ -39,7 +39,8 @@ export class UnprocessableContentException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.UnprocessableContent],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.UnprocessableContent],
       );
 
     super(

@@ -39,7 +39,8 @@ export class UnsupportedMediaTypeException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.UnsupportedMediaType],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.UnsupportedMediaType],
       );
 
     super(

@@ -39,7 +39,8 @@ export class ContentTooLargeException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.ContentTooLarge],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.ContentTooLarge],
       );
 
     super(

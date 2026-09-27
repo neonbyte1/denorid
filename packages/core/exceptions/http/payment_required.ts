@@ -39,7 +39,8 @@ export class PaymentRequiredException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.PaymentRequired],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.PaymentRequired],
       );
 
     super(

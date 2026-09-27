@@ -39,7 +39,8 @@ export class RequestTimeoutException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.RequestTimeout],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.RequestTimeout],
       );
 
     super(

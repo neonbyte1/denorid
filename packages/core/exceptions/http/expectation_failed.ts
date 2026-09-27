@@ -39,7 +39,8 @@ export class ExpectationFailedException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.ExpectationFailed],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.ExpectationFailed],
       );
 
     super(

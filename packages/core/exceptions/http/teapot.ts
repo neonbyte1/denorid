@@ -39,7 +39,8 @@ export class TeapotException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.Teapot],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.Teapot],
       );
 
     super(

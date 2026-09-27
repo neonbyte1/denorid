@@ -39,7 +39,8 @@ export class TooEarlyException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.TooEarly],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.TooEarly],
       );
 
     super(

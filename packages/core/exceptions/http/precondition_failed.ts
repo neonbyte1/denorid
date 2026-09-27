@@ -39,7 +39,8 @@ export class PreconditionFailedException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.PreconditionFailed],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.PreconditionFailed],
       );
 
     super(

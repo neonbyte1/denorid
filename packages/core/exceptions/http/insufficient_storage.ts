@@ -39,7 +39,8 @@ export class InsufficientStorageException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.InsufficientStorage],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.InsufficientStorage],
       );
 
     super(

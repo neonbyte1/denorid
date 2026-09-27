@@ -39,7 +39,8 @@ export class ConflictException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.Conflict],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.Conflict],
       );
 
     super(

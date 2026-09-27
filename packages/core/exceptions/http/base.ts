@@ -179,25 +179,28 @@ export class HttpException extends IntrinsicException {
    * Splits a `string | HttpExceptionOptions` argument into its `description`
    * and `httpExceptionOptions` parts so constructor overloads stay concise.
    *
-   * @param descriptionOrOptions - Either a plain description string or a full
+   * @param {string | HttpExceptionOptions | undefined} descriptionOrOptions -
+   *   Either a plain description string or a full
    *   {@linkcode HttpExceptionOptions} object.
-   * @returns An {@linkcode HttpExceptionDescriptionAndOptions} with both fields
-   *   populated (options will be an empty object when a plain string is given).
+   * @param {string} [defaultDescription] - Description used when
+   *   `descriptionOrOptions` is omitted or is an options object without a
+   *   `description` (e.g. only a `cause`). Concrete exceptions pass their
+   *   status text.
+   * @returns {HttpExceptionDescriptionAndOptions} Both fields populated
+   *   (options will be an empty object when a plain string or nothing is
+   *   given).
    */
   public static extractDescriptionAndOptionsFrom(
-    descriptionOrOptions: string | HttpExceptionOptions,
+    descriptionOrOptions: string | HttpExceptionOptions | undefined,
+    defaultDescription?: string,
   ): HttpExceptionDescriptionAndOptions {
-    const description = typeof descriptionOrOptions === "string"
-      ? descriptionOrOptions
-      : descriptionOrOptions?.description;
-
-    const httpExceptionOptions = typeof descriptionOrOptions === "string"
-      ? {}
-      : descriptionOrOptions;
+    if (typeof descriptionOrOptions === "string") {
+      return { description: descriptionOrOptions, httpExceptionOptions: {} };
+    }
 
     return {
-      description,
-      httpExceptionOptions,
+      description: descriptionOrOptions?.description ?? defaultDescription,
+      httpExceptionOptions: descriptionOrOptions ?? {},
     };
   }
 }

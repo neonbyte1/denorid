@@ -2,6 +2,7 @@ import { assertEquals, assertInstanceOf } from "@std/assert";
 import { describe, it } from "node:test";
 import { STATUS_TEXT, StatusCode } from "../../http/status.ts";
 import {
+  type HttpExceptionOptions,
   BadGatewayException,
   BadRequestException,
   ConflictException,
@@ -38,7 +39,7 @@ import {
 
 type HttpExceptionConstructor = new (
   objectOrError?: string | Record<string, unknown>,
-  descriptionOrOptions?: string,
+  descriptionOrOptions?: string | HttpExceptionOptions,
 ) => HttpException;
 
 const cases: Array<[HttpExceptionConstructor, StatusCode]> = [
@@ -115,6 +116,29 @@ for (const [ExceptionClass, code] of cases) {
       const err = new ExceptionClass(body);
 
       assertEquals(err.response, body);
+    });
+
+    it("options without description keep the default message", () => {
+      const cause = new Error("cause");
+      const err = new ExceptionClass(undefined, { cause });
+      const statusText = (STATUS_TEXT as Record<number, string>)[code];
+
+      assertEquals(err.cause, cause);
+      assertEquals(err.response, {
+        statusCode: code,
+        message: statusText,
+      });
+    });
+
+    it("options without description keep the error label", () => {
+      const err = new ExceptionClass("custom message", { cause: 1 });
+      const statusText = (STATUS_TEXT as Record<number, string>)[code];
+
+      assertEquals(err.response, {
+        statusCode: code,
+        message: "custom message",
+        error: statusText,
+      });
     });
   });
 }

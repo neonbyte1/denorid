@@ -39,7 +39,8 @@ export class NotAcceptableException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.NotAcceptable],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.NotAcceptable],
       );
 
     super(

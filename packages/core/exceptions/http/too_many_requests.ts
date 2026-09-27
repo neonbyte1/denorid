@@ -39,7 +39,8 @@ export class TooManyRequestsException extends HttpException {
   ) {
     const { description, httpExceptionOptions } = HttpException
       .extractDescriptionAndOptionsFrom(
-        descriptionOrOptions ?? STATUS_TEXT[StatusCode.TooManyRequests],
+        descriptionOrOptions,
+        STATUS_TEXT[StatusCode.TooManyRequests],
       );
 
     super(
