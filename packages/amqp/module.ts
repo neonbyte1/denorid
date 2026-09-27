@@ -3,9 +3,6 @@ import {
   type ExistingProvider,
   type FactoryProvider,
   Module,
-  type ModuleRef,
-  type OnModuleDestroy,
-  type OnModuleInit,
   type ValueProvider,
 } from "@denorid/injector";
 import { AMQP_MODULE_OPTIONS, AMQP_SERIALIZER } from "./_constants.ts";
@@ -37,8 +34,9 @@ import { type AmqpSerializer, JsonAmqpSerializer } from "./serialization.ts";
  *
  * Use {@link AmqpModule.forRoot} for static options or
  * {@link AmqpModule.forRootAsync} to resolve options from injected providers.
- * The shared connection is exported under {@link AmqpConnection} and is closed
- * on module destruction.
+ * The shared connection is exported under {@link AmqpConnection}; it and every
+ * registered client are closed when the DI container disposes them, after all
+ * shutdown hooks ran.
  *
  * @example Synchronous registration
  * ```ts
@@ -59,26 +57,7 @@ import { type AmqpSerializer, JsonAmqpSerializer } from "./serialization.ts";
   providers: [AmqpConnection, AmqpExplorer],
   exports: [AmqpConnection],
 })
-export class AmqpModule implements OnModuleInit, OnModuleDestroy {
-  public constructor(private readonly moduleRef: ModuleRef) {}
-
-  /**
-   * @inheritdoc
-   */
-  public async onModuleInit(): Promise<void> {
-    // Eager-resolve so onModuleDestroy always has a live connection to close.
-    await this.moduleRef.get(AmqpConnection);
-  }
-
-  /**
-   * @inheritdoc
-   */
-  public async onModuleDestroy(): Promise<void> {
-    const connection = await this.moduleRef.get(AmqpConnection);
-
-    await connection.close();
-  }
-
+export class AmqpModule {
   /**
    * Registers `AmqpModule` with static options.
    *

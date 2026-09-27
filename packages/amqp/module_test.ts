@@ -3,7 +3,7 @@ import type {
   BaseProvider,
   ExistingProvider,
   FactoryProvider,
-  ModuleRef,
+  OnModuleDestroy,
   Provider,
   Type,
   ValueProvider,
@@ -15,8 +15,10 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
-import { spy } from "@std/testing/mock";
+import { stub } from "@std/testing/mock";
+import amqplib from "amqplib";
 import { Buffer } from "node:buffer";
+import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import { AMQP_MODULE_OPTIONS, AMQP_SERIALIZER } from "./_constants.ts";
 import {
@@ -280,34 +282,71 @@ describe(AmqpModule.name, () => {
   });
 
   describe("lifecycle", () => {
-    it("onModuleInit eager-resolves the connection", async () => {
-      const connection = { close: () => Promise.resolve() };
-      const resolved: unknown[] = [];
-      const moduleRef = {
-        get: (token: unknown) => {
-          resolved.push(token);
+    it("closes clients and the connection after every shutdown hook ran", async () => {
+      const CLIENT = Symbol("CLIENT");
+      const events: string[] = [];
 
-          return Promise.resolve(connection);
-        },
-      } as unknown as ModuleRef;
+      class FakeChannel extends EventEmitter {
+        public assertQueue(): Promise<{ queue: string }> {
+          return Promise.resolve({ queue: "tasks" });
+        }
 
-      const module = new AmqpModule(moduleRef);
-      await module.onModuleInit();
+        public sendToQueue(_queue: string, content: Buffer): boolean {
+          events.push(`send:${new TextDecoder().decode(content)}`);
 
-      assertEquals(resolved, [AmqpConnection]);
-    });
+          return true;
+        }
 
-    it("onModuleDestroy closes the connection exactly once", async () => {
-      const connection = new AmqpConnection();
-      const closeSpy = spy(connection, "close");
-      const moduleRef = {
-        get: () => Promise.resolve(connection),
-      } as unknown as ModuleRef;
+        public close(): Promise<void> {
+          events.push("channel.close");
+          this.emit("close");
 
-      const module = new AmqpModule(moduleRef);
-      await module.onModuleDestroy();
+          return Promise.resolve();
+        }
+      }
 
-      assertEquals(closeSpy.calls.length, 1);
+      class FakeModel extends EventEmitter {
+        public createChannel(): Promise<FakeChannel> {
+          return Promise.resolve(new FakeChannel());
+        }
+
+        public close(): Promise<void> {
+          events.push("connection.close");
+          this.emit("close");
+
+          return Promise.resolve();
+        }
+      }
+
+      @Injectable()
+      class Flusher implements OnModuleDestroy {
+        @Inject(CLIENT)
+        private readonly client!: WorkerClient;
+
+        public async onModuleDestroy(): Promise<void> {
+          await this.client.send("bye");
+        }
+      }
+
+      using _connect = stub(
+        amqplib,
+        "connect",
+        () => Promise.resolve(new FakeModel() as never),
+      );
+      const module = await Test.createTestingModule({
+        imports: [
+          AmqpModule.forRoot({
+            clients: [{ name: CLIENT, type: "worker", queue: "tasks" }],
+          }),
+        ],
+        providers: [Flusher],
+      })
+        .useCoreGlobals()
+        .compile();
+
+      await module.close();
+
+      assertEquals(events, ['send:"bye"', "channel.close", "connection.close"]);
     });
   });
 

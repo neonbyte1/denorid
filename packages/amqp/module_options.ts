@@ -43,6 +43,15 @@ export interface AmqpModuleOptions {
    * automatically added to the module's exports.
    */
   clients?: AmqpClientRegistration[];
+  /**
+   * Delay in milliseconds before a consumer whose channel closed unexpectedly
+   * (broker restart, lost connection, channel error) is subscribed again. A
+   * failed attempt is retried after the same delay until it succeeds or the
+   * application shuts down.
+   *
+   * @default 1000
+   */
+  reconnectDelay?: number;
 }
 
 /**

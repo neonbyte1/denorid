@@ -20,6 +20,7 @@ import {
 } from "@denorid/injector";
 import { Logger } from "@denorid/logger";
 import type { Channel, ConsumeMessage, MessageProperties } from "amqplib";
+import type { Buffer } from "node:buffer";
 import {
   AMQP_CONSUMER,
   AMQP_MODULE_OPTIONS,
@@ -47,12 +48,43 @@ type ConsumerInstance = Record<
 /** Guards applicable to a handler, in evaluation order. */
 type Guard = Type<CanActivate> | CanActivate | CanActivateFn;
 
+/** Result of running a handler: its return value or the error it threw. */
+type HandlerOutcome =
+  | { ok: true; result: unknown }
+  | { ok: false; error: unknown };
+
+/** Default delay before a consumer whose channel closed is subscribed again. */
+const DEFAULT_RECONNECT_DELAY = 1000;
+
+/** One decorated handler method and the channel currently consuming for it. */
+interface Subscription {
+  /** `Consumer.method`, for log messages. */
+  label: string;
+  consumer: Type;
+  binding: AmqpBinding;
+  controllerGuards: Guard[];
+  methodGuards: Guard[];
+  /** The live consumer channel, unset while (re)subscribing. */
+  channel?: Channel;
+  /** The broker consumer tag on {@link channel}. */
+  consumerTag?: string;
+  /** Pending resubscribe timer after the channel closed unexpectedly. */
+  retry?: NodeJS.Timeout;
+  /** A resubscribe in progress. */
+  resubscribing?: Promise<void>;
+}
+
 /**
  * Internal consumer runtime. On application bootstrap it discovers
  * `@AmqpConsumer` classes, asserts each binding's topology against the broker,
  * consumes its queue, and dispatches messages to the decorated methods with
- * guard and `ExceptionHandler` integration. Closes every consumer channel
- * before application shutdown.
+ * guard and `ExceptionHandler` integration.
+ *
+ * A consumer whose channel closes unexpectedly (broker restart, connection
+ * loss, channel error) is subscribed again after
+ * `AmqpModuleOptions.reconnectDelay`. Before application shutdown every
+ * consumer is cancelled, in-flight handlers are awaited (so they can still
+ * ack and reply), and only then are the channels closed.
  */
 @Injectable()
 export class AmqpExplorer
@@ -68,7 +100,11 @@ export class AmqpExplorer
   @Inject(AMQP_SERIALIZER)
   private readonly serializer!: AmqpSerializer;
 
-  private readonly channels: Channel[] = [];
+  private readonly subscriptions: Subscription[] = [];
+  private readonly inFlight: Set<Promise<void>> = new Set();
+  private connection?: AmqpConnection;
+  private ctx?: InjectorContext;
+  private stopping = false;
 
   public constructor(private readonly moduleRef: ModuleRef) {}
 
@@ -80,17 +116,46 @@ export class AmqpExplorer
   }
 
   /**
-   * @inheritdoc
+   * Cancels every consumer, waits for the handlers still running, then
+   * closes the consumer channels. Idempotent.
+   *
+   * @return {Promise<void>}
    */
   public async onBeforeApplicationShutdown(): Promise<void> {
-    for (const channel of this.channels) {
+    this.stopping = true;
+
+    for (const subscription of this.subscriptions) {
+      clearTimeout(subscription.retry);
+      subscription.retry = undefined;
+    }
+
+    await Promise.allSettled(
+      this.subscriptions.map((subscription) => subscription.resubscribing),
+    );
+
+    for (const { channel, consumerTag } of this.subscriptions) {
       try {
-        await channel.close();
+        await channel?.cancel(consumerTag!);
         // deno-lint-ignore no-empty
       } catch {}
     }
 
-    this.channels.length = 0;
+    while (this.inFlight.size > 0) {
+      await Promise.allSettled([...this.inFlight]);
+    }
+
+    for (const subscription of this.subscriptions) {
+      const channel = subscription.channel;
+
+      subscription.channel = undefined;
+
+      try {
+        await channel?.close();
+        // deno-lint-ignore no-empty
+      } catch {}
+    }
+
+    this.subscriptions.length = 0;
   }
 
   private async discover(): Promise<void> {
@@ -102,8 +167,8 @@ export class AmqpExplorer
       return;
     }
 
-    const connection = await this.moduleRef.get(AmqpConnection);
-    const ctx = await this.moduleRef.get(InjectorContext, { strict: false });
+    this.connection = await this.moduleRef.get(AmqpConnection);
+    this.ctx = await this.moduleRef.get(InjectorContext, { strict: false });
 
     for (const consumer of consumers) {
       const bindings = getAmqpBindings(consumer);
@@ -119,57 +184,103 @@ export class AmqpExplorer
       ];
 
       for (const binding of bindings) {
-        const methodGuards = [
-          ...(getMethodGuards(consumer, binding.method) ?? new Set<Guard>()),
-        ];
-        const channel = await connection.createChannel();
-
-        this.channels.push(channel);
-
-        await this.bind(
-          channel,
-          ctx,
+        const subscription: Subscription = {
+          label: `${consumer.name}.${String(binding.method)}`,
           consumer,
           binding,
           controllerGuards,
-          methodGuards,
-        );
+          methodGuards: [
+            ...(getMethodGuards(consumer, binding.method) ?? new Set<Guard>()),
+          ],
+        };
+
+        this.subscriptions.push(subscription);
+
+        await this.subscribe(subscription);
       }
     }
   }
 
-  private async bind(
-    channel: Channel,
-    ctx: InjectorContext,
-    consumer: Type,
-    binding: AmqpBinding,
-    controllerGuards: Guard[],
-    methodGuards: Guard[],
-  ): Promise<void> {
-    const queueName = await this.assertTopology(channel, binding);
+  private async subscribe(subscription: Subscription): Promise<void> {
+    const channel = await this.connection!.createChannel();
 
-    await channel.consume(
-      queueName,
-      (msg) => {
-        if (msg !== null) {
-          this.handle(
-            channel,
-            ctx,
-            msg,
-            binding,
-            consumer,
-            controllerGuards,
-            methodGuards,
-          ).catch((err) => {
-            this.logger.error(
-              "Unhandled error in AMQP message handler",
-              err,
-            );
-          });
-        }
-      },
-      { noAck: false },
-    );
+    try {
+      const queueName = await this.assertTopology(
+        channel,
+        subscription.binding,
+      );
+      const { consumerTag } = await channel.consume(
+        queueName,
+        (msg) => {
+          if (msg !== null) {
+            this.dispatch(subscription, channel, msg);
+          }
+        },
+        { noAck: false },
+      );
+
+      subscription.channel = channel;
+      subscription.consumerTag = consumerTag;
+    } catch (err) {
+      try {
+        await channel.close();
+        // deno-lint-ignore no-empty
+      } catch {}
+
+      throw err;
+    }
+
+    channel.once("close", () => {
+      if (subscription.channel !== channel) {
+        return;
+      }
+
+      subscription.channel = undefined;
+      subscription.consumerTag = undefined;
+
+      if (!this.stopping) {
+        this.logger.warn(
+          `Consumer channel of ${subscription.label} closed, subscribing again`,
+        );
+        this.scheduleResubscribe(subscription);
+      }
+    });
+  }
+
+  private scheduleResubscribe(subscription: Subscription): void {
+    subscription.retry = setTimeout(() => {
+      subscription.retry = undefined;
+      subscription.resubscribing = this.subscribe(subscription)
+        .catch((err: unknown) => {
+          this.logger.error(
+            `Failed to subscribe ${subscription.label} again`,
+            err,
+          );
+
+          if (!this.stopping) {
+            this.scheduleResubscribe(subscription);
+          }
+        })
+        .finally(() => {
+          subscription.resubscribing = undefined;
+        });
+    }, this.options.reconnectDelay ?? DEFAULT_RECONNECT_DELAY);
+  }
+
+  private dispatch(
+    subscription: Subscription,
+    channel: Channel,
+    msg: ConsumeMessage,
+  ): void {
+    const task: Promise<void> = this.handle(subscription, channel, msg)
+      .catch((err: unknown) => {
+        this.logger.error("Unhandled error in AMQP message handler", err);
+      })
+      .finally(() => {
+        this.inFlight.delete(task);
+      });
+
+    this.inFlight.add(task);
   }
 
   private async assertTopology(
@@ -258,76 +369,120 @@ export class AmqpExplorer
   }
 
   private async handle(
+    subscription: Subscription,
     channel: Channel,
-    ctx: InjectorContext,
     msg: ConsumeMessage,
-    binding: AmqpBinding,
-    consumer: Type,
-    controllerGuards: Guard[],
-    methodGuards: Guard[],
   ): Promise<void> {
-    const payload = this.serializer.deserialize(msg.content);
+    const { binding, consumer } = subscription;
+    const ctx = this.ctx!;
     const pattern = msg.fields.routingKey || msg.fields.exchange;
     const contextId = crypto.randomUUID();
     const replyTo: string | undefined = msg.properties.replyTo;
-    const correlationId: string | undefined = msg.properties.correlationId;
 
-    await ctx.runInRequestScopeAsync(contextId, async () => {
-      try {
-        // The DI container resolves the consumer class to its instance shape.
-        const instance = await this.moduleRef.get(consumer, {
-          contextId,
-          strict: false,
-        }) as ConsumerInstance;
+    const outcome = await ctx.runInRequestScopeAsync(
+      contextId,
+      async (): Promise<HandlerOutcome> => {
+        let payload: unknown;
 
-        await this.runGuards(
-          contextId,
-          pattern,
-          payload,
-          consumer,
-          instance[binding.method],
-          controllerGuards,
-          methodGuards,
-        );
+        try {
+          payload = this.serializer.deserialize(msg.content, msg.properties);
 
-        const result = await instance[binding.method](payload, msg.properties);
+          // The DI container resolves the consumer class to its instance shape.
+          const instance = await this.moduleRef.get(consumer, {
+            contextId,
+            strict: false,
+          }) as ConsumerInstance;
 
-        if (binding.type === "rpc" && replyTo) {
-          channel.sendToQueue(replyTo, this.serializer.serialize(result), {
-            correlationId,
-          });
-        }
-
-        channel.ack(msg);
-      } catch (err) {
-        await this.exceptionHandler.handle(
-          err,
-          new AmqpHostArguments(pattern, payload),
-        );
-
-        if (binding.type === "rpc" && replyTo) {
-          channel.sendToQueue(
-            replyTo,
-            this.serializer.serialize({ err: String(err) }),
-            {
-              correlationId,
-            },
+          await this.runGuards(
+            contextId,
+            pattern,
+            payload,
+            subscription,
+            instance[binding.method],
           );
-        }
 
+          return {
+            ok: true,
+            result: await instance[binding.method](payload, msg.properties),
+          };
+        } catch (error) {
+          await this.exceptionHandler.handle(
+            error,
+            new AmqpHostArguments(pattern, payload),
+          );
+
+          return { ok: false, error };
+        } finally {
+          ctx.clearContext(contextId);
+        }
+      },
+    );
+
+    if (binding.type === "rpc" && replyTo) {
+      this.reply(channel, replyTo, msg.properties.correlationId, outcome);
+    }
+
+    try {
+      if (outcome.ok) {
+        channel.ack(msg);
+      } else {
         channel.nack(msg, false, false);
       }
-    });
+    } catch (err) {
+      // The channel closed; the broker redelivers the unsettled message.
+      this.logger.error(
+        `Failed to ${outcome.ok ? "ack" : "nack"} an AMQP message`,
+        err,
+      );
+    }
+  }
+
+  /**
+   * Sends the RPC reply for a handled message: the handler's result, or an
+   * `{ err }` envelope when it threw or its result could not be serialized.
+   * Never throws: a failed reply is logged.
+   *
+   * @param {Channel} channel - The channel the message was consumed on.
+   * @param {string} replyTo - The caller's reply queue.
+   * @param {string | undefined} correlationId - The caller's correlation id.
+   * @param {HandlerOutcome} outcome - The handler result or error.
+   */
+  private reply(
+    channel: Channel,
+    replyTo: string,
+    correlationId: string | undefined,
+    outcome: HandlerOutcome,
+  ): void {
+    let value: unknown = outcome.ok
+      ? outcome.result
+      : { err: String(outcome.error) };
+
+    try {
+      let content: Buffer;
+
+      try {
+        content = this.serializer.serialize(value);
+      } catch (err) {
+        this.logger.error("Failed to serialize the AMQP RPC reply", err);
+        value = { err: `Failed to serialize reply: ${String(err)}` };
+        content = this.serializer.serialize(value);
+      }
+
+      channel.sendToQueue(replyTo, content, {
+        correlationId,
+        contentType: this.serializer.contentType?.(value),
+      });
+    } catch (err) {
+      this.logger.error("Failed to send the AMQP RPC reply", err);
+    }
   }
 
   private async runGuards(
     contextId: string,
     pattern: string,
     payload: unknown,
-    consumer: Type,
+    { consumer, controllerGuards, methodGuards }: Subscription,
     handlerFn: ConsumerInstance[string | symbol],
-    controllerGuards: Guard[],
-    methodGuards: Guard[],
   ): Promise<void> {
     const allGuards = [
       ...(this.options.globalGuards ?? []),
@@ -350,7 +505,10 @@ export class AmqpExplorer
       let allowed: boolean;
 
       if (isClass<CanActivate>(guard)) {
-        const guardInstance = await this.moduleRef.get(guard, { contextId });
+        const guardInstance = await this.moduleRef.get(guard, {
+          contextId,
+          strict: false,
+        });
         allowed = await guardInstance.canActivate(executionCtx);
       } else if (isFunction<CanActivateFn>(guard)) {
         allowed = await guard(executionCtx);
