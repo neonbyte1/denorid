@@ -19,6 +19,12 @@ export const DEFAULT_BACKOFF_SCHEDULE: readonly number[] = [
  */
 const VALID_CRON_NAME = /^[A-Za-z0-9_\- \t\n\f\r]*$/;
 
+/** Most retries `Deno.cron()` accepts in a backoff schedule. */
+const MAX_BACKOFF_COUNT = 5;
+
+/** Longest retry delay (milliseconds) `Deno.cron()` accepts: one hour. */
+const MAX_BACKOFF_MS = 3_600_000;
+
 /**
  * A cron job to register with the scheduling backend of the current runtime.
  */
@@ -75,7 +81,8 @@ export const cronHost: { scope: CronHostScope } = {
  *
  * @param {CronJobSpec} job - The job to register.
  * @return {void}
- * @throws {TypeError} When the name or the schedule is invalid.
+ * @throws {TypeError} When the name, the schedule or the backoff schedule is
+ *         invalid.
  */
 export function registerCronJob(job: CronJobSpec): void {
   const deno = cronHost.scope.Deno;
@@ -91,37 +98,40 @@ export function registerCronJob(job: CronJobSpec): void {
     return;
   }
 
-  // Same validation order as Deno.cron: schedule conversion, name, pattern.
+  // Same validation order as Deno.cron: schedule conversion, name, pattern,
+  // backoff schedule.
   const expression = toCronExpression(job.schedule);
 
   validateCronName(job.name);
+
+  // Without a callback croner only parses the pattern; `schedule()` starts it.
+  const croner = new Croner(expression, {
+    timezone: "UTC",
+    mode: "5-part",
+    alternativeWeekdays: true,
+    sloppyRanges: true,
+  });
+
+  validateBackoffSchedule(job.backoffSchedule);
 
   // Like Deno.cron, a tick that arrives while the previous run (including its
   // backoff retries) is still busy is skipped, not caught up later. croner's
   // own `protect` option would fire the skipped tick up to 30 seconds late.
   let busy = false;
-  const croner = new Croner(
-    expression,
-    {
-      timezone: "UTC",
-      mode: "5-part",
-      alternativeWeekdays: true,
-      sloppyRanges: true,
-    },
-    async () => {
-      if (busy) {
-        return;
-      }
 
-      busy = true;
+  croner.schedule(async () => {
+    if (busy) {
+      return;
+    }
 
-      try {
-        await runWithBackoff(job);
-      } finally {
-        busy = false;
-      }
-    },
-  );
+    busy = true;
+
+    try {
+      await runWithBackoff(job);
+    } finally {
+      busy = false;
+    }
+  });
 
   job.signal.addEventListener("abort", () => croner.stop(), { once: true });
 }
@@ -144,6 +154,25 @@ function validateCronName(name: string): void {
     throw new TypeError(
       "Invalid cron name: only alphanumeric characters, whitespace, hyphens, and underscores are allowed",
     );
+  }
+}
+
+/**
+ * Mirrors the backoff limits of Deno's `ext/cron` (at most 5 delays of at
+ * most one hour each, identical message) so a backoff schedule accepted on
+ * Bun or Node.js is also accepted by `Deno.cron()`.
+ *
+ * @param {number[] | undefined} backoffSchedule - The retry delays to check.
+ * @return {void}
+ * @throws {TypeError} When the schedule exceeds one of the limits.
+ */
+function validateBackoffSchedule(backoffSchedule: number[] | undefined): void {
+  if (
+    backoffSchedule &&
+    (backoffSchedule.length > MAX_BACKOFF_COUNT ||
+      backoffSchedule.some((ms: number): boolean => ms > MAX_BACKOFF_MS))
+  ) {
+    throw new TypeError("Invalid backoff schedule");
   }
 }
 

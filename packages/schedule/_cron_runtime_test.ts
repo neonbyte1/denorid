@@ -442,8 +442,9 @@ describe("registerCronJob", () => {
       }
     });
 
-    it("reports errors in Deno.cron's order: schedule object, name, pattern", () => {
+    it("reports errors in Deno.cron's order: schedule object, name, pattern, backoff", () => {
       using runtime = simulateRuntime({});
+      const backoffSchedule = [3_600_001];
 
       assertThrows(
         () =>
@@ -458,6 +459,53 @@ describe("registerCronJob", () => {
         TypeError,
         INVALID_NAME,
       );
+      assertThrows(
+        () =>
+          registerCronJob(
+            runtime.job({
+              name: "a.b",
+              schedule: "* * * * *",
+              backoffSchedule,
+            }),
+          ),
+        TypeError,
+        INVALID_NAME,
+      );
+      assertThrows(
+        () =>
+          registerCronJob(runtime.job({ schedule: "nope", backoffSchedule })),
+        TypeError,
+        "CronPattern",
+      );
+    });
+  });
+
+  describe("backoff schedule validation without Deno.cron", () => {
+    it("schedules up to 5 delays of at most one hour like Deno.cron", async () => {
+      using runtime = simulateRuntime({});
+
+      registerCronJob(runtime.job({ backoffSchedule: [1, 2, 3, 4, 5] }));
+      registerCronJob(runtime.job({ backoffSchedule: [3_600_000, 0] }));
+      await runtime.advance(MINUTE);
+
+      assertEquals(runtime.runs.length, 2);
+    });
+
+    it("rejects more than 5 delays or a delay over one hour like Deno.cron", async () => {
+      using runtime = simulateRuntime({});
+      const schedules = [[1, 2, 3, 4, 5, 6], [3_600_001], [100, Infinity]];
+
+      for (const backoffSchedule of schedules) {
+        assertThrows(
+          () => registerCronJob(runtime.job({ backoffSchedule })),
+          TypeError,
+          "Invalid backoff schedule",
+        );
+      }
+
+      await runtime.advance(MINUTE);
+
+      assertEquals(runtime.runs, []);
     });
   });
 });

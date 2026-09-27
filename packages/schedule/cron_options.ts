@@ -13,7 +13,9 @@ export interface CronOptions {
   /**
    * Retry delays (milliseconds) applied when the handler throws or rejects:
    * a failed run is retried after each delay in order until it succeeds or
-   * the delays are exhausted.
+   * the delays are exhausted. At most 5 delays of at most 3,600,000 ms (one
+   * hour) each (the `Deno.cron()` limits, enforced on every runtime);
+   * registration throws `TypeError("Invalid backoff schedule")` otherwise.
    * Forwarded to `Deno.cron()` when available and emulated otherwise.
    * Defaults to `Deno.cron()`'s `[100, 1000, 5000, 30000, 60000]`; pass `[]`
    * to disable retries.
