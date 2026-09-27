@@ -21,6 +21,47 @@ describe("ParseFloatPipe", () => {
     it("parses zero as string", () => {
       assertEquals(new ParseFloatPipe().transform("0.0"), 0);
     });
+
+    for (
+      const [input, expected] of [
+        [".5", 0.5],
+        ["5.", 5],
+        ["1e3", 1000],
+        ["-2.5E-1", -0.25],
+      ] as const
+    ) {
+      it(`parses the decimal notation "${input}"`, () => {
+        assertEquals(new ParseFloatPipe().transform(input), expected);
+      });
+    }
+  });
+
+  describe("transform: strings that are not a complete decimal number", () => {
+    for (
+      const input of [
+        "12abc",
+        "1e5foo",
+        "3.14.15",
+        "0x10",
+        "1,5",
+        "",
+        " 1",
+        "1 ",
+        "-",
+        ".",
+        "e5",
+        "Infinity",
+        "1e400",
+      ]
+    ) {
+      it(`rejects "${input}"`, () => {
+        assertThrows(
+          () => new ParseFloatPipe().transform(input),
+          BadRequestException,
+          "Validation failed (numeric string is expected).",
+        );
+      });
+    }
   });
 
   describe("transform: numeric values", () => {

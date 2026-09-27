@@ -2,19 +2,29 @@ import { isNil } from "../type_guards.ts";
 import { BaseParsePipe } from "./base.ts";
 
 /**
+ * Matches a complete decimal number: optional minus, digits with an optional
+ * fraction (`1`, `1.5`, `.5`, `5.`) and an optional exponent (`1e3`).
+ */
+const DECIMAL_PATTERN = /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+/**
  * Pipe that coerces a route argument to a floating-point `number`.
  *
- * String values are parsed with `parseFloat`. `NaN` and non-finite results
- * are treated as invalid and trigger the exception factory.
+ * Strings must be a complete decimal number (`"3.14"`, `"-1"`, `".5"`,
+ * `"1e3"`). Anything else is rejected, including trailing garbage
+ * (`"12abc"`), decimal commas (`"1,5"`), hex (`"0x10"`), surrounding
+ * whitespace and empty strings. Non-finite results (`NaN`, `"1e400"`) are
+ * rejected too.
  * When `options.optional` is `true`, `null` and `undefined` are passed
  * through unchanged.
  *
  * @example
  * ```ts
  * const pipe = new ParseFloatPipe();
- * pipe.transform("3.14"); // 3.14
- * pipe.transform(42);     // 42
- * pipe.transform("abc");  // throws BadRequestException
+ * pipe.transform("3.14");  // 3.14
+ * pipe.transform(42);      // 42
+ * pipe.transform("abc");   // throws BadRequestException
+ * pipe.transform("12abc"); // throws BadRequestException
  * ```
  */
 export class ParseFloatPipe extends BaseParsePipe<
@@ -46,7 +56,8 @@ export class ParseFloatPipe extends BaseParsePipe<
 
   /**
    * Converts the raw value to a `number`, returning `undefined` for any
-   * value that is nil, `NaN`, or non-finite.
+   * value that is nil, not a complete decimal number string, `NaN`, or
+   * non-finite.
    *
    * @param {string | number | null | undefined} value The raw value to convert.
    * @returns {number | undefined} The numeric value, or `undefined` on failure.
@@ -54,14 +65,16 @@ export class ParseFloatPipe extends BaseParsePipe<
   protected extractNumericValue(
     value: string | number | null | undefined,
   ): number | undefined {
-    if (isNil(value)) {
-      return undefined;
-    }
-
     if (typeof value === "string") {
-      value = parseFloat(value);
+      if (!DECIMAL_PATTERN.test(value)) {
+        return undefined;
+      }
+
+      value = Number(value);
     }
 
-    return !isNaN(value) && isFinite(value) ? value : undefined;
+    return typeof value === "number" && Number.isFinite(value)
+      ? value
+      : undefined;
   }
 }
