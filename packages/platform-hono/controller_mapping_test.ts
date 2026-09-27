@@ -5,6 +5,7 @@ import type {
   ExceptionHandler,
   HttpController,
   HttpRouteFn,
+  RequestContext,
   RequestMappingMetadata,
 } from "@denorid/core";
 import {
@@ -342,6 +343,41 @@ describe(HonoControllerMapping.name, () => {
 
       assertEquals(await response.text(), "203.0.113.9");
     });
+
+    it("resolves the registered controller routes, without CORS preflights", async () => {
+      class ItemController {}
+      setControllerMetadata(ItemController, { path: "items" }, [
+        { name: "list", method: HttpMethod.GET },
+        { name: "size", method: HttpMethod.HEAD },
+        { name: "create", method: HttpMethod.POST, path: ["a", "b"] },
+      ]);
+
+      const { injectorCtx } = makeInjectorContext({
+        instances: new Map([[ItemController, {}]]),
+      });
+      const mapping = new HonoControllerMapping(new Hono(), {
+        ctx: injectorCtx,
+        exceptionHandler: makeExceptionHandler().exHandler,
+        globalGuards: [],
+        cors: true,
+      });
+
+      const routes = await mapping.register("/api");
+
+      assertEquals(
+        routes.map(({ method, path, controller }) => [
+          method,
+          path,
+          controller,
+        ]),
+        [
+          [HttpMethod.GET, "/api/items", ItemController],
+          [HttpMethod.HEAD, "/api/items", ItemController],
+          [HttpMethod.POST, "/api/items/a", ItemController],
+          [HttpMethod.POST, "/api/items/b", ItemController],
+        ],
+      );
+    });
   });
 
   describe("registerRoute()", () => {
@@ -658,6 +694,76 @@ describe(HonoControllerMapping.name, () => {
       await capturedRoutes[0].handler(ctx);
 
       assertEquals(capturedDto, { value: 42 });
+    });
+
+    /** Reads a validated input of the Hono request, as `c.req.valid()` does. */
+    function honoValid(ctx: RequestContext, target: string): unknown {
+      return ctx.getUnderlying<{ valid(target: string): unknown }>().valid(
+        target,
+      );
+    }
+
+    async function fetchJson(
+      app: Hono,
+      path: string,
+    ): Promise<[number, unknown]> {
+      const response = await app.request(path);
+
+      return [response.status, await response.json()];
+    }
+
+    it("validates the query string of @Query() routes", async () => {
+      const ListQuery = z.object({
+        limit: z.coerce.number().int().max(100).default(20),
+        tags: z.array(z.string()).optional(),
+      });
+      const list = spy((ctx: RequestContext) => ({
+        validated: ctx.validated(ListQuery),
+        valid: honoValid(ctx, "query"),
+      }));
+      const app = await registerOnHono({
+        route: { name: "list", query: ListQuery },
+        controller: { list },
+      });
+
+      assertEquals(await fetchJson(app, "/test?limit=5&tags=a"), [200, {
+        validated: { limit: 5, tags: ["a"] },
+        valid: { limit: 5, tags: ["a"] },
+      }]);
+      assertEquals(await fetchJson(app, "/test?tags=a&tags=b"), [200, {
+        validated: { limit: 20, tags: ["a", "b"] },
+        valid: { limit: 20, tags: ["a", "b"] },
+      }]);
+
+      const [tooBig, tooBigBody] = await fetchJson(app, "/test?limit=500");
+      const [repeated] = await fetchJson(app, "/test?limit=1&limit=2");
+
+      assertEquals(tooBig, StatusCode.BadRequest);
+      assertMatch(JSON.stringify(tooBigBody), /"limit: Too big/);
+      assertEquals(repeated, StatusCode.BadRequest);
+      assertSpyCalls(list, 2);
+    });
+
+    it("validates the path parameters of @Params() routes", async () => {
+      const ItemParams = z.object({ id: z.uuid() });
+      const get = spy((ctx: RequestContext) => ({
+        validated: ctx.validated(ItemParams),
+        valid: honoValid(ctx, "param"),
+      }));
+      const app = await registerOnHono({
+        route: { name: "get", path: ":id", params: ItemParams },
+        controller: { get },
+      });
+      const id = crypto.randomUUID();
+
+      const [invalid] = await fetchJson(app, "/test/not-a-uuid");
+
+      assertEquals(invalid, StatusCode.BadRequest);
+      assertSpyCalls(get, 0);
+      assertEquals(await fetchJson(app, `/test/${id}`), [200, {
+        validated: { id },
+        valid: { id },
+      }]);
     });
   });
 

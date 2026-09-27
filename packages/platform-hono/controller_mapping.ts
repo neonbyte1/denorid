@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   type CanActivate,
   type CanActivateFn,
   ControllerMapping,
@@ -10,11 +9,11 @@ import {
   type HttpController,
   HttpException,
   HttpMethod,
+  type HttpRoute,
   InternalServerErrorException,
   type RequestMappingMetadata,
   StatusCode,
   UnprocessableContentException,
-  ZodValidationException,
 } from "@denorid/core";
 import type { Type } from "@denorid/injector";
 import type { Context, Hono, MiddlewareHandler } from "@hono/hono";
@@ -132,11 +131,15 @@ export class HonoControllerMapping extends ControllerMapping {
    *
    * @param {string} [basePath] - Optional path prefix applied to every
    * controller; never served from the static files root.
-   * @return {Promise<void>} Resolves when all routes have been registered.
+   * @return {Promise<readonly HttpRoute[]>} The registered controller routes
+   *   (see {@linkcode ControllerMapping.register}); the static files handler
+   *   is no route.
    * @throws {Error} When the static files root or fallback does not exist.
    */
-  public override async register(basePath?: string): Promise<void> {
-    await super.register(basePath);
+  public override async register(
+    basePath?: string,
+  ): Promise<readonly HttpRoute[]> {
+    const registered = await super.register(basePath);
 
     const routes = this.routes.splice(0);
 
@@ -163,6 +166,8 @@ export class HonoControllerMapping extends ControllerMapping {
         `Mapped {/*, GET} to static files in ${staticFiles.root}`,
       );
     }
+
+    return registered;
   }
 
   /**
@@ -242,8 +247,9 @@ export class HonoControllerMapping extends ControllerMapping {
   }
 
   /**
-   * Runs a request through guards, body validation and the controller
-   * method, inside a request scope with a fresh DI context id.
+   * Runs a request through guards, input validation and the controller
+   * method, inside a request scope with a fresh DI context id. The validated
+   * inputs are also added to the Hono request, for `c.req.valid()`.
    *
    * @param {Context} c - The Hono context of the request.
    * @param {Type<HttpController>} controllerClass - The controller class owning the route.
@@ -266,7 +272,7 @@ export class HonoControllerMapping extends ControllerMapping {
         const context = new HonoRequestContext<unknown>(
           c,
           contextId,
-          null,
+          undefined,
           this.resolveIp,
         );
         const hostArguments = new HonoHostArguments(c, context);
@@ -287,7 +293,12 @@ export class HonoControllerMapping extends ControllerMapping {
             throw new ForbiddenException();
           }
 
-          context.dto = await this.validateRequest(c, route);
+          await this.validateRequest(
+            context,
+            route,
+            (type) => type === "json" ? c.req.json() : c.req.parseBody(),
+          );
+          this.addValidatedData(c, context, route);
 
           const res = await controller[route.name](context);
 
@@ -304,32 +315,40 @@ export class HonoControllerMapping extends ControllerMapping {
     );
   }
 
-  private async validateRequest(
+  /**
+   * Adds the validated inputs of a request to the Hono request: the body as
+   * `json` or `form`, the query string as `query` and the path parameters as
+   * `param`.
+   *
+   * @param {Context} c - The Hono context of the request.
+   * @param {HonoRequestContext<unknown>} context - The validated request context.
+   * @param {RequestMappingMetadata} route - The route.
+   */
+  private addValidatedData(
     c: Context,
+    context: HonoRequestContext<unknown>,
     route: RequestMappingMetadata,
-  ): Promise<unknown> {
-    if (!route.validation) {
-      return undefined;
+  ): void {
+    if (route.validation !== undefined) {
+      c.req.addValidatedData(
+        route.validation.type,
+        context.dto as Record<string, unknown>,
+      );
     }
 
-    const { type, dto } = route.validation;
-    let raw: unknown;
-
-    try {
-      raw = type === "json" ? await c.req.json() : await c.req.parseBody();
-    } catch {
-      throw new BadRequestException("Malformed request body");
+    if (route.query !== undefined) {
+      c.req.addValidatedData(
+        "query",
+        context.validated(route.query) as Record<string, unknown>,
+      );
     }
 
-    const result = dto.safeParse(raw);
-
-    if (!result.success) {
-      throw new ZodValidationException(result.error);
+    if (route.params !== undefined) {
+      c.req.addValidatedData(
+        "param",
+        context.validated(route.params) as Record<string, unknown>,
+      );
     }
-
-    c.req.addValidatedData(type, result.data as Record<string, unknown>);
-
-    return result.data;
   }
 
   /**

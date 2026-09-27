@@ -70,6 +70,10 @@ await app.listen();
   `HttpException`).
 - Every request gets its own DI context id (`RequestContext.contextId`, a random
   UUID); an `x-request-id` header is not used for it.
+- Inputs declared with `@Body()`, `@Form()`, `@Query()` and `@Params()` are
+  validated after the guards (see `@denorid/core`) and read with
+  `ctx.validated(schema)`. They are also added to the Hono request, so
+  `c.req.valid("json" | "form" | "query" | "param")` returns them.
 
 ## Static files
 
