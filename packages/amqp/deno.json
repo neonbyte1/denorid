@@ -1,12 +1,12 @@
 {
   "name": "@denorid/amqp",
   "license": "MIT",
-  "version": "1.0.0-beta1",
+  "version": "1.0.0-beta2",
   "exports": "./mod.ts",
   "imports": {
-    "@denorid/core": "jsr:@denorid/core@^1.0.0-beta2",
-    "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta1",
-    "@denorid/logger": "jsr:@denorid/logger@^1.0.0-beta1",
+    "@denorid/core": "jsr:@denorid/core@^1.0.0-beta3",
+    "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta2",
+    "@denorid/logger": "jsr:@denorid/logger@^1.0.0-beta2",
     "amqplib": "npm:amqplib@^2.0.1"
   }
 }
