@@ -1,8 +1,5 @@
-import {
-  Inject,
-  Injectable,
-  type OnBeforeApplicationShutdown,
-} from "@denorid/injector";
+import { Inject, Injectable } from "@denorid/injector";
+import { Logger } from "@denorid/logger";
 import amqplib, { type Channel, type ChannelModel } from "amqplib";
 import {
   AMQP_MODULE_OPTIONS,
@@ -20,11 +17,23 @@ const DEFAULT_SERIALIZER: AmqpSerializer = new JsonAmqpSerializer();
  * channels from.
  *
  * Connecting is lazy and idempotent: concurrent {@link connect} calls share one
- * in-flight `amqplib.connect`. Closing the underlying `ChannelModel` cascades,
- * tearing down every channel created from it.
+ * in-flight `amqplib.connect`. Connection and channel `error` events are
+ * logged instead of crashing the process, and a connection that closes (for
+ * example because the broker went away) is dropped, so the next
+ * {@link connect} or {@link createChannel} opens a fresh one. Closing the
+ * underlying `ChannelModel` cascades, tearing down every channel created from
+ * it.
+ *
+ * Under DI the connection is closed when the container disposes it, after
+ * every shutdown hook ran, so other providers can still publish from their own
+ * hooks.
  */
 @Injectable()
-export class AmqpConnection implements OnBeforeApplicationShutdown {
+export class AmqpConnection implements AsyncDisposable {
+  private readonly logger = new Logger(AmqpConnection.name, {
+    timestamp: true,
+  });
+
   @Inject(AMQP_MODULE_OPTIONS)
   private readonly options!: AmqpModuleOptions;
 
@@ -33,6 +42,9 @@ export class AmqpConnection implements OnBeforeApplicationShutdown {
 
   private model?: ChannelModel;
   private connecting?: Promise<ChannelModel>;
+
+  /** Bumped by {@link close} so a connect still in flight knows it is stale. */
+  private generation = 0;
 
   /**
    * The serializer shared by every client and the explorer. Resolves to the
@@ -46,61 +58,108 @@ export class AmqpConnection implements OnBeforeApplicationShutdown {
   }
 
   /**
-   * Returns the shared broker connection, establishing it on first use.
+   * Returns the shared broker connection, establishing it on first use and
+   * again after the previous connection closed.
    *
    * @return {Promise<ChannelModel>} The live channel model.
+   * @throws {Error} When connecting fails, or when {@link close} is called
+   *   before the connection was established.
    */
-  public async connect(): Promise<ChannelModel> {
+  public connect(): Promise<ChannelModel> {
     if (this.model) {
-      return this.model;
+      return Promise.resolve(this.model);
     }
 
-    if (this.connecting) {
-      return this.connecting;
-    }
+    this.connecting ??= this.open();
 
-    this.connecting = amqplib.connect(this.options.url ?? DEFAULT_AMQP_URL);
-
-    try {
-      this.model = await this.connecting;
-
-      return this.model;
-    } finally {
-      this.connecting = undefined;
-    }
+    return this.connecting;
   }
 
   /**
-   * Opens a new channel on the shared connection.
+   * Opens a new channel on the shared connection. Channel `error` events are
+   * logged; callers that cache the channel should drop it on its `close`
+   * event.
    *
    * @return {Promise<Channel>} The created channel.
    */
   public async createChannel(): Promise<Channel> {
     const model = await this.connect();
+    const channel = await model.createChannel();
 
-    return model.createChannel();
+    channel.on("error", (err: Error) => {
+      this.logger.error("AMQP channel error", err);
+    });
+
+    return channel;
   }
 
   /**
-   * Closes the shared connection, swallowing any close error. Idempotent: a
-   * second call with no live connection is a no-op.
+   * Closes the shared connection, swallowing any close error. A connect still
+   * in flight is closed as soon as it completes (its callers reject), so no
+   * connection outlives this call. Idempotent: a second call with no live
+   * connection is a no-op.
    *
    * @return {Promise<void>}
    */
   public async close(): Promise<void> {
+    const model = this.model;
+    const connecting = this.connecting;
+
+    this.generation++;
+    this.model = undefined;
+    this.connecting = undefined;
+
     try {
-      await this.model?.close();
+      await model?.close();
       // deno-lint-ignore no-empty
     } catch {}
 
-    this.model = undefined;
-    this.connecting = undefined;
+    // The stale connect closes whatever it opened before rejecting.
+    await connecting?.catch(() => {});
   }
 
   /**
-   * @inheritdoc
+   * Closes the connection when the DI container (or an `await using` block)
+   * disposes it.
+   *
+   * @return {Promise<void>}
    */
-  public onBeforeApplicationShutdown(): Promise<void> {
+  public [Symbol.asyncDispose](): Promise<void> {
     return this.close();
+  }
+
+  private async open(): Promise<ChannelModel> {
+    const generation = this.generation;
+
+    try {
+      const model = await amqplib.connect(this.options.url ?? DEFAULT_AMQP_URL);
+
+      model.on("error", (err: Error) => {
+        this.logger.error("AMQP connection error", err);
+      });
+
+      if (generation !== this.generation) {
+        try {
+          await model.close();
+          // deno-lint-ignore no-empty
+        } catch {}
+
+        throw new Error("AMQP connection closed while connecting");
+      }
+
+      model.once("close", () => {
+        if (this.model === model) {
+          this.model = undefined;
+        }
+      });
+
+      this.model = model;
+
+      return model;
+    } finally {
+      if (generation === this.generation) {
+        this.connecting = undefined;
+      }
+    }
   }
 }
