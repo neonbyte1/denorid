@@ -7,8 +7,10 @@ import {
 import { Logger } from "@denorid/logger";
 import {
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
   assertThrows,
 } from "@std/assert";
 import { assertSpyCalls, spy, stub } from "@std/testing/mock";
@@ -24,6 +26,7 @@ import type { CorsOptions } from "./http/cors.ts";
 import { HttpApplication } from "./http_application.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
 import { FakeWebSocketAdapter } from "./websockets/_test_utils.ts";
+import { WebSocketGateway } from "./websockets/gateway.ts";
 
 class RootModule {}
 
@@ -36,8 +39,7 @@ function makeInjectorContext(): InjectorContext {
     resolve: () => Promise.resolve(undefined),
     resolveInternal: () => Promise.resolve(new ExceptionHandler(ctx)),
     onApplicationBootstrap: () => Promise.resolve(),
-    onBeforeApplicationShutdown: () => Promise.resolve(),
-    onApplicationShutdown: () => Promise.resolve(),
+    close: () => Promise.resolve(),
   } as unknown as InjectorContext;
 
   return ctx;
@@ -111,14 +113,6 @@ function makeMockServer(): {
 
 describe("HttpApplication", () => {
   describe("init", () => {
-    it("sets initialized to true on first call", async () => {
-      const app = makeApp();
-
-      await app.init();
-
-      assertEquals(app["initialized"], true);
-    });
-
     it("is idempotent - second call skips all work", async () => {
       const adapter = makeHttpAdapter();
       const createMappingSpy = spy(adapter, "createControllerMapping");
@@ -128,13 +122,6 @@ describe("HttpApplication", () => {
       await app.init();
 
       assertSpyCalls(createMappingSpy, 1);
-    });
-
-    it("skips metadata push when metaType has no @Module decorator", async () => {
-      const app = makeApp();
-      await app.init();
-
-      assertEquals(app["initialized"], true);
     });
 
     it("passes the cors option to the controller mapping", async () => {
@@ -215,6 +202,42 @@ describe("HttpApplication", () => {
 
       assertEquals(results, [true, "filtered"]);
     });
+
+    it("closes the gateways of a failed initialization before connecting them again", async () => {
+      @WebSocketGateway({ path: "/chat" })
+      class ChatGateway {}
+
+      @Module({ providers: [ChatGateway] })
+      class ChatModule {}
+
+      using _log = stub(Logger.prototype, "log");
+      const ctx = await InjectorContextImpl.create(ChatModule, {
+        beforeInit: (ctx: InjectorContext): void => {
+          ctx.registerGlobal({
+            provide: ExceptionHandler,
+            useValue: new ExceptionHandler(ctx),
+          });
+        },
+      });
+      let failures = 1;
+      const adapter = makeHttpAdapter({
+        register: (): Promise<void> =>
+          failures-- > 0
+            ? Promise.reject(new Error("routes failed"))
+            : Promise.resolve(),
+      } as unknown as ControllerMapping);
+      const webSockets = new FakeWebSocketAdapter();
+      const app = new HttpApplication(ChatModule, ctx, { adapter })
+        .useWebSocketAdapter(webSockets);
+
+      await assertRejects(() => app.init(), Error, "routes failed");
+      assertEquals(webSockets.closed, []);
+
+      await app.init();
+
+      assertEquals(webSockets.closed, [webSockets.servers.get("/chat")]);
+      await app.close();
+    });
   });
 
   describe("close", () => {
@@ -229,29 +252,78 @@ describe("HttpApplication", () => {
       assertSpyCalls(closeSpy, 1);
     });
 
-    it("calls ctx shutdown hooks when initialized", async () => {
+    it("closes the injector context", async () => {
       const ctx = makeInjectorContext();
-      const shutdownSpy = spy(ctx, "onApplicationShutdown");
-      const app = new HttpApplication(
-        RootModule as Type,
-        ctx,
-        { adapter: makeHttpAdapter() },
-      );
+      const closeSpy = spy(ctx, "close");
+      const app = makeApp({ ctx });
 
       await app.init();
       await app.close();
 
-      assertSpyCalls(shutdownSpy, 1);
+      assertSpyCalls(closeSpy, 1);
     });
 
-    it("is a no-op when not initialized", async () => {
+    it("closes the injector context but not the adapter when never initialized", async () => {
+      const ctx = makeInjectorContext();
       const adapter = makeHttpAdapter();
-      const closeSpy = spy(adapter, "close");
-      const app = makeApp({ adapter });
+      const ctxCloseSpy = spy(ctx, "close");
+      const adapterCloseSpy = spy(adapter, "close");
 
+      await makeApp({ adapter, ctx }).close();
+
+      assertSpyCalls(ctxCloseSpy, 1);
+      assertSpyCalls(adapterCloseSpy, 0);
+    });
+
+    it("closes the injector context when closing the adapter fails", async () => {
+      const ctx = makeInjectorContext();
+      const adapter = makeHttpAdapter();
+      const closeSpy = spy(ctx, "close");
+      using _adapterClose = stub(
+        adapter,
+        "close",
+        () => Promise.reject(new Error("adapter close failed")),
+      );
+      const app = makeApp({ adapter, ctx });
+
+      await app.init();
+      await assertRejects(() => app.close(), Error, "adapter close failed");
+
+      assertSpyCalls(closeSpy, 1);
+    });
+
+    it("shuts down once for concurrent and repeated calls", async () => {
+      const ctx = makeInjectorContext();
+      const adapter = makeHttpAdapter();
+      const ctxCloseSpy = spy(ctx, "close");
+      const adapterCloseSpy = spy(adapter, "close");
+      const app = makeApp({ adapter, ctx });
+
+      await app.init();
+      await Promise.all([app.close(), app[Symbol.asyncDispose]()]);
       await app.close();
 
-      assertSpyCalls(closeSpy, 0);
+      assertSpyCalls(ctxCloseSpy, 1);
+      assertSpyCalls(adapterCloseSpy, 1);
+    });
+
+    it("does not start the server when closed while initializing", async () => {
+      const adapter = makeHttpAdapter();
+      const { promise: mapped, resolve: map } = Promise.withResolvers<
+        ControllerMapping
+      >();
+      using listenSpy = spy(adapter, "listen");
+      using _mapping = stub(adapter, "createControllerMapping", () => mapped);
+      const app = makeApp({ adapter });
+
+      app.listen();
+      const closed = app.close();
+      map(makeControllerMapping());
+      await closed;
+      await app.init();
+      app.listen();
+
+      assertSpyCalls(listenSpy, 0);
     });
 
     it("closes the HTTP adapter when init failed", async () => {
@@ -303,58 +375,66 @@ describe("HttpApplication", () => {
   });
 
   describe("listen", () => {
-    it("sets listening to pending then active and calls adapter.listen after init", async () => {
+    it("starts the server on the configured port once the routes are registered", async () => {
+      const events: string[] = [];
+      const adapter = makeHttpAdapter({
+        register: (): Promise<void> => {
+          events.push("routes");
+          return Promise.resolve();
+        },
+      } as unknown as ControllerMapping);
+      using _listen = stub(adapter, "listen", (port?: number): void => {
+        events.push(`listen ${port}`);
+      });
+      const app = new HttpApplication(RootModule, makeInjectorContext(), {
+        adapter,
+        port: 8080,
+      });
+
+      const initialized = app.init();
+      app.listen();
+      assertEquals(events, []);
+
+      await initialized;
+
+      assertEquals(events, ["routes", "listen 8080"]);
+    });
+
+    it("starts the server once for repeated calls, also after init() was awaited", async () => {
       const adapter = makeHttpAdapter();
-      const listenSpy = spy(adapter, "listen");
+      using listenSpy = spy(adapter, "listen");
       const app = makeApp({ adapter });
 
-      using _s = stub(app, "init", () => Promise.resolve());
-
+      await app.init();
       app.listen();
-      assertEquals(app["listening"], "pending");
+      app.listen();
+      await app.init();
+      app.listen();
+      await app.init();
 
-      await new Promise<void>((r) => setTimeout(r, 0));
-
-      assertEquals(app["listening"], "active");
       assertSpyCalls(listenSpy, 1);
     });
 
-    it("does not call adapter.listen when already active before init resolves", async () => {
+    it("does not start the server when init fails and starts over on the next call", async () => {
       const adapter = makeHttpAdapter();
-      const listenSpy = spy(adapter, "listen");
+      using listenSpy = spy(adapter, "listen");
+      let failures = 1;
+      using _mapping = stub(
+        adapter,
+        "createControllerMapping",
+        () =>
+          failures-- > 0
+            ? Promise.reject(new Error("mapping failed"))
+            : Promise.resolve(makeControllerMapping()),
+      );
       const app = makeApp({ adapter });
 
-      app["listening"] = "active";
-
-      using _s = stub(app, "init", () => Promise.resolve());
-
       app.listen();
-
-      await new Promise<void>((r) => setTimeout(r, 0));
-
+      await assertRejects(() => app["listening"]!, Error, "mapping failed");
       assertSpyCalls(listenSpy, 0);
-    });
 
-    it("calls adapter.listen directly when initialized and not yet listening", async () => {
-      const adapter = makeHttpAdapter();
-      const listenSpy = spy(adapter, "listen");
-      const app = makeApp({ adapter });
-
+      app.listen();
       await app.init();
-      app.listen();
-
-      assertEquals(app["listening"], "active");
-      assertSpyCalls(listenSpy, 1);
-    });
-
-    it("is a no-op when initialized and already listening", async () => {
-      const adapter = makeHttpAdapter();
-      const listenSpy = spy(adapter, "listen");
-      const app = makeApp({ adapter });
-
-      await app.init();
-      app.listen();
-      app.listen();
 
       assertSpyCalls(listenSpy, 1);
     });
@@ -401,14 +481,25 @@ describe("HttpApplication", () => {
       assertSpyCalls(initSpy, 0);
     });
 
-    it("initializes the app before starting microservices", async () => {
-      const app = makeApp();
-      const { server } = makeMockServer();
+    it("hands the exception handler to microservices only after the initialization completed", async () => {
+      const events: string[] = [];
+      const ctx = makeInjectorContext();
+      const app = makeApp({ ctx });
+      const { server, calls } = makeMockServer();
+      using _bootstrap = stub(ctx, "onApplicationBootstrap", () => {
+        events.push("bootstrap");
+        return Promise.resolve();
+      });
+      using _handlers = stub(server, "registerHandlers", () => {
+        events.push("registerHandlers");
+      });
       app.connectMicroservice(server);
 
+      app.listen();
       await app.startAllMicroservices();
 
-      assertEquals(app["initialized"], true);
+      assertInstanceOf(calls.setExceptionHandler[0], ExceptionHandler);
+      assertEquals(events, ["bootstrap", "registerHandlers"]);
     });
 
     it("calls server lifecycle methods in order", async () => {
@@ -462,11 +553,11 @@ describe("HttpApplication", () => {
       assertStrictEquals(guards[0], guardFn);
     });
 
-    it("rolls back started servers on failure", async () => {
+    it("closes the failing server and the servers started before it", async () => {
       const app = makeApp();
       const { server: server1, calls: calls1 } = makeMockServer();
-      const { server: failingServer } = makeMockServer();
-      (failingServer as { listen: () => Promise<void> }).listen = () =>
+      const { server: failingServer, calls: failingCalls } = makeMockServer();
+      failingServer.listen = (): Promise<void> =>
         Promise.reject(new Error("Connection refused"));
 
       app.connectMicroservice(server1).connectMicroservice(failingServer);
@@ -477,6 +568,91 @@ describe("HttpApplication", () => {
         "Connection refused",
       );
       assertEquals(calls1.close.length, 1);
+      assertEquals(failingCalls.close.length, 1);
+    });
+
+    it("logs and closes a server that fails after it started", async () => {
+      const app = makeApp();
+      using errorStub = stub(app["logger"], "error");
+      const { server: tcp, calls: tcpCalls } = makeMockServer();
+      const { server: rmq, calls: rmqCalls } = makeMockServer();
+      const tcpListening = Promise.withResolvers<void>();
+      const rmqListening = Promise.withResolvers<void>();
+      const error = new Error("EADDRINUSE");
+
+      tcp.listen = (): Promise<void> => tcpListening.promise;
+      rmq.listen = (): Promise<void> => rmqListening.promise;
+      app.connectMicroservice(tcp).connectMicroservice(rmq);
+
+      await app.startAllMicroservices();
+      tcpListening.reject(error);
+      rmqListening.reject("connection refused");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      assertSpyCalls(errorStub, 2);
+      assertStringIncludes(
+        errorStub.calls[0].args[0] as string,
+        "stopped: EADDRINUSE",
+      );
+      assertStrictEquals(errorStub.calls[0].args[1], error.stack);
+      assertStringIncludes(
+        errorStub.calls[1].args[0] as string,
+        "stopped: connection refused",
+      );
+      assertEquals(tcpCalls.close.length, 1);
+      assertEquals(rmqCalls.close.length, 1);
+    });
+
+    it("neither logs nor closes again a server that fails while the application closes", async () => {
+      const app = makeApp();
+      using errorStub = stub(app["logger"], "error");
+      const { server, calls } = makeMockServer();
+      const listening = Promise.withResolvers<void>();
+
+      server.listen = (): Promise<void> => listening.promise;
+      server.close = (): Promise<void> => {
+        calls.close.push(true);
+        listening.reject(new Error("socket closed"));
+        return Promise.resolve();
+      };
+      app.connectMicroservice(server);
+
+      await app.startAllMicroservices();
+      await app.close();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      assertSpyCalls(errorStub, 0);
+      assertEquals(calls.close.length, 1);
+    });
+
+    it("starts no microservice once the application was closed", async () => {
+      const app = makeApp();
+      const { server, calls } = makeMockServer();
+      app.connectMicroservice(server);
+
+      await app.close();
+      await app.startAllMicroservices();
+
+      assertEquals(calls.listen.length, 0);
+    });
+
+    it("starts no microservice when closed while initializing", async () => {
+      const adapter = makeHttpAdapter();
+      const { promise: mapped, resolve: map } = Promise.withResolvers<
+        ControllerMapping
+      >();
+      using _mapping = stub(adapter, "createControllerMapping", () => mapped);
+      const app = makeApp({ adapter });
+      const { server, calls } = makeMockServer();
+      app.connectMicroservice(server);
+
+      const started = app.startAllMicroservices();
+      const closed = app.close();
+      map(makeControllerMapping());
+      await Promise.all([started, closed]);
+
+      assertEquals(calls.setExceptionHandler.length, 0);
+      assertEquals(calls.listen.length, 0);
     });
   });
 

@@ -5,8 +5,18 @@ import type { MicroserviceApplicationContext } from "./application_context.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
 
+/**
+ * Application that serves a single {@link MicroserviceServer}. Created by
+ * `DenoridFactory.create(module, server)`.
+ */
 export class MicroserviceApplication extends Application
   implements MicroserviceApplicationContext {
+  /**
+   * @param {Type} metaType - The root module class used to derive the logger name.
+   * @param {InjectorContext} ctx - The injector context for resolving providers.
+   * @param {ApplicationOptions} options - Options to configure the application.
+   * @param {MicroserviceServer} server - The server transport to start.
+   */
   public constructor(
     metaType: Type,
     ctx: InjectorContext,
@@ -18,36 +28,86 @@ export class MicroserviceApplication extends Application
 
   private readonly globalGuards: Set<CanActivate | CanActivateFn> = new Set();
 
+  /**
+   * Settles with the running {@link listen}. Cleared when it rejects, so a
+   * later call starts the server again.
+   */
+  private listening?: Promise<void>;
+
+  /**
+   * @inheritdoc
+   */
   public useGlobalGuards(...guards: (CanActivate | CanActivateFn)[]): void {
     for (const guard of guards) {
       this.globalGuards.add(guard);
     }
   }
 
-  public async listen(): Promise<void> {
-    if (this.initialized) {
+  /**
+   * Initializes the application (unless {@link init} already did), hands the
+   * exception handler, the global guards and the message handlers to the
+   * server and starts it. Concurrent and later calls share the same promise,
+   * which settles when the server stops. When starting the server fails, it
+   * is closed and the next call starts over. Nothing is started once
+   * {@link close} was called.
+   *
+   * @returns {Promise<void>} Settles like the server's `listen()`.
+   */
+  public listen(): Promise<void> {
+    if (this.closing) {
+      return Promise.resolve();
+    }
+
+    this.listening ??= this.start().catch((error: unknown) => {
+      this.listening = undefined;
+      throw error;
+    });
+
+    return this.listening;
+  }
+
+  /**
+   * @inheritdoc
+   */
+  protected override async shutdown(): Promise<void> {
+    try {
+      if (this.listening) {
+        await this.server.close();
+      }
+    } finally {
+      await super.shutdown();
+    }
+  }
+
+  /**
+   * Starts the server once the application is initialized.
+   *
+   * @returns {Promise<void>} Settles like the server's `listen()`.
+   */
+  private async start(): Promise<void> {
+    await this.init();
+
+    // `close()` may have been called while the application initialized.
+    if (this.closing) {
       return;
     }
 
-    await this.init();
-    await this.exceptionHandler.register();
     this.server.setExceptionHandler(this.exceptionHandler);
     this.server.setGlobalGuards([...this.globalGuards]);
-    this.discoverHandlers();
-    await this.server.listen();
-  }
-
-  public override async close(): Promise<void> {
-    if (this.initialized) {
-      await this.server.close();
-      await super.close();
-    }
-  }
-
-  private discoverHandlers(): void {
-    const tokens = this.ctx.container.getTokensByTag(
-      MESSAGE_CONTROLLER_METADATA,
+    this.server.registerHandlers(
+      this.ctx.container.getTokensByTag(
+        MESSAGE_CONTROLLER_METADATA,
+        true,
+      ) as Type[],
+      this.ctx,
     );
-    this.server.registerHandlers(tokens as Type[], this.ctx);
+
+    try {
+      await this.server.listen();
+    } catch (error) {
+      // Release what the failed server holds before `listen()` is retried.
+      await this.server.close().catch((): void => {});
+      throw error;
+    }
   }
 }

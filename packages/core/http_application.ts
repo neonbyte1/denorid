@@ -6,10 +6,8 @@ import type {
   ConnectMicroserviceOptions,
   HttpApplicationContext,
 } from "./application_context.ts";
-import { ExceptionHandler } from "./exceptions/handler.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
-import type { ControllerMapping } from "./http/controller_mapping.ts";
 import type { CorsOptions } from "./http/cors.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
 import { GatewayRuntime } from "./websockets/_gateway_runtime.ts";
@@ -71,8 +69,8 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   implements HttpApplicationContext {
   private readonly options: HttpCoreApplicationOptions;
   private readonly adapter: HttpAdapter;
-  private controller?: ControllerMapping;
-  private listening?: "pending" | "active";
+  /** Settles when the server was started, set by {@link listen}. */
+  private listening?: Promise<void>;
   private webSocketAdapter?: WebSocketAdapter;
   private gateways?: GatewayRuntime;
 
@@ -103,36 +101,36 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   }
 
   /**
-   * @inheritdoc
+   * Creates the controller mapping, connects the WebSocket gateways, fires
+   * `onApplicationBootstrap`, then registers the routes.
+   *
+   * @returns {Promise<void>} Resolves when the application is bootstrapped.
    */
-  public override async init(): Promise<void> {
-    if (!this.initialized) {
-      this.initialized = true;
+  protected override async bootstrap(): Promise<void> {
+    // A failed earlier init may have connected gateways: release them before
+    // connecting again.
+    await this.gateways?.close();
 
-      this.exceptionHandler = await this.ctx.resolveInternal(ExceptionHandler);
-      await this.exceptionHandler.register();
+    const controller = await this.adapter.createControllerMapping({
+      ctx: this.ctx,
+      exceptionHandler: this.exceptionHandler,
+      cors: this.options.cors,
+      globalGuards: [...this.globalGuards],
+    });
 
-      this.controller = await this.adapter.createControllerMapping({
-        ctx: this.ctx,
-        exceptionHandler: this.exceptionHandler,
-        cors: this.options.cors,
-        globalGuards: [...this.globalGuards],
-      });
+    this.gateways = new GatewayRuntime({
+      ctx: this.ctx,
+      exceptionHandler: this.exceptionHandler,
+      globalGuards: [...this.globalGuards],
+      logger: this.logger,
+    });
+    await this.gateways.connect((): WebSocketAdapter | undefined =>
+      this.webSocketAdapter ?? this.adapter.createWebSocketAdapter?.()
+    );
 
-      this.gateways = new GatewayRuntime({
-        ctx: this.ctx,
-        exceptionHandler: this.exceptionHandler,
-        globalGuards: [...this.globalGuards],
-        logger: this.logger,
-      });
-      await this.gateways.connect((): WebSocketAdapter | undefined =>
-        this.webSocketAdapter ?? this.adapter.createWebSocketAdapter?.()
-      );
+    await super.bootstrap();
 
-      await this.ctx.onApplicationBootstrap();
-
-      await this.controller.register(this.options.basePath);
-    }
+    await controller.register(this.options.basePath);
   }
 
   /**
@@ -180,17 +178,31 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   }
 
   /**
-   * @inheritdoc
+   * Initializes the application, then starts every connected microservice.
+   * A server whose `listen()` rejects right away is closed together with the
+   * servers started before it and the error is rethrown. `listen()` of a
+   * transport usually settles only when the server stops, so a failure that
+   * arrives later (e.g. a port in use or a refused broker connection) is
+   * logged and the failed server is closed. Nothing is started once
+   * {@link close} was called.
+   *
+   * @returns {Promise<void>} Resolves when every server is listening.
    */
   public async startAllMicroservices(): Promise<void> {
-    if (this.microservices.size === 0) {
+    if (this.microservices.size === 0 || this.closing) {
       return;
     }
 
     await this.init();
 
+    // `close()` may have been called while the application initialized.
+    if (this.closing) {
+      return;
+    }
+
     const tokens = this.ctx.container.getTokensByTag(
       MESSAGE_CONTROLLER_METADATA,
+      true,
     );
     const types = tokens as Type[];
     const started: MicroserviceServer<object>[] = [];
@@ -202,15 +214,8 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
           options.inheritAppConfig ? [...this.globalGuards] : [],
         );
         server.registerHandlers(types, this.ctx);
-        const listenPromise = server.listen();
-        // Race against a resolved microtask: immediate rejections surface here,
-        // long-running servers' pending promises yield to the microtask instead.
-        await new Promise<void>((resolve, reject) => {
-          listenPromise.then(() => resolve(), reject);
-          Promise.resolve().then(resolve);
-        });
-        listenPromise.catch(() => {});
         started.push(server);
+        await this.startMicroservice(server);
       } catch (error) {
         await Promise.all(started.map((s) => s.close().catch(() => {})));
         throw error;
@@ -221,36 +226,84 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   /**
    * @inheritdoc
    */
-  public override async close(): Promise<void> {
-    if (this.initialized) {
-      await Promise.all(
-        [...this.microservices.keys()].map((s) => s.close().catch(() => {})),
-      );
-      await this.gateways?.close();
-      await this.adapter.close();
-      await super.close();
+  protected override async shutdown(): Promise<void> {
+    try {
+      if (this.initialized) {
+        await Promise.all(
+          [...this.microservices.keys()].map((s) => s.close().catch(() => {})),
+        );
+        await this.gateways?.close();
+        await this.adapter.close();
+      }
+    } finally {
+      await super.shutdown();
     }
   }
 
   /**
-   * @inheritdoc
+   * Initializes the application, then starts the HTTP server. Repeated calls
+   * are ignored. The server is started only once the initialization
+   * succeeded and never after {@link close} was called. When the
+   * initialization fails, its error is rethrown as an unhandled rejection and
+   * a later call tries again.
    */
   public listen(): void {
-    if (!this.initialized) {
-      if (this.listening !== "active") {
-        this.listening = "pending";
-      }
+    if (this.listening || this.closing) {
+      return;
+    }
 
-      this.init().then(() => {
-        if (this.listening === "pending") {
-          this.listening = "active";
-
+    this.listening = this.init().then(
+      (): void => {
+        // `close()` may have been called while the application initialized.
+        if (!this.closing) {
           this.adapter.listen(this.options.port);
         }
-      });
-    } else if (!this.listening) {
-      this.listening = "active";
-      this.adapter.listen(this.options.port);
-    }
+      },
+      (error: unknown): never => {
+        this.listening = undefined;
+        throw error;
+      },
+    );
+  }
+
+  /**
+   * Calls `listen()` on `server` and waits one microtask for it to reject,
+   * because `listen()` usually settles only when the server stops. Later
+   * rejections are logged and close the server, unless the application is
+   * closing.
+   *
+   * @param {MicroserviceServer<object>} server - The server to start.
+   * @returns {Promise<void>} Resolves when `listen()` did not reject right away.
+   * @throws {unknown} The rejection of `listen()` when it rejected right away.
+   */
+  private async startMicroservice(
+    server: MicroserviceServer<object>,
+  ): Promise<void> {
+    const listening = server.listen();
+    const { promise: started, resolve, reject } = Promise.withResolvers<
+      void
+    >();
+    let running = false;
+
+    listening.then(resolve, (error: unknown): void => {
+      if (!running) {
+        reject(error);
+      } else if (!this.closing) {
+        const err = error instanceof Error ? error : new Error(String(error));
+
+        this.logger.error(
+          `Microservice ${server.constructor.name} stopped: ${err.message}`,
+          err.stack,
+        );
+        server.close().catch((): void => {});
+      }
+    });
+    // Runs after the rejection handler of a `listen()` that already rejected.
+    Promise.resolve().then((): void => {
+      running = true;
+      resolve();
+    });
+
+    await started;
   }
 }

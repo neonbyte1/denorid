@@ -40,8 +40,20 @@ export interface ApplicationOptions {
 export class Application<
   Options extends ApplicationOptions = ApplicationOptions,
 > implements ApplicationContext {
-  /** Whether {@link init} has already been called on this application. */
+  /**
+   * Whether {@link init} has been called on this application, also while it
+   * runs and after it failed.
+   */
   protected initialized?: boolean;
+
+  /**
+   * Settles with the running or completed {@link init}. Cleared when it
+   * rejects, so a later call initializes again.
+   */
+  protected initializing?: Promise<void>;
+
+  /** Settles when the application is closed, set by the first {@link close}. */
+  protected closing?: Promise<void>;
 
   /** Logger instance used for internal application messages. */
   protected readonly logger: LoggerService;
@@ -118,30 +130,70 @@ export class Application<
     return this.ctx.getHostModuleRef().getByTag<T>(arg0, options);
   }
 
-  /**
-   * @inheritdoc
-   */
-  public async init(): Promise<void> {
-    if (!this.initialized) {
-      this.exceptionHandler = await this.ctx.resolveInternal(ExceptionHandler);
+  // deno-coverage-ignore-stop
 
-      await this.ctx.onApplicationBootstrap();
+  /**
+   * Initializes the application once: resolves the exception handler,
+   * registers the exception filters, then runs {@link bootstrap}. Concurrent
+   * and later calls share the same promise; after a rejection the next call
+   * starts over.
+   *
+   * @returns {Promise<void>} Resolves when the application is initialized.
+   * @throws {Error} When the application was closed before it was
+   * initialized.
+   */
+  public init(): Promise<void> {
+    if (!this.initializing) {
+      if (this.closing) {
+        return Promise.reject(
+          new Error("Cannot initialize an application that was closed"),
+        );
+      }
 
       this.initialized = true;
+      this.initializing = this.initialize().catch((error: unknown) => {
+        this.initializing = undefined;
+        throw error;
+      });
     }
+
+    return this.initializing;
   }
 
   /**
-   * @inheritdoc
+   * Runs after the exception filters are registered: fires
+   * `onApplicationBootstrap`. Subclasses wire their transports around it and
+   * call `super.bootstrap()`.
+   *
+   * @returns {Promise<void>} Resolves when the application is bootstrapped.
    */
+  protected async bootstrap(): Promise<void> {
+    await this.ctx.onApplicationBootstrap();
+  }
 
-  public async close(): Promise<void> {
-    if (this.initialized) {
-      this.initialized = false;
+  /**
+   * Closes the application once, after a running {@link init} settled, so
+   * {@link shutdown} also stops what that call started.
+   *
+   * @returns {Promise<void>} Resolves when the application is shut down.
+   */
+  public close(): Promise<void> {
+    this.closing ??= this.shutdownAfterInit();
 
-      await this.ctx.onBeforeApplicationShutdown();
-      await this.ctx.onApplicationShutdown();
-    }
+    return this.closing;
+  }
+
+  /**
+   * Stops what the application started and closes the injector context, which
+   * runs the shutdown hooks and disposes the providers it created. Runs once,
+   * whether or not {@link init} was called: creating the application already
+   * initialized the modules. Subclasses stop their servers first and call
+   * `super.shutdown()` last, also when stopping them fails.
+   *
+   * @returns {Promise<void>} Resolves when the application is shut down.
+   */
+  protected async shutdown(): Promise<void> {
+    await this.ctx.close();
   }
 
   /**
@@ -162,7 +214,7 @@ export class Application<
     try {
       const runner = new ConsoleCommandRunner(this.ctx, {
         appName: this.metaType.name,
-        ...(options ?? {}),
+        ...options,
       });
       return await runner.run(argv);
     } finally {
@@ -170,5 +222,27 @@ export class Application<
     }
   }
 
-  // deno-coverage-ignore-stop
+  /**
+   * Resolves the exception handler, registers the exception filters before
+   * any `onApplicationBootstrap` hook can raise an error, then bootstraps.
+   *
+   * @returns {Promise<void>} Resolves when the application is initialized.
+   */
+  private async initialize(): Promise<void> {
+    this.exceptionHandler = await this.ctx.resolveInternal(ExceptionHandler);
+
+    await this.exceptionHandler.register();
+    await this.bootstrap();
+  }
+
+  /**
+   * Waits for a running {@link init} to settle, whatever its outcome, then
+   * shuts down.
+   *
+   * @returns {Promise<void>} Resolves when the application is shut down.
+   */
+  private async shutdownAfterInit(): Promise<void> {
+    await this.initializing?.catch((): void => {});
+    await this.shutdown();
+  }
 }
