@@ -1,4 +1,5 @@
 import type { InjectorContext } from "@denorid/injector";
+import process from "node:process";
 import {
   CommandParseError,
   parseCommandArgs,
@@ -7,13 +8,14 @@ import {
 import { OutputFormatter, shouldDecorate } from "./_formatter.ts";
 import { type CommandSummary, GLOBAL_OPTIONS, HelpRenderer } from "./_help.ts";
 import { buildCommandRegistry, type CommandEntry } from "./_registry.ts";
+import { toConsoleWriter } from "./_writable_writer.ts";
 import type { ConsoleCommandInterface } from "./command_interface.ts";
 
 /**
  * Minimal writable surface used by {@linkcode ConsoleCommandRunner}.
  *
- * Matches `Deno.stdout` / `Deno.stderr` and is intentionally narrow so tests
- * can supply an in-memory buffer.
+ * Returns the number of bytes consumed from `p` (synchronously or as a
+ * promise). Intentionally narrow so tests can supply an in-memory buffer.
  */
 export interface ConsoleWriter {
   write(p: Uint8Array): number | Promise<number>;
@@ -25,9 +27,9 @@ export interface ConsoleWriter {
 export interface ConsoleCommandRunnerOptions {
   /** Application name displayed in the listing header. Defaults to `"Denorid"`. */
   appName?: string;
-  /** stdout-like target. Defaults to `Deno.stdout`. */
+  /** stdout-like target. Defaults to `process.stdout` (`node:process`). */
   stdout?: ConsoleWriter;
-  /** stderr-like target. Defaults to `Deno.stderr`. */
+  /** stderr-like target. Defaults to `process.stderr` (`node:process`). */
   stderr?: ConsoleWriter;
   /** Force-enable / disable ANSI escapes. When omitted, auto-detected. */
   decorated?: boolean;
@@ -61,8 +63,8 @@ export class ConsoleCommandRunner {
     this.registry = buildCommandRegistry(ctx);
     this.formatter = new OutputFormatter(options.decorated ?? shouldDecorate());
     this.help = new HelpRenderer(this.formatter, options.appName ?? "Denorid");
-    this.stdout = options.stdout ?? Deno.stdout;
-    this.stderr = options.stderr ?? Deno.stderr;
+    this.stdout = options.stdout ?? toConsoleWriter(process.stdout);
+    this.stderr = options.stderr ?? toConsoleWriter(process.stderr);
   }
 
   /**
@@ -77,7 +79,7 @@ export class ConsoleCommandRunner {
    * The global `--no-color` flag is honoured anywhere on the command line and
    * takes effect for help/error output as well as the command body.
    *
-   * @param {string[]} argv - Argv slice excluding the program name (i.e. `Deno.args`).
+   * @param {string[]} argv - Argv slice excluding the runtime and script path (i.e. `process.argv.slice(2)`).
    * @returns {Promise<number>} Exit code (0 = success).
    */
   public async run(argv: string[]): Promise<number> {

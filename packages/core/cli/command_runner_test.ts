@@ -1,6 +1,7 @@
 import type { InjectorContext, Type } from "@denorid/injector";
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { stub } from "@std/testing/mock";
+import process from "node:process";
 import { describe, it } from "node:test";
 import { CLI_OPTIONS_METADATA } from "../_constants.ts";
 import type {
@@ -138,6 +139,59 @@ function makeRunner(opts: {
   );
 
   return { runner, stdout, stderr };
+}
+
+function captureWrites(stream: NodeJS.WriteStream, sink: string[]): Disposable {
+  const decoder = new TextDecoder();
+
+  return stub(stream, "write", (...args: unknown[]): boolean => {
+    const [chunk, callback] = args;
+
+    if (chunk instanceof Uint8Array) {
+      sink.push(decoder.decode(chunk));
+    }
+
+    if (typeof callback === "function") {
+      callback(null);
+    }
+
+    return true;
+  });
+}
+
+function overrideIsTTY(value: boolean): Disposable {
+  const descriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+
+  Object.defineProperty(process.stdout, "isTTY", {
+    value,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+
+  return {
+    [Symbol.dispose](): void {
+      if (descriptor === undefined) {
+        Reflect.deleteProperty(process.stdout, "isTTY");
+      } else {
+        Object.defineProperty(process.stdout, "isTTY", descriptor);
+      }
+    },
+  };
+}
+
+function unsetNoColor(): Disposable {
+  const previous = process.env.NO_COLOR;
+
+  delete process.env.NO_COLOR;
+
+  return {
+    [Symbol.dispose](): void {
+      if (previous !== undefined) {
+        process.env.NO_COLOR = previous;
+      }
+    },
+  };
 }
 
 describe("ConsoleCommandRunner.run()", () => {
@@ -443,87 +497,58 @@ describe("ConsoleCommandRunner.run()", () => {
   });
 
   describe("constructor defaults", () => {
-    it("uses 'Denorid' as the default appName and writes to Deno.stdout", async () => {
-      const written: string[] = [];
-      using _stdout = stub(
-        Deno.stdout,
-        "write",
-        (p: Uint8Array): Promise<number> => {
-          written.push(new TextDecoder().decode(p));
-          return Promise.resolve(p.length);
-        },
-      );
-      using _stderr = stub(
-        Deno.stderr,
-        "write",
-        (p: Uint8Array): Promise<number> => Promise.resolve(p.length),
-      );
-      using _terminal = stub(Deno.stdout, "isTerminal", () => false);
+    it("uses 'Denorid' as the default appName and writes plain text to process.stdout when it is not a TTY", async () => {
+      const stdoutChunks: string[] = [];
+      const stderrChunks: string[] = [];
+      using _stdout = captureWrites(process.stdout, stdoutChunks);
+      using _stderr = captureWrites(process.stderr, stderrChunks);
+      using _tty = overrideIsTTY(false);
+      using _noColor = unsetNoColor();
 
       const runner = new ConsoleCommandRunner(
         makeCtx([], new Map()),
       );
 
       const code = await runner.run([]);
+      const text = stdoutChunks.join("");
 
       assertEquals(code, 0);
-      assertStringIncludes(written.join(""), "Denorid");
+      assertStringIncludes(text, "Denorid");
+      // deno-lint-ignore no-control-regex
+      assertEquals(/\x1b\[/.test(text), false);
+      assertEquals(stderrChunks, []);
     });
 
     it("auto-detects ANSI support when decorated is not supplied", async () => {
       const written: string[] = [];
-      using _stdout = stub(
-        Deno.stdout,
-        "write",
-        (p: Uint8Array): Promise<number> => {
-          written.push(new TextDecoder().decode(p));
-          return Promise.resolve(p.length);
-        },
+      using _stdout = captureWrites(process.stdout, written);
+      using _tty = overrideIsTTY(true);
+      using _noColor = unsetNoColor();
+
+      const runner = new ConsoleCommandRunner(
+        makeCtx(
+          [ClearCache as Type],
+          new Map([[
+            ClearCache as Type,
+            new ClearCache(),
+          ]]),
+        ),
+        { appName: "AutoDetect" },
       );
-      using _terminal = stub(Deno.stdout, "isTerminal", () => true);
-      const previousNoColor = Deno.env.get("NO_COLOR");
-      Deno.env.delete("NO_COLOR");
 
-      try {
-        const runner = new ConsoleCommandRunner(
-          makeCtx(
-            [ClearCache as Type],
-            new Map([[
-              ClearCache as Type,
-              new ClearCache(),
-            ]]),
-          ),
-          { appName: "AutoDetect" },
-        );
+      await runner.run([]);
 
-        await runner.run([]);
-
-        // deno-lint-ignore no-control-regex
-        const hasAnsi = /\x1b\[/.test(written.join(""));
-        assertEquals(hasAnsi, true);
-      } finally {
-        if (previousNoColor !== undefined) {
-          Deno.env.set("NO_COLOR", previousNoColor);
-        }
-      }
+      // deno-lint-ignore no-control-regex
+      const hasAnsi = /\x1b\[/.test(written.join(""));
+      assertEquals(hasAnsi, true);
     });
 
-    it("routes error output to Deno.stderr by default", async () => {
-      using _stdout = stub(
-        Deno.stdout,
-        "write",
-        (p: Uint8Array): Promise<number> => Promise.resolve(p.length),
-      );
+    it("routes error output to process.stderr by default", async () => {
+      const stdoutChunks: string[] = [];
       const stderrChunks: string[] = [];
-      using _stderr = stub(
-        Deno.stderr,
-        "write",
-        (p: Uint8Array): Promise<number> => {
-          stderrChunks.push(new TextDecoder().decode(p));
-          return Promise.resolve(p.length);
-        },
-      );
-      using _terminal = stub(Deno.stdout, "isTerminal", () => false);
+      using _stdout = captureWrites(process.stdout, stdoutChunks);
+      using _stderr = captureWrites(process.stderr, stderrChunks);
+      using _tty = overrideIsTTY(false);
 
       const runner = new ConsoleCommandRunner(
         makeCtx([], new Map()),
@@ -536,6 +561,7 @@ describe("ConsoleCommandRunner.run()", () => {
         stderrChunks.join(""),
         'Command "unknown:cmd" is not defined.',
       );
+      assertEquals(stdoutChunks, []);
     });
   });
 });
