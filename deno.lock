@@ -927,7 +927,7 @@
       },
       "packages/platform-hono": {
         "dependencies": [
-          "jsr:@denorid/core@^1.0.0-beta3",
+          "jsr:@denorid/core@^1.0.0-beta4",
           "jsr:@denorid/injector@^1.0.0-beta2",
           "jsr:@hono/hono@^4.13.9",
           "npm:@hono/node-server@^2.1.1",
