@@ -8,6 +8,8 @@
     "@denorid/injector": "jsr:@denorid/injector@^1.0.0-beta2",
     "@hono/hono": "jsr:@hono/hono@^4.13.9",
     "@hono/node-server": "npm:@hono/node-server@^2.1.1",
+    "@types/ws": "npm:@types/ws@^8.18.1",
+    "ws": "npm:ws@^8.21.3",
     "zod": "npm:zod@^4.6.5"
   }
 }
