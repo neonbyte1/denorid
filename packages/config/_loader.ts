@@ -2,7 +2,7 @@ import { parse as parseYaml } from "@std/yaml";
 import fs from "node:fs/promises";
 import process from "node:process";
 import { parseEnv } from "node:util";
-import { ConfigFileError } from "./exceptions.ts";
+import { ConfigEnvAccessError, ConfigFileError } from "./exceptions.ts";
 import type {
   ConfigFilePath,
   ConfigModuleOptions,
@@ -19,6 +19,8 @@ import type {
  * @param {ConfigModuleOptions} options - Module options.
  * @return {Promise<ConfigRecord>} The final configuration.
  * @throws {ConfigFileError} When a file cannot be read or parsed.
+ * @throws {ConfigEnvAccessError} When the runtime environment cannot be
+ * enumerated and `envVars` is not set.
  */
 export async function loadConfig(
   options: ConfigModuleOptions,
@@ -44,7 +46,7 @@ export async function loadConfig(
   }
 
   if (!options.ignoreEnvVars) {
-    env = { ...env, ...definedValues(process.env) };
+    env = { ...env, ...readRuntimeEnv(options.envVars) };
   }
 
   Object.freeze(env);
@@ -146,6 +148,39 @@ function parseYamlFile(path: ConfigFilePath, source: string): ConfigRecord {
   }
 
   return document;
+}
+
+/**
+ * Reads the runtime environment variables: the listed ones one by one, or
+ * the whole environment when no list is given.
+ *
+ * @param {readonly string[] | undefined} names - Variables to read.
+ * @return {Record<string, string>} The variables that are set.
+ * @throws {ConfigEnvAccessError} When enumerating the environment is not
+ * permitted (Deno with a scoped `--allow-env`).
+ */
+function readRuntimeEnv(
+  names: readonly string[] | undefined,
+): Record<string, string> {
+  if (names) {
+    return definedValues(
+      Object.fromEntries(names.map((name) => [name, process.env[name]])),
+    );
+  }
+
+  try {
+    return definedValues(process.env);
+  } catch (e) {
+    // Deno 2 throws `NotCapable`, older releases `PermissionDenied`.
+    if (
+      e instanceof Error &&
+      (e.name === "NotCapable" || e.name === "PermissionDenied")
+    ) {
+      throw new ConfigEnvAccessError({ cause: e });
+    }
+
+    throw e;
+  }
 }
 
 function definedValues(

@@ -109,6 +109,7 @@ export class DatabaseService {
 | `yamlFilePath`  | none     | YAML file(s), each with a mapping at the top level.                |
 | `envFilePath`   | `".env"` | `.env` file(s). Pass `[]` to load none.                            |
 | `ignoreEnvVars` | `false`  | Skips the runtime environment variables.                           |
+| `envVars`       | all      | Runtime environment variables to read, instead of all of them.     |
 | `load`          | none     | Factories receiving the environment variables, returning config.   |
 | `validate`      | none     | Receives the merged config; its return value is what gets exposed. |
 
@@ -118,14 +119,11 @@ other value (including arrays) is replaced. Missing files are skipped.
 
 Merging the runtime environment variables enumerates the whole environment,
 which on Deno requires unscoped `--allow-env`. With a scoped flag such as
-`--allow-env=PORT`, loading throws `NotCapable`; set `ignoreEnvVars: true` and
-read the allowed variables in a `load` factory instead:
+`--allow-env=PORT,DATABASE_URL`, list the variables in `envVars`; they are read
+one by one. Without the list, loading fails with `ConfigEnvAccessError`.
 
 ```ts
-ConfigModule.forRoot({
-  ignoreEnvVars: true,
-  load: [() => ({ PORT: process.env.PORT })],
-});
+ConfigModule.forRoot({ envVars: ["PORT", "DATABASE_URL"] });
 ```
 
 Validation works with any schema library, e.g. zod:

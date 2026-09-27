@@ -5,12 +5,37 @@ import {
   assertRejects,
   assertStrictEquals,
 } from "@std/assert";
+import process from "node:process";
 import { describe, it } from "node:test";
 import { loadConfig, mergeConfig } from "./_loader.ts";
 import { setEnv, stubFiles } from "./_test_fixtures.ts";
-import { ConfigFileError } from "./exceptions.ts";
+import { ConfigEnvAccessError, ConfigFileError } from "./exceptions.ts";
 import type { ConfigRecord } from "./module_options.ts";
 
+/**
+ * Replaces `process.env` with an object whose enumeration throws `error`.
+ *
+ * @param {Error} error - Error thrown when the environment is enumerated.
+ * @return {Disposable} Restores the real `process.env` when disposed.
+ */
+function replaceEnv(error: Error): Disposable {
+  const original = Object.getOwnPropertyDescriptor(process, "env")!;
+
+  Object.defineProperty(process, "env", {
+    configurable: true,
+    value: new Proxy({}, {
+      ownKeys(): never {
+        throw error;
+      },
+    }),
+  });
+
+  return {
+    [Symbol.dispose](): void {
+      Object.defineProperty(process, "env", original);
+    },
+  };
+}
 describe("loadConfig", () => {
   describe("yaml files", () => {
     it("deep merges files in order, later files win", async () => {
@@ -169,6 +194,87 @@ describe("loadConfig", () => {
       const config = await loadConfig({ ignoreEnvVars: true });
 
       assertEquals(config.DENORID_CONFIG_LOADER_TEST, undefined);
+    });
+
+    it("reads only the variables listed in envVars", async () => {
+      using _env = setEnv({
+        DENORID_CONFIG_LISTED: "listed",
+        DENORID_CONFIG_UNLISTED: "unlisted",
+      });
+      using _files = stubFiles({});
+
+      const config = await loadConfig({
+        envVars: ["DENORID_CONFIG_LISTED", "DENORID_CONFIG_UNSET"],
+      });
+
+      assertEquals(config.DENORID_CONFIG_LISTED, "listed");
+      assertEquals("DENORID_CONFIG_UNLISTED" in config, false);
+      assertEquals("DENORID_CONFIG_UNSET" in config, false);
+    });
+
+    it("explains how to proceed when the environment cannot be enumerated", async () => {
+      const cause = Object.assign(new Error("Requires env access"), {
+        name: "NotCapable",
+      });
+      using _files = stubFiles({});
+      using _env = replaceEnv(cause);
+
+      const error = await assertRejects(
+        () => loadConfig({}),
+        ConfigEnvAccessError,
+        "list the variables in `envVars`",
+      );
+
+      assertStrictEquals(error.cause, cause);
+    });
+
+    it("rethrows other errors while enumerating the environment", async () => {
+      using _files = stubFiles({});
+      using _env = replaceEnv(new TypeError("broken env"));
+
+      await assertRejects(() => loadConfig({}), TypeError, "broken env");
+    });
+
+    it("works with a scoped --allow-env flag when envVars lists the names", async () => {
+      const loader = new URL("./_loader.ts", import.meta.url).href;
+      const script = [
+        `import { loadConfig } from ${JSON.stringify(loader)};`,
+        `const listed = await loadConfig({ envFilePath: [], envVars: ["PORT"] });`,
+        `const all = await loadConfig({ envFilePath: [] }).then(`,
+        `  () => "loaded",`,
+        `  (e) => e.name,`,
+        `);`,
+        `console.log(JSON.stringify({ port: listed.PORT, all }));`,
+      ].join("\n");
+      // `deno eval` always grants every permission, so run a file instead.
+      const file = await Deno.makeTempFile({ suffix: ".ts" });
+
+      try {
+        await Deno.writeTextFile(file, script);
+
+        const output = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "run",
+            "--no-prompt",
+            "--config",
+            new URL("./deno.json", import.meta.url).pathname,
+            "--allow-env=PORT",
+            "--allow-read",
+            file,
+          ],
+          env: { PORT: "8080" },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+
+        assertEquals(
+          new TextDecoder().decode(output.stdout).trim(),
+          JSON.stringify({ port: "8080", all: "ConfigEnvAccessError" }),
+          new TextDecoder().decode(output.stderr),
+        );
+      } finally {
+        await Deno.remove(file);
+      }
     });
   });
 

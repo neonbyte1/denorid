@@ -32,6 +32,25 @@ export class ConfigFileError extends Error {
 }
 
 /**
+ * Thrown when the runtime environment cannot be enumerated, e.g. on Deno
+ * with a scoped `--allow-env=NAME` flag. List the variables in `envVars` or
+ * set `ignoreEnvVars`.
+ */
+export class ConfigEnvAccessError extends Error {
+  /**
+   * @param {ErrorOptions} [options] - Standard error options (e.g. `cause`).
+   */
+  public constructor(options?: ErrorOptions) {
+    super(
+      "Cannot read the whole environment (scoped --allow-env?); list the " +
+        "variables in `envVars` or set `ignoreEnvVars`",
+      options,
+    );
+    this.name = "ConfigEnvAccessError";
+  }
+}
+
+/**
  * Thrown when plain `ConfigModule` was set up before
  * `ConfigModule.forRootAsync()`, which would silently ignore the async
  * options.
