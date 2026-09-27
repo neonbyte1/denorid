@@ -8,9 +8,13 @@ import { KvConnections } from "../connections.ts";
 export interface EnqueueOptions {
   /** Delay in milliseconds before the message is delivered. */
   delay?: number;
-  /** KV keys that receive the message value if delivery ultimately fails. */
+  /**
+   * KV keys that receive the message value once every delivery attempt
+   * failed, meaning the handler threw something other than a
+   * `ForbiddenException`.
+   */
   keysIfUndelivered?: KvKey[];
-  /** Custom retry backoff intervals in milliseconds. */
+  /** Retry backoff intervals in milliseconds, used when a handler throws. */
   backoffSchedule?: number[];
 }
 

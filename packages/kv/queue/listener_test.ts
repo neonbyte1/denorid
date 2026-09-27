@@ -1,28 +1,38 @@
-import type { Kv } from "@deno/kv";
-import type {
-  CanActivate,
+import type { Kv, KvKey } from "@deno/kv";
+import type { CanActivate, ExecutionContext } from "@denorid/core";
+import {
   ExceptionHandler,
-  ExecutionContext,
+  ForbiddenException,
+  RpcHostArguments,
+  UseGuards,
 } from "@denorid/core";
-import { ForbiddenException, RpcHostArguments, UseGuards } from "@denorid/core";
-import { InjectorContext, type ModuleRef, type Type } from "@denorid/injector";
+import { Test, type TestingModule } from "@denorid/core/testing";
+import {
+  Injectable,
+  InjectorContext,
+  type ModuleRef,
+  type Type,
+} from "@denorid/injector";
 import {
   assertEquals,
   assertInstanceOf,
+  assertRejects,
   assertStrictEquals,
 } from "@std/assert";
+import { stub } from "@std/testing/mock";
 import { describe, it } from "node:test";
 import { QUEUE_HANDLER } from "../_constants.ts";
 import type { ConnectionEntry } from "../_connections.ts";
 import { KvConnections } from "../connections.ts";
+import { KvModule } from "../module.ts";
 import { Queued, QueueHandler } from "./decorator.ts";
 import { KvQueueListener } from "./listener.ts";
+import { KvQueue } from "./queue.ts";
 
 type ListenerCallback = (msg: unknown) => void | Promise<void>;
 
 interface ListenerHarness {
   callbacks: Record<string, ListenerCallback[]>;
-  closeCalls: string[];
   exceptionCalls: unknown[][];
   getCalls: unknown[][];
   listens: Record<string, PromiseWithResolvers<void>[]>;
@@ -52,7 +62,6 @@ function createHarness(
   const loggerWarnings: unknown[][] = [];
   const listens: Record<string, PromiseWithResolvers<void>[]> = {};
   const scopes: string[] = [];
-  const closeCalls: string[] = [];
 
   for (const [name, entry] of Object.entries(harnessOptions.entries)) {
     entry.kv ??= {
@@ -73,9 +82,6 @@ function createHarness(
       getCalls.push([KvConnections, name]);
 
       return harnessOptions.entries[name].kv;
-    },
-    close: () => {
-      closeCalls.push("close");
     },
   } as unknown as KvConnections;
   const ctx = {
@@ -129,7 +135,6 @@ function createHarness(
 
   return {
     callbacks,
-    closeCalls,
     exceptionCalls,
     getCalls,
     listens,
@@ -139,6 +144,32 @@ function createHarness(
     resolutionCalls,
     scopes,
   };
+}
+
+function settle(ms = 0): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+
+  setTimeout(resolve, ms);
+
+  return promise;
+}
+
+/**
+ * Polls `key` for at most two seconds; `kv.watch` does not report the writes
+ * of `keysIfUndelivered`.
+ */
+async function pollValue(kv: Kv, key: KvKey): Promise<unknown> {
+  for (let poll = 0; poll < 200; poll++) {
+    const { value } = await kv.get(key);
+
+    if (value !== null) {
+      return value;
+    }
+
+    await settle(10);
+  }
+
+  return null;
 }
 
 describe(KvQueueListener.name, () => {
@@ -369,7 +400,7 @@ describe(KvQueueListener.name, () => {
     assertEquals(calls, [[undefined]]);
   });
 
-  it("delegates handler errors to the exception handler with RpcHostArguments", async () => {
+  it("reports handler errors and rethrows them so the store redelivers the message", async () => {
     const failure = new Error("handler failed");
 
     @QueueHandler()
@@ -387,8 +418,12 @@ describe(KvQueueListener.name, () => {
     });
 
     await harness.listener.onApplicationBootstrap();
-    await harness.callbacks.default[0]({ id: "failing", payload: { x: 1 } });
 
+    const error = await assertRejects(async () => {
+      await harness.callbacks.default[0]({ id: "failing", payload: { x: 1 } });
+    });
+
+    assertStrictEquals(error, failure);
     assertEquals(harness.exceptionCalls.length, 1);
     assertStrictEquals(harness.exceptionCalls[0][0], failure);
     assertInstanceOf(harness.exceptionCalls[0][1], RpcHostArguments);
@@ -399,14 +434,226 @@ describe(KvQueueListener.name, () => {
     );
   });
 
-  it("closes kv connections before application shutdown", async () => {
+  it("acknowledges a ForbiddenException thrown by the handler", async () => {
+    @QueueHandler()
+    class Handler {
+      @Queued("forbidden")
+      handle() {
+        throw new ForbiddenException();
+      }
+    }
+
     const harness = createHarness({
       entries: { default: { path: "/tmp/default.db", queue: true } },
+      handlers: [Handler],
+      instances: new Map([[Handler, new Handler()]]),
     });
 
-    await harness.listener.onBeforeApplicationShutdown("SIGTERM");
+    await harness.listener.onApplicationBootstrap();
+    await harness.callbacks.default[0]({ id: "forbidden" });
 
-    assertEquals(harness.closeCalls, ["close"]);
+    assertEquals(harness.exceptionCalls.length, 1);
+    assertInstanceOf(harness.exceptionCalls[0][0], ForbiddenException);
+  });
+
+  it("reports and rethrows errors of the dto conversion", async () => {
+    const failure = new Error("invalid payload");
+    const calls: unknown[] = [];
+
+    class StrictDto {
+      constructor() {
+        throw failure;
+      }
+    }
+
+    @QueueHandler()
+    class Handler {
+      @Queued("strict", StrictDto)
+      handle(payload?: object) {
+        calls.push(payload);
+      }
+    }
+
+    const harness = createHarness({
+      entries: { default: { path: "/tmp/default.db", queue: true } },
+      handlers: [Handler],
+      instances: new Map([[Handler, new Handler()]]),
+    });
+
+    await harness.listener.onApplicationBootstrap();
+
+    const error = await assertRejects(async () => {
+      await harness.callbacks.default[0]({ id: "strict", payload: { x: 1 } });
+    });
+
+    assertStrictEquals(error, failure);
+    assertEquals(calls, []);
+    assertEquals(harness.exceptionCalls.length, 1);
+    assertStrictEquals(harness.exceptionCalls[0][0], failure);
+    assertEquals(
+      (harness.exceptionCalls[0][1] as RpcHostArguments).switchToRpc()
+        .getPattern(),
+      "strict",
+    );
+  });
+
+  it("passes the match of global and sticky patterns for every message", async () => {
+    const matches: unknown[] = [];
+
+    @QueueHandler()
+    class Handler {
+      @Queued(/^user\.(\w+)$/g)
+      onUser(_payload?: object, match?: RegExpMatchArray) {
+        matches.push(match?.[1]);
+      }
+
+      @Queued(/order\.(\w+)/y)
+      onOrder(_payload?: object, match?: RegExpMatchArray) {
+        matches.push(match?.[1]);
+      }
+    }
+
+    const harness = createHarness({
+      entries: { default: { path: "/tmp/default.db", queue: true } },
+      handlers: [Handler],
+      instances: new Map([[Handler, new Handler()]]),
+    });
+
+    await harness.listener.onApplicationBootstrap();
+
+    for (const id of ["user.created", "user.deleted", "order.paid"]) {
+      await harness.callbacks.default[0]({ id });
+    }
+
+    assertEquals(matches, ["created", "deleted", "paid"]);
+  });
+
+  it("binds each queued method to its own queue-enabled connection", async () => {
+    const calls: string[] = [];
+
+    @QueueHandler("jobs")
+    class JobsHandler {
+      @Queued("ping", "default")
+      onPing() {
+        calls.push("ping");
+      }
+
+      @Queued("pong")
+      onPong() {
+        calls.push("pong");
+      }
+    }
+
+    @QueueHandler()
+    class DefaultHandler {
+      @Queued("job", "jobs")
+      onJob() {
+        calls.push("job");
+      }
+
+      @Queued("typo", "missing")
+      onTypo() {
+        calls.push("typo");
+      }
+    }
+
+    const harness = createHarness({
+      entries: {
+        default: { path: "/tmp/default.db", queue: true },
+        jobs: { path: "/tmp/jobs.db" },
+      },
+      handlers: [JobsHandler, DefaultHandler],
+      instances: new Map<Type, unknown>([
+        [JobsHandler, new JobsHandler()],
+        [DefaultHandler, new DefaultHandler()],
+      ]),
+    });
+
+    await harness.listener.onApplicationBootstrap();
+
+    assertEquals(Object.keys(harness.callbacks), ["default"]);
+    assertEquals(harness.callbacks.default.length, 1);
+
+    for (const id of ["ping", "pong", "job", "typo"]) {
+      await harness.callbacks.default[0]({ id });
+    }
+
+    assertEquals(calls, ["ping"]);
+    assertEquals(harness.loggerWarnings, [
+      ["Received unhandled event pong"],
+      ["Received unhandled event job"],
+      ["Received unhandled event typo"],
+    ]);
+  });
+
+  describe("shutdown", () => {
+    @QueueHandler()
+    class SlowHandler {
+      public readonly calls: string[] = [];
+      public readonly release: PromiseWithResolvers<void> = Promise
+        .withResolvers<void>();
+
+      @Queued("slow")
+      handle(): Promise<void> {
+        this.calls.push("slow");
+
+        return this.release.promise;
+      }
+    }
+
+    async function bootstrap(
+      handler: SlowHandler,
+    ): Promise<ListenerHarness> {
+      const harness = createHarness({
+        entries: { default: { path: "/tmp/default.db", queue: true } },
+        handlers: [SlowHandler],
+        instances: new Map([[SlowHandler, handler]]),
+      });
+
+      await harness.listener.onApplicationBootstrap();
+
+      return harness;
+    }
+
+    it("waits for running handlers before shutdown continues", async () => {
+      const handler = new SlowHandler();
+      const harness = await bootstrap(handler);
+      const delivery = harness.callbacks.default[0]({ id: "slow" });
+      let stopped = false;
+      const shutdown = harness.listener.onBeforeApplicationShutdown("SIGTERM")
+        .then(() => {
+          stopped = true;
+        });
+
+      await settle();
+      assertEquals(stopped, false);
+
+      handler.release.resolve();
+      await delivery;
+      await shutdown;
+
+      assertEquals(stopped, true);
+      assertEquals(handler.calls, ["slow"]);
+    });
+
+    it("leaves messages delivered after shutdown started unacknowledged", async () => {
+      const handler = new SlowHandler();
+      const harness = await bootstrap(handler);
+      let settled = false;
+
+      await harness.listener.onBeforeApplicationShutdown("SIGTERM");
+
+      Promise.resolve(harness.callbacks.default[0]({ id: "slow" })).finally(
+        () => {
+          settled = true;
+        },
+      );
+      await settle();
+
+      assertEquals(settled, false);
+      assertEquals(handler.calls, []);
+      assertEquals(harness.scopes, []);
+    });
   });
 
   describe("queue subscription failures", () => {
@@ -428,10 +675,6 @@ describe(KvQueueListener.name, () => {
       await harness.listener.onApplicationBootstrap();
 
       return harness;
-    }
-
-    function settle(): Promise<void> {
-      return new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
 
     it("logs an Error rejection with the queue name and stack", async () => {
@@ -465,7 +708,6 @@ describe(KvQueueListener.name, () => {
       harness.listens.jobs[0].reject(new Error("message not found"));
       await settle();
 
-      assertEquals(harness.closeCalls, ["close"]);
       assertEquals(harness.loggerErrors, []);
     });
   });
@@ -721,6 +963,108 @@ describe(KvQueueListener.name, () => {
           .getPattern(),
         "guard.host.check",
       );
+    });
+  });
+
+  describe("in a compiled application", () => {
+    async function compile(providers: Type[]): Promise<TestingModule> {
+      const module = await Test.createTestingModule({
+        imports: [
+          KvModule.forRoot({ connection: { path: ":memory:", queue: true } }),
+        ],
+        providers,
+      })
+        .useCoreGlobals()
+        .compile();
+
+      await module.init();
+
+      return module;
+    }
+
+    it("resolves class guards provided outside of KvModule", async () => {
+      const delivered = Promise.withResolvers<unknown>();
+      const patterns: string[] = [];
+
+      @Injectable()
+      class AllowGuard implements CanActivate {
+        canActivate(ctx: ExecutionContext): boolean {
+          patterns.push(ctx.switchToRpc().getPattern() as string);
+
+          return true;
+        }
+      }
+
+      @UseGuards(AllowGuard)
+      @QueueHandler()
+      class GuardedHandler {
+        @Queued("ping")
+        handle(payload?: object): void {
+          delivered.resolve(payload);
+        }
+      }
+
+      const module = await compile([AllowGuard, GuardedHandler]);
+      const exceptionHandler = await module.get(ExceptionHandler);
+      const handle = stub(exceptionHandler, "handle", (err: unknown) => {
+        delivered.reject(err);
+
+        return Promise.resolve();
+      });
+
+      try {
+        await (await module.get(KvQueue)).send({
+          id: "ping",
+          payload: { n: 1 },
+        });
+
+        assertEquals(await delivered.promise, { n: 1 });
+        assertEquals(patterns, ["ping"]);
+      } finally {
+        handle.restore();
+        await module.close();
+      }
+    });
+
+    it("lets the store retry a failing message and dead-letter it", async () => {
+      const attempts: unknown[] = [];
+
+      @QueueHandler()
+      class FailingHandler {
+        @Queued("job")
+        handle(payload?: object): void {
+          attempts.push(payload);
+
+          throw new Error("job failed");
+        }
+      }
+
+      const module = await compile([FailingHandler]);
+      const exceptionHandler = await module.get(ExceptionHandler);
+      const handle = stub(exceptionHandler, "handle", () => Promise.resolve());
+
+      try {
+        await (await module.get(KvQueue)).send({
+          id: "job",
+          payload: { n: 1 },
+          options: {
+            backoffSchedule: [1, 1],
+            keysIfUndelivered: [["failed", "job"]],
+          },
+        });
+
+        const kv = (await module.get(KvConnections)).get();
+
+        assertEquals(await pollValue(kv, ["failed", "job"]), {
+          id: "job",
+          payload: { n: 1 },
+        });
+        assertEquals(attempts, [{ n: 1 }, { n: 1 }, { n: 1 }]);
+        assertEquals(handle.calls.length, 3);
+      } finally {
+        handle.restore();
+        await module.close();
+      }
     });
   });
 });

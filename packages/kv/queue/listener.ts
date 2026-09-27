@@ -38,9 +38,25 @@ type InstanceMessageMetadata = MessageMetadata & {
 };
 
 /**
+ * Never settles: a message answered with it stays unacknowledged, so a
+ * persistent store delivers it again after a restart.
+ */
+const UNACKNOWLEDGED: Promise<void> = Promise.withResolvers<void>().promise;
+
+/**
  * Internal listener that discovers `@QueueHandler` classes on application bootstrap
  * and subscribes each to its respective KV queue.
- * Closes all connections before application shutdown.
+ *
+ * A failing handler is reported to the exception handler and its error is
+ * rethrown, so the store redelivers the message according to the
+ * `backoffSchedule` and finally writes it to the `keysIfUndelivered` keys.
+ * A `ForbiddenException` (a denying guard or a handler rejecting the message)
+ * is reported only: the message is acknowledged and not retried.
+ *
+ * Before application shutdown the listener stops dispatching and waits for
+ * running handlers. Messages delivered after that stay unacknowledged. The
+ * stores close later, when the injector disposes {@link KvConnections}.
+ *
  * A failing queue subscription is logged, unless it fails because shutdown
  * closed the store.
  */
@@ -56,6 +72,8 @@ export class KvQueueListener
 
   private closing = false;
 
+  private readonly running: Set<Promise<void>> = new Set();
+
   public constructor(private readonly moduleRef: ModuleRef) {}
 
   /**
@@ -66,14 +84,15 @@ export class KvQueueListener
   }
 
   /**
-   * @inheritdoc
+   * Stops dispatching queue messages and waits for the running handlers.
+   *
+   * @param {string} [_signal] - The shutdown signal, unused.
+   * @return {Promise<void>} Resolves once no handler runs anymore.
    */
   public async onBeforeApplicationShutdown(_signal?: string): Promise<void> {
     this.closing = true;
 
-    const connections = await this.moduleRef.get(KvConnections);
-
-    connections.close();
+    await Promise.all(this.running);
   }
 
   private async discoverHandlers(): Promise<void> {
@@ -91,9 +110,8 @@ export class KvQueueListener
       const kv = connections.get(key);
       const queueMetadata = queueData[key];
 
-      kv.listenQueue((msg: unknown) => {
-        return this.handleMessage(ctx, msg, queueMetadata);
-      }).catch((err: unknown) => this.handleListenFailure(key, err));
+      kv.listenQueue((msg: unknown) => this.dispatch(ctx, msg, queueMetadata))
+        .catch((err: unknown) => this.handleListenFailure(key, err));
     }
   }
 
@@ -111,6 +129,27 @@ export class KvQueueListener
     }
   }
 
+  private async dispatch(
+    ctx: InjectorContext,
+    msg: unknown,
+    queueMetadata: Array<InstanceMessageMetadata>,
+  ): Promise<void> {
+    if (this.closing) {
+      return await UNACKNOWLEDGED;
+    }
+
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    this.running.add(promise);
+
+    try {
+      await this.handleMessage(ctx, msg, queueMetadata);
+    } finally {
+      this.running.delete(promise);
+      resolve();
+    }
+  }
+
   private async handleMessage(
     ctx: InjectorContext,
     msg: unknown,
@@ -120,21 +159,20 @@ export class KvQueueListener
       return;
     }
 
-    const metadata = queueMetadata.find((m: InstanceMessageMetadata) =>
-      m.event instanceof RegExp ? m.event.test(msg.id) : m.event === msg.id
-    );
+    const found = this.findHandler(msg.id, queueMetadata);
 
-    if (!metadata) {
+    if (!found) {
       this.logger.warn(`Received unhandled event ${msg.id}`);
 
       return;
     }
 
-    const payload = this.getPayloadFromMessage(msg, metadata);
+    const [metadata, match] = found;
     const contextId = crypto.randomUUID();
 
     await ctx.runInRequestScopeAsync(contextId, async () => {
       try {
+        const payload = this.getPayloadFromMessage(msg, metadata);
         const instance = await this.moduleRef.get(metadata.handler, {
           contextId,
           strict: false,
@@ -159,6 +197,7 @@ export class KvQueueListener
             if (isClass<CanActivate>(guard)) {
               const guardInstance = await this.moduleRef.get(guard, {
                 contextId,
+                strict: false,
               });
               allowed = await (guardInstance as CanActivate).canActivate(
                 executionCtx,
@@ -175,19 +214,47 @@ export class KvQueueListener
           }
         }
 
-        await instance[metadata.method](
-          payload,
-          metadata.event instanceof RegExp
-            ? metadata.event.exec(msg.id)!
-            : undefined,
-        );
+        await instance[metadata.method](payload, match);
       } catch (err) {
         await this.exceptionHandler.handle(
           err,
           new RpcHostArguments(msg.id, msg.payload),
         );
+
+        // A ForbiddenException rejects the message for good, a redelivery
+        // would be rejected again.
+        if (!(err instanceof ForbiddenException)) {
+          throw err;
+        }
       }
     });
+  }
+
+  private findHandler(
+    id: string,
+    queueMetadata: Array<InstanceMessageMetadata>,
+  ): [InstanceMessageMetadata, RegExpMatchArray | undefined] | undefined {
+    for (const metadata of queueMetadata) {
+      if (typeof metadata.event === "string") {
+        if (metadata.event === id) {
+          return [metadata, undefined];
+        }
+
+        continue;
+      }
+
+      // Global and sticky patterns start at `lastIndex`, which a previous
+      // message may have moved.
+      metadata.event.lastIndex = 0;
+
+      const match = metadata.event.exec(id);
+
+      if (match) {
+        return [metadata, match];
+      }
+    }
+
+    return undefined;
   }
 
   private getPayloadFromMessage(
@@ -235,12 +302,6 @@ export class KvQueueListener
 
     for (const handler of handlers) {
       const queueName = handler[Symbol.metadata]![QUEUE_HANDLER] as string;
-      const entry = connections.connections.get(queueName);
-
-      if (!entry || !entry.queue) {
-        continue;
-      }
-
       const messageMetadata =
         handler[Symbol.metadata]![QUEUE_HANDLER_METADATA] as
           | MessageMetadata[]
@@ -257,9 +318,13 @@ export class KvQueueListener
       ];
 
       for (const metadata of messageMetadata) {
-        const cache = (data[metadata.name ?? queueName] ??= []) as Array<
-          InstanceMessageMetadata
-        >;
+        const queue = metadata.name ?? queueName;
+
+        if (connections.connections.get(queue)?.queue !== true) {
+          continue;
+        }
+
+        const cache = data[queue] ??= [];
 
         const methodGuards = [
           ...(getMethodGuards(handler, metadata.method) ?? new Set()),
