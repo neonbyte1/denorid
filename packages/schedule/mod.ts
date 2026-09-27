@@ -8,7 +8,8 @@
  * [croner](https://jsr.io/@hexagon/croner) otherwise. Both backends use the
  * same cron dialect (5 fields, UTC, numeric weekdays `1`-`7` starting on
  * Sunday), never overlap runs and retry failed runs according to
- * `backoffSchedule`.
+ * `backoffSchedule`. Closing the application stops every cron job, interval
+ * and timeout held by {@linkcode SchedulerRegistry}.
  *
  * # Usage
  *

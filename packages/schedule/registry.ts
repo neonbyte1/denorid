@@ -1,4 +1,7 @@
-import { Injectable } from "@denorid/injector";
+import {
+  Injectable,
+  type OnBeforeApplicationShutdown,
+} from "@denorid/injector";
 import type { CronJobRef } from "./cron_job_ref.ts";
 import {
   SchedulerItemAlreadyExistsException,
@@ -21,7 +24,9 @@ export type TimeoutHandle = ReturnType<typeof setTimeout>;
  * Registry for intervals, timeouts, and cron jobs managed by the schedule
  * module.
  *
- * Inject this to add, retrieve, or cancel scheduled tasks at runtime.
+ * Inject this to add, retrieve, or cancel scheduled tasks at runtime. When
+ * the application shuts down, every registered cron job, interval and
+ * timeout is stopped before any `onModuleDestroy` hook runs.
  *
  * @example
  * ```ts
@@ -33,7 +38,7 @@ export type TimeoutHandle = ReturnType<typeof setTimeout>;
  * ```
  */
 @Injectable()
-export class SchedulerRegistry {
+export class SchedulerRegistry implements OnBeforeApplicationShutdown {
   private readonly intervals = new Map<string, IntervalHandle>();
   private readonly timeouts = new Map<string, TimeoutHandle>();
   private readonly cronJobs = new Map<string, CronJobRef>();
@@ -204,5 +209,30 @@ export class SchedulerRegistry {
    */
   public getCronJobs(): Map<string, CronJobRef> {
     return this.cronJobs;
+  }
+
+  /**
+   * Stops every registered cron job, clears every registered interval and
+   * timeout and removes them all, so no scheduled handler runs while the
+   * application shuts down. Calling it again has no effect.
+   *
+   * @return {void}
+   */
+  public onBeforeApplicationShutdown(): void {
+    for (const ref of this.cronJobs.values()) {
+      ref.deleteCronJob();
+    }
+
+    for (const ref of this.intervals.values()) {
+      clearInterval(ref);
+    }
+
+    for (const ref of this.timeouts.values()) {
+      clearTimeout(ref);
+    }
+
+    this.cronJobs.clear();
+    this.intervals.clear();
+    this.timeouts.clear();
   }
 }

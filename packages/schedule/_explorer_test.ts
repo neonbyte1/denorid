@@ -464,5 +464,51 @@ describe(ScheduleExplorer.name, () => {
         harness.restore();
       }
     });
+
+    it("stops the jobs it registered when a later registration fails", async () => {
+      const calls: string[] = [];
+
+      class TaskService {
+        @Cron("* * * * *")
+        first() {
+          calls.push("first");
+        }
+
+        @Cron("* * * * *", { name: "reports.daily" })
+        second() {
+          calls.push("second");
+        }
+      }
+
+      using time = new FakeTime("2026-01-01T00:00:00.000Z");
+      const harness = createHarness({
+        providers: [TaskService],
+        instances: new Map([[TaskService, new TaskService()]]),
+        scope: {},
+      });
+      const existing = new CronJobRef({
+        name: "existing",
+        schedule: "* * * * *",
+        handler: () => {},
+        controller: new AbortController(),
+      });
+
+      harness.registry.addCronJob("existing", existing);
+
+      try {
+        await assertRejects(
+          () => harness.explorer.onApplicationBootstrap(),
+          TypeError,
+          "Invalid cron name",
+        );
+        await time.tickAsync(5 * 60_000);
+
+        assertEquals(calls, []);
+        assertEquals([...harness.registry.getCronJobs().keys()], ["existing"]);
+        assertEquals(existing.controller.signal.aborted, false);
+      } finally {
+        harness.restore();
+      }
+    });
   });
 });

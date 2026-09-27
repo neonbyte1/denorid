@@ -195,4 +195,33 @@ describe(SchedulerRegistry.name, () => {
       assertEquals(map.get("live-map"), ref);
     });
   });
+
+  describe("onBeforeApplicationShutdown", () => {
+    it("stops and forgets every cron job, interval and timeout", () => {
+      using time = new FakeTime();
+      const registry = new SchedulerRegistry();
+      const fired: string[] = [];
+      const jobs = [makeRef("job-a"), makeRef("job-b")];
+
+      registry.addInterval("interval", setInterval(() => fired.push("i"), 10));
+      registry.addTimeout("timeout", setTimeout(() => fired.push("t"), 10));
+
+      for (const job of jobs) {
+        registry.addCronJob(job.name, job);
+      }
+
+      registry.onBeforeApplicationShutdown();
+      registry.onBeforeApplicationShutdown();
+      time.tick(1_000);
+
+      assertEquals(fired, []);
+      assertEquals(jobs.map((job) => job.controller.signal.aborted), [
+        true,
+        true,
+      ]);
+      assertEquals(registry.getIntervals(), []);
+      assertEquals(registry.getTimeouts(), []);
+      assertEquals(registry.getCronJobs().size, 0);
+    });
+  });
 });

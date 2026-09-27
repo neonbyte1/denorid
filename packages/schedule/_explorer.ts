@@ -31,11 +31,31 @@ export class ScheduleExplorer implements OnApplicationBootstrap {
   /**
    * @inheritdoc
    */
-  public onApplicationBootstrap(): Promise<void> {
-    return this.discoverCronJobs();
+  public async onApplicationBootstrap(): Promise<void> {
+    const registered = new Set<CronJobRef>();
+
+    try {
+      await this.discoverCronJobs(registered);
+    } catch (error) {
+      // Bootstrap fails: stop the jobs registered before the failure.
+      for (const [name, ref] of this.registry.getCronJobs()) {
+        if (registered.has(ref)) {
+          this.registry.deleteCronJob(name);
+        }
+      }
+
+      throw error;
+    }
   }
 
-  private async discoverCronJobs(): Promise<void> {
+  /**
+   * Registers every `@Cron()` method of the tagged providers.
+   *
+   * @param {Set<CronJobRef>} registered - Receives every job added to the
+   *        registry, so the caller can stop them when a later one fails.
+   * @return {Promise<void>}
+   */
+  private async discoverCronJobs(registered: Set<CronJobRef>): Promise<void> {
     const providers = this.moduleRef.getTokensByTag<Type>(CRON_PROVIDER, {
       strict: false,
     });
@@ -73,23 +93,24 @@ export class ScheduleExplorer implements OnApplicationBootstrap {
           backoffSchedule: meta.backoffSchedule,
         });
 
+        const ref = new CronJobRef({
+          name,
+          schedule: meta.schedule,
+          handler,
+          controller,
+          backoffSchedule: meta.backoffSchedule,
+        });
+
         try {
-          this.registry.addCronJob(
-            name,
-            new CronJobRef({
-              name,
-              schedule: meta.schedule,
-              handler,
-              controller,
-              backoffSchedule: meta.backoffSchedule,
-            }),
-          );
+          this.registry.addCronJob(name, ref);
         } catch (error) {
           // Stop the job registered above so it does not run untracked.
           controller.abort();
 
           throw error;
         }
+
+        registered.add(ref);
       }
     }
   }

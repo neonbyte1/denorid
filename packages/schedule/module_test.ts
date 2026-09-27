@@ -1,6 +1,13 @@
 import { Test } from "@denorid/core/testing";
-import { Injectable } from "@denorid/injector";
+import {
+  Inject,
+  Injectable,
+  Module,
+  type OnApplicationBootstrap,
+  type OnModuleDestroy,
+} from "@denorid/injector";
 import { assertEquals, assertInstanceOf } from "@std/assert";
+import { FakeTime } from "@std/testing/time";
 import { describe, it } from "node:test";
 import { cronHost } from "./_cron_runtime.ts";
 import { Cron } from "./decorator.ts";
@@ -9,6 +16,7 @@ import { SchedulerRegistry } from "./registry.ts";
 
 interface FakeDenoCron extends Disposable {
   handlers: (() => void | Promise<void>)[];
+  signals: (AbortSignal | undefined)[];
 }
 
 /**
@@ -18,11 +26,13 @@ interface FakeDenoCron extends Disposable {
 function useFakeDenoCron(): FakeDenoCron {
   const originalScope = cronHost.scope;
   const handlers: (() => void | Promise<void>)[] = [];
+  const signals: (AbortSignal | undefined)[] = [];
 
   cronHost.scope = {
     Deno: {
-      cron: (_name, _schedule, _options, handler): Promise<void> => {
+      cron: (_name, _schedule, options, handler): Promise<void> => {
         handlers.push(handler);
+        signals.push(options.signal);
 
         return Promise.resolve();
       },
@@ -31,6 +41,7 @@ function useFakeDenoCron(): FakeDenoCron {
 
   return {
     handlers,
+    signals,
     [Symbol.dispose](): void {
       cronHost.scope = originalScope;
     },
@@ -165,5 +176,134 @@ describe(ScheduleModule.name, () => {
     } finally {
       await module.close();
     }
+  });
+
+  it("discovers jobs of nested and non-exported modules", async () => {
+    @Injectable()
+    class FeatureTasks {
+      @Cron("* * * * *", { name: "feature" })
+      run() {}
+    }
+
+    @Injectable()
+    class NestedTasks {
+      @Cron("* * * * *", { name: "nested" })
+      run() {}
+    }
+
+    @Module({ providers: [FeatureTasks] })
+    class FeatureModule {}
+
+    @Module({ providers: [NestedTasks], exports: [NestedTasks] })
+    class InnerModule {}
+
+    @Module({ imports: [InnerModule] })
+    class OuterModule {}
+
+    using _cron = useFakeDenoCron();
+    const module = await Test.createTestingModule({
+      imports: [ScheduleModule, FeatureModule, OuterModule],
+    })
+      .useCoreGlobals()
+      .compile();
+
+    try {
+      await module.init();
+
+      const registry = await module.get(SchedulerRegistry);
+
+      assertEquals([...registry.getCronJobs().keys()].sort(), [
+        "feature",
+        "nested",
+      ]);
+    } finally {
+      await module.close();
+    }
+  });
+
+  describe("on shutdown", () => {
+    it("stops Deno.cron jobs before other providers are destroyed", async () => {
+      let abortedOnDestroy: boolean | undefined;
+
+      @Injectable()
+      class TaskService implements OnModuleDestroy {
+        @Cron("* * * * *")
+        run() {}
+
+        onModuleDestroy(): void {
+          abortedOnDestroy = cron.signals[0]?.aborted;
+        }
+      }
+
+      using cron = useFakeDenoCron();
+      const module = await Test.createTestingModule({
+        imports: [ScheduleModule],
+        providers: [TaskService],
+      })
+        .useCoreGlobals()
+        .compile();
+
+      await module.init();
+
+      const registry = await module.get(SchedulerRegistry);
+
+      await module.close();
+
+      assertEquals(cron.signals.length, 1);
+      assertEquals(abortedOnDestroy, true);
+      assertEquals(registry.getCronJobs().size, 0);
+    });
+
+    it("stops croner jobs and registered intervals and timeouts", async () => {
+      const fired: string[] = [];
+
+      @Injectable()
+      class TaskService implements OnApplicationBootstrap {
+        @Inject(SchedulerRegistry)
+        private readonly registry!: SchedulerRegistry;
+
+        @Cron("* * * * *")
+        run() {
+          fired.push("cron");
+        }
+
+        onApplicationBootstrap(): void {
+          this.registry.addInterval(
+            "poll",
+            setInterval(() => fired.push("interval"), 25_000),
+          );
+          this.registry.addTimeout(
+            "later",
+            setTimeout(() => fired.push("timeout"), 90_000),
+          );
+        }
+      }
+
+      using time = new FakeTime("2026-01-01T00:00:00.000Z");
+      const originalScope = cronHost.scope;
+
+      cronHost.scope = {};
+
+      try {
+        const module = await Test.createTestingModule({
+          imports: [ScheduleModule],
+          providers: [TaskService],
+        })
+          .useCoreGlobals()
+          .compile();
+
+        await module.init();
+        await time.tickAsync(60_000);
+
+        assertEquals(fired, ["interval", "interval", "cron"]);
+
+        await module.close();
+        await time.tickAsync(5 * 60_000);
+
+        assertEquals(fired, ["interval", "interval", "cron"]);
+      } finally {
+        cronHost.scope = originalScope;
+      }
+    });
   });
 });
