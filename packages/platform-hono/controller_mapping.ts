@@ -20,6 +20,7 @@ import type { Context, Hono, MiddlewareHandler } from "@hono/hono";
 import { cors } from "@hono/hono/cors";
 import type { ZodType } from "zod";
 import { createClientIpResolver } from "./_client_ip.ts";
+import { createStaticFilesHandler } from "./_static_files.ts";
 import type { HonoAdapterOptions } from "./adapter.ts";
 import { HonoExecutionContext } from "./execution_context.ts";
 import { HonoHostArguments } from "./host_arguments.ts";
@@ -33,18 +34,47 @@ export class HonoControllerMapping extends ControllerMapping {
   /**
    * @param {Hono} app - Hono app every route is registered on.
    * @param {ControllerMappingOptions} options - Configuration for the controller mapping.
-   * @param {HonoAdapterOptions} [adapterOptions] - Client address resolution.
+   * @param {HonoAdapterOptions} [adapterOptions] - Static files and client address resolution.
    * @throws {RangeError} When `adapterOptions.clientIp.trustProxy` is an invalid hop count.
    * @throws {TypeError} When `adapterOptions.clientIp` lists an invalid proxy or header.
    */
   public constructor(
     private readonly app: Hono,
     options: ControllerMappingOptions,
-    adapterOptions: HonoAdapterOptions = {},
+    private readonly adapterOptions: HonoAdapterOptions = {},
   ) {
     super(options);
 
     this.resolveIp = createClientIpResolver(adapterOptions.clientIp);
+  }
+
+  /**
+   * Registers all HTTP controllers, followed by the static files handler when
+   * configured, so controller routes always take precedence over files.
+   *
+   * @param {string} [basePath] - Optional path prefix applied to every
+   * controller; never served from the static files root.
+   * @return {Promise<void>} Resolves when all routes have been registered.
+   * @throws {Error} When the static files root or fallback does not exist.
+   */
+  public override async register(basePath?: string): Promise<void> {
+    await super.register(basePath);
+
+    const staticFiles = this.adapterOptions.staticFiles;
+
+    if (staticFiles !== undefined) {
+      this.app.get(
+        "*",
+        await createStaticFilesHandler(
+          staticFiles,
+          this.joinPaths(basePath ?? ""),
+        ),
+      );
+
+      this.logger.log(
+        `Mapped {/*, GET} to static files in ${staticFiles.root}`,
+      );
+    }
   }
 
   /**

@@ -33,17 +33,20 @@ export interface DenoRuntime {
 }
 
 /**
- * Minimal shape of the `Bun` global needed to serve HTTP.
+ * Minimal shape of the `Bun` global needed to serve HTTP and files.
  */
 export interface BunRuntime {
   /** `Bun.serve`, passing the server (`requestIP(request)`) as `c.env`. */
   serve?: (
     options: { port: number; fetch: FetchHandler },
   ) => { stop(): void | Promise<void> };
+  /** `Bun.file`, a lazily read file blob. */
+  file?: (path: string) => Blob;
 }
 
 /**
- * Runtime globals inspected by {@linkcode startServer}.
+ * Runtime globals inspected by {@linkcode startServer} and the static files
+ * handler.
  */
 export interface RuntimeGlobals {
   /** Present when running on Deno. */

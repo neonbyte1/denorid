@@ -40,6 +40,37 @@ const app = await DenoridFactory.create(AppModule, new HonoAdapter());
 await app.listen();
 ```
 
+## Static files
+
+Serve a directory, e.g. a Vite build, for `GET` and `HEAD` requests no
+controller route matches:
+
+```ts
+const app = await DenoridFactory.create(
+  AppModule,
+  new HonoAdapter({
+    staticFiles: {
+      root: "./dist",
+      // answered to page requests (`Accept: text/html`) nothing else matches
+      fallback: "index.html",
+      // content hashed files, cached for a year; everything else revalidates
+      immutable: "assets",
+    },
+  }),
+  { basePath: "/api" },
+);
+```
+
+- Controller routes always win over files.
+- Paths at or below `basePath` are never served from `root`, so unknown API
+  routes answer `404` instead of the fallback page.
+- Hidden files and directories (`.env`, `.git/`) are never served, except
+  `/.well-known/`.
+- Responses carry `ETag` and `Last-Modified`; conditional requests are answered
+  with `304 Not Modified`.
+- `root` has to be a directory and `fallback` a file below it, otherwise the
+  application fails to start.
+
 ## Client IP
 
 `RequestContext.ip` is the socket peer address by default; forwarding headers

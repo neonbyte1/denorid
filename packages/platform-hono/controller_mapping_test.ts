@@ -15,6 +15,7 @@ import {
   assertRejects,
 } from "@std/assert";
 import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { z } from "zod";
 import type { HonoAdapterOptions } from "./adapter.ts";
@@ -184,8 +185,8 @@ describe(HonoControllerMapping.name, () => {
   }
 
   /**
-   * Registers one `/test` controller route on a real Hono app, so the client
-   * address resolution runs end to end.
+   * Registers one `/test` controller route on a real Hono app, so the static
+   * files handler and the client address resolution run end to end.
    */
   async function registerOnHono(opts: {
     route: RequestMappingMetadata;
@@ -217,7 +218,82 @@ describe(HonoControllerMapping.name, () => {
     return app;
   }
 
+  async function makeStaticRoot(
+    files: Record<string, string>,
+  ): Promise<AsyncDisposable & { path: string }> {
+    const path = await Deno.makeTempDir();
+
+    for (const [name, content] of Object.entries(files)) {
+      await Deno.mkdir(dirname(join(path, name)), { recursive: true });
+      await Deno.writeTextFile(join(path, name), content);
+    }
+
+    return {
+      path,
+      [Symbol.asyncDispose]: () => Deno.remove(path, { recursive: true }),
+    };
+  }
+
+  async function fetchText(app: Hono, path: string): Promise<[number, string]> {
+    const response = await app.request(path);
+
+    return [response.status, await response.text()];
+  }
+
   describe("register()", () => {
+    it("lets controller routes take precedence over static files", async () => {
+      await using root = await makeStaticRoot({
+        "test/hello": "from file",
+        "robots.txt": "from file",
+      });
+      const app = await registerOnHono({
+        route: { name: "hello", path: "hello" },
+        controller: { hello: () => "from controller" },
+        adapterOptions: { staticFiles: { root: root.path } },
+      });
+
+      assertEquals(await fetchText(app, "/test/hello"), [
+        200,
+        "from controller",
+      ]);
+      assertEquals(await fetchText(app, "/robots.txt"), [200, "from file"]);
+    });
+
+    it("never serves static files below the base path", async () => {
+      await using root = await makeStaticRoot({
+        "api/robots.txt": "hidden",
+        "robots.txt": "public",
+      });
+      const app = await registerOnHono({
+        route: { name: "hello", path: "hello" },
+        controller: { hello: () => "from controller" },
+        adapterOptions: { staticFiles: { root: root.path } },
+        basePath: "/api/",
+      });
+
+      assertEquals(
+        await fetchText(app, "/api/test/hello"),
+        [200, "from controller"],
+      );
+      assertEquals((await app.request("/api/robots.txt")).status, 404);
+      assertEquals(await fetchText(app, "/robots.txt"), [200, "public"]);
+    });
+
+    it("rejects when the static files root is missing", async () => {
+      await using root = await makeStaticRoot({});
+
+      await assertRejects(
+        () =>
+          registerOnHono({
+            route: { name: "hello" },
+            controller: { hello: () => null },
+            adapterOptions: { staticFiles: { root: join(root.path, "dist") } },
+          }),
+        Error,
+        "is not a directory",
+      );
+    });
+
     it("resolves client addresses with the client IP options", async () => {
       const app = await registerOnHono({
         route: { name: "ip", path: "ip" },

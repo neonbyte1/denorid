@@ -2,6 +2,7 @@ import type { ExceptionHandler, RequestContext } from "@denorid/core";
 import type { InjectorContext } from "@denorid/injector";
 import { assertEquals, assertRejects } from "@std/assert";
 import { assertSpyCalls, stub } from "@std/testing/mock";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { HonoAdapter, type HonoAdapterOptions } from "./adapter.ts";
 
@@ -172,6 +173,27 @@ describe(HonoAdapter.name, () => {
         );
       } finally {
         await adapter.close();
+      }
+    });
+
+    it("serves static files next to controller routes", async () => {
+      const [port] = getFreePorts(1);
+      const root = await Deno.makeTempDir();
+
+      await Deno.writeTextFile(join(root, "robots.txt"), "User-agent: *");
+
+      const adapter = await createAdapter({ staticFiles: { root } });
+
+      adapter.listen(port);
+
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/robots.txt`);
+
+        assertEquals(await response.text(), "User-agent: *");
+        assertEquals(await getIp(port), "127.0.0.1");
+      } finally {
+        await adapter.close();
+        await Deno.remove(root, { recursive: true });
       }
     });
   });

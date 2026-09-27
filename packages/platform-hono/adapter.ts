@@ -8,6 +8,28 @@ import { type ServerHandle, startServer } from "./_serve.ts";
 import { HonoControllerMapping } from "./controller_mapping.ts";
 
 /**
+ * Directory served for `GET` and `HEAD` requests no controller route matches.
+ */
+export interface StaticFilesOptions {
+  /**
+   * Directory to serve, e.g. a Vite `dist` folder. A relative path resolves
+   * against the working directory.
+   */
+  root: string;
+  /**
+   * File below `root` answered to page requests (`Accept: text/html`) that
+   * match neither a route nor a file, e.g. `index.html` for a single-page app.
+   */
+  fallback?: string;
+  /**
+   * Directory below `root` whose file names carry content hashes (Vite:
+   * `assets`). Its files may be cached for a year; every other file has to be
+   * revalidated.
+   */
+  immutable?: string;
+}
+
+/**
  * Decides whether the address `hop` steps away from the app is a trusted
  * proxy. Hop `0` is the socket peer, hop `1` the last address the peer
  * forwarded, and so on.
@@ -58,6 +80,12 @@ export interface ClientIpOptions {
  */
 export interface HonoAdapterOptions {
   /**
+   * Serve files from a directory for `GET` and `HEAD` requests that no
+   * controller route matches. Paths below the application `basePath` are never
+   * served from it.
+   */
+  staticFiles?: StaticFilesOptions;
+  /**
    * How the client address of a request is resolved. Without it, forwarding
    * headers are ignored and the socket peer is the client.
    */
@@ -75,7 +103,7 @@ export class HonoAdapter implements HttpAdapter {
   private server?: ServerHandle;
 
   /**
-   * @param {HonoAdapterOptions} [options] - Client address resolution.
+   * @param {HonoAdapterOptions} [options] - Static files and client address resolution.
    */
   public constructor(private readonly options: HonoAdapterOptions = {}) {}
 
