@@ -7,7 +7,8 @@ import type {
 import type { Cache, CreateCacheOptions, Events } from "cache-manager";
 import type { Keyv, KeyvStoreAdapter } from "keyv";
 
-export type { Cache, CreateCacheOptions, Events, Keyv, KeyvStoreAdapter };
+export { Keyv } from "keyv";
+export type { Cache, CreateCacheOptions, Events, KeyvStoreAdapter };
 
 /**
  * Module-level configuration for the caching package.

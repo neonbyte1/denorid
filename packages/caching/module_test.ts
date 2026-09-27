@@ -15,8 +15,8 @@ import { spy } from "@std/testing/mock";
 import { describe, it } from "node:test";
 import { CACHE_MANAGER, CACHING_MODULE_OPTIONS } from "./_constants.ts";
 import { InjectCache } from "./decorator.ts";
+import { type Cache, Keyv } from "./mod.ts";
 import { CachingModule } from "./module.ts";
-import type { Cache } from "./module_options.ts";
 
 describe(CachingModule.name, () => {
   describe("forRoot", () => {
@@ -186,6 +186,63 @@ describe(CachingModule.name, () => {
 
         assertStrictEquals(consumer.cache, direct);
         assertNotStrictEquals(consumer.cache, undefined);
+      } finally {
+        await module.close();
+      }
+    });
+
+    it("layers stores built with the exported Keyv class", async () => {
+      const primary = new Keyv();
+      const secondary = new Keyv();
+      const module = await Test.createTestingModule({
+        imports: [CachingModule.forRoot({ stores: [primary, secondary] })],
+      })
+        .useCoreGlobals()
+        .compile();
+
+      try {
+        const cache = await module.get<Cache>(CACHE_MANAGER);
+
+        await cache.set("layered", "v");
+
+        assertEquals(await primary.get("layered"), "v");
+        assertEquals(await secondary.get("layered"), "v");
+      } finally {
+        await module.close();
+      }
+    });
+
+    it("shares one cache between the importing module and modules relying on global", async () => {
+      @Injectable()
+      class FeatureConsumer {
+        @InjectCache()
+        public readonly cache!: Cache;
+      }
+
+      @Module({ providers: [FeatureConsumer], exports: [FeatureConsumer] })
+      class FeatureModule {}
+
+      @Injectable()
+      class RootConsumer {
+        @InjectCache()
+        public readonly cache!: Cache;
+      }
+
+      const module = await Test.createTestingModule({
+        imports: [CachingModule.forRoot({ global: true }), FeatureModule],
+        providers: [RootConsumer],
+      })
+        .useCoreGlobals()
+        .compile();
+
+      try {
+        const feature = await module.get(FeatureConsumer);
+        const root = await module.get(RootConsumer);
+
+        await feature.cache.set("shared", 1);
+
+        assertStrictEquals(feature.cache, root.cache);
+        assertEquals(await root.cache.get("shared"), 1);
       } finally {
         await module.close();
       }
