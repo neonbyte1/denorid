@@ -845,7 +845,7 @@ describe("InjectorContext", () => {
 
       @Module({})
       class HybridModule {
-        static forRoot(): DynamicModule {
+        public static forRoot(): DynamicModule {
           return { module: HybridModule, imports: [ExtraModule] };
         }
       }
@@ -913,7 +913,7 @@ describe("InjectorContext", () => {
 
     @Module({})
     class GreetingModule {
-      static forRoot(): DynamicModule {
+      public static forRoot(): DynamicModule {
         return {
           module: GreetingModule,
           global: true,
