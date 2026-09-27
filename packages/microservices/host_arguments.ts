@@ -4,6 +4,7 @@ import {
   type HttpHostArguments,
   type Pattern,
   type RpcArguments,
+  type WsArguments,
 } from "@denorid/core";
 
 /**
@@ -46,5 +47,19 @@ export class MicroserviceHostArguments implements HostArguments {
       getPattern: () => this.pattern,
       getData: () => this.data,
     };
+  }
+
+  /**
+   * Not available in a microservice context - use {@link switchToRpc} instead.
+   *
+   * @throws {Error} Always.
+   * @return {WsArguments}
+   */
+  public switchToWs(): WsArguments {
+    throw new ContextNotAvailableException(
+      "microservice",
+      "switchToWs",
+      "switchToRpc",
+    );
   }
 }

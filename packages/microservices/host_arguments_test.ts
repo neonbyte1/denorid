@@ -15,6 +15,18 @@ describe(MicroserviceHostArguments.name, () => {
     });
   });
 
+  describe("switchToWs()", () => {
+    it("throws - WebSocket context not available in microservice", () => {
+      const host = new MicroserviceHostArguments("test.pattern", { id: 1 });
+
+      assertThrows(
+        () => host.switchToWs(),
+        Error,
+        "switchToWs() is not available in microservice context",
+      );
+    });
+  });
+
   describe("switchToRpc()", () => {
     it("returns the pattern and data", () => {
       const data = { id: 42 };
