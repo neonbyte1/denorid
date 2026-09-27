@@ -1,6 +1,7 @@
 import { InvalidStaticMemberDecoratorUsageError } from "@denorid/injector";
 import { assertArrayIncludes, assertEquals, assertThrows } from "@std/assert";
 import { describe, it } from "node:test";
+import { MESSAGE_PATTERN_METADATA } from "../_constants.ts";
 import {
   EventPattern,
   MessageController,
@@ -46,6 +47,20 @@ describe(MessagePattern.name, () => {
       InvalidStaticMemberDecoratorUsageError,
     );
   });
+
+  it("throws on #private methods", () => {
+    assertThrows(
+      () => {
+        class Ctrl {
+          @MessagePattern("find")
+          #find(): void {}
+        }
+        return Ctrl;
+      },
+      Error,
+      'Decorator @MessagePattern() cannot be applied to private function "#find".',
+    );
+  });
 });
 
 describe(EventPattern.name, () => {
@@ -83,6 +98,20 @@ describe(EventPattern.name, () => {
       InvalidStaticMemberDecoratorUsageError,
     );
   });
+
+  it("throws on #private methods", () => {
+    assertThrows(
+      () => {
+        class Ctrl {
+          @EventPattern("created")
+          #created(): void {}
+        }
+        return Ctrl;
+      },
+      Error,
+      'Decorator @EventPattern() cannot be applied to private function "#created".',
+    );
+  });
 });
 
 describe(MessageController.name, () => {
@@ -113,6 +142,31 @@ describe(MessageController.name, () => {
       ["handleA", "handleB"],
     );
   });
+
+  it("keeps the handlers of a parent controller when a subclass adds and overrides some", () => {
+    @MessageController()
+    class BaseCtrl {
+      @MessagePattern("find")
+      find(): void {}
+    }
+
+    @MessageController()
+    class UsersCtrl extends BaseCtrl {
+      @MessagePattern("users.find")
+      override find(): void {}
+
+      @EventPattern("users.created")
+      created(): void {}
+    }
+
+    assertEquals(getMessageMappingMetadata(BaseCtrl), [
+      { pattern: "find", name: "find", type: "message" },
+    ]);
+    assertEquals(getMessageMappingMetadata(UsersCtrl), [
+      { pattern: "users.find", name: "find", type: "message" },
+      { pattern: "users.created", name: "created", type: "event" },
+    ]);
+  });
 });
 
 describe("createMessageMappingDecorator - upsert behaviour", () => {
@@ -126,5 +180,37 @@ describe("createMessageMappingDecorator - upsert behaviour", () => {
     const meta = getMessageMappingMetadata(Ctrl);
     assertEquals(meta?.length, 1);
     assertEquals(meta?.[0].pattern, "second");
+  });
+
+  it("copies inherited entries instead of changing the parent class", () => {
+    const parent = {
+      [MESSAGE_PATTERN_METADATA]: [
+        { pattern: "find", name: "find", type: "message" },
+        { pattern: "created", name: "created", type: "event" },
+      ],
+    };
+    // Spec compliant runtimes link the metadata of a subclass to the parent's.
+    const metadata = Object.create(parent) as DecoratorMetadataObject;
+    const context = (name: string): ClassMethodDecoratorContext =>
+      ({
+        kind: "method",
+        name,
+        static: false,
+        private: false,
+        metadata,
+      }) as ClassMethodDecoratorContext;
+
+    MessagePattern("users.find")(() => {}, context("find"));
+    EventPattern("updated")(() => {}, context("updated"));
+
+    assertEquals(parent[MESSAGE_PATTERN_METADATA], [
+      { pattern: "find", name: "find", type: "message" },
+      { pattern: "created", name: "created", type: "event" },
+    ]);
+    assertEquals(metadata[MESSAGE_PATTERN_METADATA], [
+      { pattern: "users.find", name: "find", type: "message" },
+      { pattern: "created", name: "created", type: "event" },
+      { pattern: "updated", name: "updated", type: "event" },
+    ]);
   });
 });
