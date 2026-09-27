@@ -1022,7 +1022,9 @@ export class DrizzleService implements OnModuleInit {
     try {
       switch (name) {
         case "drizzle-orm/node-postgres":
-          return (await import("drizzle-orm/node-postgres")) as unknown as Partial<T>;
+          return (await import(
+            "drizzle-orm/node-postgres"
+          )) as unknown as Partial<T>;
         case "drizzle-orm/libsql":
           return (await import("drizzle-orm/libsql")) as unknown as Partial<T>;
         case "pg":
