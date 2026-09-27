@@ -6,8 +6,20 @@ import {
 } from "./exceptions.ts";
 
 /**
- * Registry for intervals, timeouts, and Deno cron jobs managed by the
- * schedule module.
+ * Handle returned by `setInterval`: a number on Deno, a timer object on
+ * Node.js and Bun.
+ */
+export type IntervalHandle = ReturnType<typeof setInterval>;
+
+/**
+ * Handle returned by `setTimeout`: a number on Deno, a timer object on
+ * Node.js and Bun.
+ */
+export type TimeoutHandle = ReturnType<typeof setTimeout>;
+
+/**
+ * Registry for intervals, timeouts, and cron jobs managed by the schedule
+ * module.
  *
  * Inject this to add, retrieve, or cancel scheduled tasks at runtime.
  *
@@ -60,10 +72,10 @@ export class SchedulerRegistry {
    * Returns the interval handle for the given name.
    *
    * @param {string} name - The interval name.
-   * @return {number}
+   * @return {IntervalHandle}
    * @throws {SchedulerItemNotFoundException} When name is not found.
    */
-  public getInterval(name: string): number {
+  public getInterval(name: string): IntervalHandle {
     const ref = this.intervals.get(name);
 
     if (ref === undefined) {
@@ -86,11 +98,11 @@ export class SchedulerRegistry {
    * Registers a named timeout handle.
    *
    * @param {string} name - Unique name for the timeout.
-   * @param {number} timeoutRef - The return value of `setTimeout`.
+   * @param {TimeoutHandle} timeoutRef - The return value of `setTimeout`.
    * @return {void}
    * @throws {SchedulerItemAlreadyExistsException} When name is already taken.
    */
-  public addTimeout(name: string, timeoutRef: number): void {
+  public addTimeout(name: string, timeoutRef: TimeoutHandle): void {
     if (this.timeouts.has(name)) {
       throw new SchedulerItemAlreadyExistsException("Timeout", name);
     }
@@ -116,10 +128,10 @@ export class SchedulerRegistry {
    * Returns the timeout handle for the given name.
    *
    * @param {string} name - The timeout name.
-   * @return {number}
+   * @return {TimeoutHandle}
    * @throws {SchedulerItemNotFoundException} When name is not found.
    */
-  public getTimeout(name: string): number {
+  public getTimeout(name: string): TimeoutHandle {
     const ref = this.timeouts.get(name);
 
     if (ref === undefined) {

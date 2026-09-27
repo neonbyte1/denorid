@@ -1,4 +1,5 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
+import { FakeTime } from "@std/testing/time";
 import { describe, it } from "node:test";
 import { CronJobRef } from "./cron_job_ref.ts";
 import {
@@ -18,27 +19,33 @@ function makeRef(name: string): CronJobRef {
 
 describe(SchedulerRegistry.name, () => {
   describe("intervals", () => {
-    it("adds, gets, lists, and deletes an interval", () => {
+    it("adds, gets, lists, and deletes an interval, clearing it", () => {
+      using time = new FakeTime();
       const registry = new SchedulerRegistry();
-      const id = 42 as unknown as number;
+      let ticks = 0;
+      const handle = setInterval(() => ticks++, 1_000);
 
-      registry.addInterval("my-interval", id);
+      registry.addInterval("my-interval", handle);
 
-      assertEquals(registry.getInterval("my-interval"), id);
+      assertStrictEquals(registry.getInterval("my-interval"), handle);
       assertEquals(registry.getIntervals(), ["my-interval"]);
 
+      time.tick(1_000);
       registry.deleteInterval("my-interval");
+      time.tick(5_000);
 
+      assertEquals(ticks, 1);
       assertEquals(registry.getIntervals(), []);
     });
 
     it("throws when adding a duplicate interval name", () => {
+      using _time = new FakeTime();
       const registry = new SchedulerRegistry();
 
-      registry.addInterval("dup", 1 as unknown as number);
+      registry.addInterval("dup", setInterval(() => {}, 1_000));
 
       assertThrows(
-        () => registry.addInterval("dup", 2 as unknown as number),
+        () => registry.addInterval("dup", setInterval(() => {}, 1_000)),
         SchedulerItemAlreadyExistsException,
         'Interval "dup" is already registered.',
       );
@@ -66,27 +73,34 @@ describe(SchedulerRegistry.name, () => {
   });
 
   describe("timeouts", () => {
-    it("adds, gets, lists, and deletes a timeout", () => {
+    it("adds, gets, lists, and deletes a timeout, clearing it", () => {
+      using time = new FakeTime();
       const registry = new SchedulerRegistry();
-      const id = 99 as unknown as number;
+      let fired = false;
+      const handle = setTimeout(() => {
+        fired = true;
+      }, 1_000);
 
-      registry.addTimeout("my-timeout", id);
+      registry.addTimeout("my-timeout", handle);
 
-      assertEquals(registry.getTimeout("my-timeout"), id);
+      assertStrictEquals(registry.getTimeout("my-timeout"), handle);
       assertEquals(registry.getTimeouts(), ["my-timeout"]);
 
       registry.deleteTimeout("my-timeout");
+      time.tick(5_000);
 
+      assertEquals(fired, false);
       assertEquals(registry.getTimeouts(), []);
     });
 
     it("throws when adding a duplicate timeout name", () => {
+      using _time = new FakeTime();
       const registry = new SchedulerRegistry();
 
-      registry.addTimeout("dup", 1 as unknown as number);
+      registry.addTimeout("dup", setTimeout(() => {}, 1_000));
 
       assertThrows(
-        () => registry.addTimeout("dup", 2 as unknown as number),
+        () => registry.addTimeout("dup", setTimeout(() => {}, 1_000)),
         SchedulerItemAlreadyExistsException,
         'Timeout "dup" is already registered.',
       );
