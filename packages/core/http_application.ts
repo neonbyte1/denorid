@@ -105,6 +105,7 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
       this.initialized = true;
 
       this.exceptionHandler = await this.ctx.resolveInternal(ExceptionHandler);
+      await this.exceptionHandler.register();
 
       this.controller = await this.adapter.createControllerMapping({
         ctx: this.ctx,

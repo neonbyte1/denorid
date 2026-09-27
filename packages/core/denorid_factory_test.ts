@@ -24,17 +24,19 @@ describe("DenoridFactory", () => {
   class RootModule {}
 
   function makeInjectorContext(): InjectorContext {
-    return {
+    const ctx = {
       container: {
         getByTag: () => [],
         getTokensByTag: () => [],
       },
       resolve: () => Promise.resolve(undefined),
-      resolveInternal: () => Promise.resolve(undefined),
+      resolveInternal: () => Promise.resolve(new ExceptionHandler(ctx)),
       onApplicationBootstrap: () => Promise.resolve(),
       onBeforeApplicationShutdown: () => Promise.resolve(),
       onApplicationShutdown: () => Promise.resolve(),
     } as unknown as InjectorContext;
+
+    return ctx;
   }
 
   function makeControllerMapping(): ControllerMapping {

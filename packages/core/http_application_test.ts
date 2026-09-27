@@ -1,7 +1,17 @@
-import type { InjectorContext, Type } from "@denorid/injector";
+import {
+  type InjectorContext,
+  InjectorContext as InjectorContextImpl,
+  Module,
+  type Type,
+} from "@denorid/injector";
+import { Logger } from "@denorid/logger";
 import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import { assertSpyCalls, spy, stub } from "@std/testing/mock";
 import { describe, it } from "node:test";
+import { Catch, type ExceptionFilter } from "./exceptions/filter.ts";
+import { ExceptionHandler } from "./exceptions/handler.ts";
+import { IntrinsicException } from "./exceptions/intrinsic.ts";
+import type { HostArguments } from "./host_arguments.ts";
 import type { ControllerMappingOptions, HttpAdapter } from "./http/adapter.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
 import type { CorsOptions } from "./http/cors.ts";
@@ -11,17 +21,19 @@ import type { MicroserviceServer } from "./microservices/server.ts";
 class RootModule {}
 
 function makeInjectorContext(): InjectorContext {
-  return {
+  const ctx = {
     container: {
       getByTag: () => [],
       getTokensByTag: () => [],
     },
     resolve: () => Promise.resolve(undefined),
-    resolveInternal: () => Promise.resolve(undefined),
+    resolveInternal: () => Promise.resolve(new ExceptionHandler(ctx)),
     onApplicationBootstrap: () => Promise.resolve(),
     onBeforeApplicationShutdown: () => Promise.resolve(),
     onApplicationShutdown: () => Promise.resolve(),
   } as unknown as InjectorContext;
+
+  return ctx;
 }
 
 function makeControllerMapping(): ControllerMapping {
@@ -127,6 +139,74 @@ describe("HttpApplication", () => {
 
       assertSpyCalls(createMappingSpy, 1);
       assertStrictEquals(createMappingSpy.calls[0].args[0].cors, cors);
+    });
+
+    it("registers exception filters before creating the controller mapping", async () => {
+      const ctx = makeInjectorContext();
+      const exceptionHandler = new ExceptionHandler(ctx);
+      const order: string[] = [];
+      const adapter = makeHttpAdapter();
+
+      ctx.resolveInternal = <T>(): Promise<T> =>
+        Promise.resolve(exceptionHandler as T);
+      using _register = stub(exceptionHandler, "register", () => {
+        order.push("register");
+        return Promise.resolve();
+      });
+      using _mapping = stub(adapter, "createControllerMapping", () => {
+        order.push("createControllerMapping");
+        return Promise.resolve(makeControllerMapping());
+      });
+
+      await makeApp({ adapter, ctx }).init();
+
+      assertEquals(order, ["register", "createControllerMapping"]);
+    });
+
+    it("runs @Catch() exception filters for errors of HTTP routes", async () => {
+      class TeapotException extends IntrinsicException {}
+
+      @Catch(TeapotException)
+      class TeapotFilter implements ExceptionFilter<TeapotException> {
+        public catch(): string {
+          return "filtered";
+        }
+      }
+
+      @Module({ providers: [TeapotFilter] })
+      class AppModule {}
+
+      using _log = stub(Logger.prototype, "log");
+      const ctx = await InjectorContextImpl.create(AppModule, {
+        beforeInit: (ctx: InjectorContext): void => {
+          ctx.registerGlobal({
+            provide: ExceptionHandler,
+            useValue: new ExceptionHandler(ctx),
+          });
+        },
+      });
+      const results: unknown[] = [];
+      const adapter: HttpAdapter = {
+        ...makeHttpAdapter(),
+        // Simulates a route handler that throws while the routes register.
+        createControllerMapping: (
+          { exceptionHandler }: ControllerMappingOptions,
+        ) =>
+          Promise.resolve({
+            register: async (): Promise<void> => {
+              const error = new TeapotException();
+
+              results.push(
+                exceptionHandler.canHandle(error),
+                await exceptionHandler.handle(error, {} as HostArguments),
+              );
+            },
+          } as unknown as ControllerMapping),
+      };
+
+      await new HttpApplication(AppModule, ctx, { adapter }).init();
+
+      assertEquals(results, [true, "filtered"]);
     });
   });
 
