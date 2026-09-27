@@ -1,8 +1,8 @@
 import { type HttpRoute, HttpRoutes } from "@denorid/core";
 import { Inject, Injectable } from "@denorid/injector";
-import { OPENAPI_MODULE_OPTIONS } from "./_constants.ts";
+import { OPENAPI_DOCUMENT_OPTIONS } from "./_constants.ts";
 import { createDocument } from "./_document.ts";
-import type { OpenApiModuleOptions } from "./module_options.ts";
+import type { OpenApiDocumentOptions } from "./module_options.ts";
 import type { OpenAPIObject } from "./types.ts";
 
 /**
@@ -27,8 +27,8 @@ export class OpenApiService {
   @Inject(HttpRoutes)
   private readonly routes!: HttpRoutes;
 
-  @Inject(OPENAPI_MODULE_OPTIONS)
-  private readonly options!: OpenApiModuleOptions;
+  @Inject(OPENAPI_DOCUMENT_OPTIONS)
+  private readonly options!: OpenApiDocumentOptions;
 
   #cache?: { routes: readonly HttpRoute[]; document: OpenAPIObject };
 
@@ -48,7 +48,7 @@ export class OpenApiService {
     if (this.#cache?.routes !== routes) {
       this.#cache = {
         routes,
-        document: createDocument(routes, this.options.document),
+        document: createDocument(routes, this.options),
       };
     }
 

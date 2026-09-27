@@ -10,7 +10,7 @@ import {
   HttpRoutes,
   Params,
 } from "@denorid/core";
-import { Module, type Type } from "@denorid/injector";
+import { Injectable, Module, type Type } from "@denorid/injector";
 import {
   assertEquals,
   assertStrictEquals,
@@ -157,6 +157,86 @@ describe("OpenApiModule", () => {
 
       assertEquals(paths.includes("/api/reference/openapi.json"), true);
       assertEquals(paths.includes("/api/reference"), false);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("creates the document fields with the forRootAsync() factory", async () => {
+    @Injectable()
+    class VersionService {
+      public readonly version = "2.1.0";
+    }
+
+    @Module({ providers: [VersionService], exports: [VersionService] })
+    class VersionModule {}
+
+    @Module({
+      imports: [
+        OpenApiModule.forRootAsync({
+          imports: [VersionModule],
+          inject: [VersionService],
+          useFactory: (versions: VersionService) =>
+            Promise.resolve({
+              info: { title: "Async <API>", version: versions.version },
+            }),
+        }),
+      ],
+      providers: [ThreadController],
+    })
+    class AsyncModule {}
+
+    const app = await DenoridFactory.create(AsyncModule, adapter, {
+      basePath: "/api",
+    });
+
+    try {
+      await app.init();
+
+      const document = (await app.get(OpenApiService, { strict: false }))
+        .getDocument();
+      const page = await callRoute(app, "/api/docs") as Response;
+
+      assertEquals(document.info, { title: "Async <API>", version: "2.1.0" });
+      assertEquals(Object.keys(document.paths ?? {}), ["/api/threads/{id}"]);
+      assertStringIncludes(
+        await page.text(),
+        "<title>Async &lt;API&gt;</title>",
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("applies path and ui to forRootAsync()", async () => {
+    @Module({
+      imports: [
+        OpenApiModule.forRootAsync({
+          path: "reference",
+          ui: false,
+          useFactory: () => ({ info: { title: "API", version: "1" } }),
+        }),
+      ],
+    })
+    class AsyncModule {}
+
+    const app = await DenoridFactory.create(AsyncModule, adapter);
+
+    try {
+      await app.init();
+
+      assertEquals(
+        (await app.get(HttpRoutes, { strict: false })).list().map((
+          { path },
+        ) => path),
+        ["/reference/openapi.json"],
+      );
+      assertEquals(
+        (await callRoute(app, "/reference/openapi.json") as {
+          info: unknown;
+        }).info,
+        { title: "API", version: "1" },
+      );
     } finally {
       await app.close();
     }

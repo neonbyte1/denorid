@@ -1,3 +1,8 @@
+import type {
+  GenericFunction,
+  InjectionToken,
+  ModuleMetadata,
+} from "@denorid/injector";
 import type { OpenAPIObject } from "./types.ts";
 
 /**
@@ -29,4 +34,27 @@ export interface OpenApiModuleOptions {
    * @default true
    */
   ui?: boolean;
+}
+
+/**
+ * Options of {@linkcode OpenApiModule.forRootAsync}: the document fields
+ * come from a factory, e.g. to read the API version from a config service.
+ * `path` and `ui` define the routes and stay static.
+ */
+export interface OpenApiAsyncModuleOptions
+  extends
+    Pick<ModuleMetadata, "imports">,
+    Omit<OpenApiModuleOptions, "document"> {
+  /**
+   * Creates the top-level document fields. The values of {@link inject} are
+   * passed as arguments, in order.
+   *
+   * @return {OpenApiDocumentOptions | Promise<OpenApiDocumentOptions>} The
+   *   document fields.
+   */
+  useFactory: GenericFunction<
+    OpenApiDocumentOptions | Promise<OpenApiDocumentOptions>
+  >;
+  /** Injection tokens passed as arguments to {@link useFactory}. */
+  inject?: InjectionToken[];
 }
