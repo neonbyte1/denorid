@@ -21,6 +21,16 @@ describe(AmqpHostArguments.name, () => {
       ContextNotAvailableException,
     );
   });
+
+  it("throws ContextNotAvailableException from switchToWs", () => {
+    const host = new AmqpHostArguments("pattern", null);
+
+    assertThrows(
+      () => host.switchToWs(),
+      ContextNotAvailableException,
+      "switchToWs() is not available in amqp context. Use switchToRpc() instead.",
+    );
+  });
 });
 
 describe(AmqpExecutionContext.name, () => {

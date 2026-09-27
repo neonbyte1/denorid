@@ -7,6 +7,7 @@ import {
   type HttpRouteFn,
   type Pattern,
   type RpcArguments,
+  type WsArguments,
 } from "@denorid/core";
 import type { Type } from "@denorid/injector";
 
@@ -51,6 +52,20 @@ export class AmqpHostArguments implements HostArguments {
       getPattern: () => this.pattern,
       getData: () => this.data,
     };
+  }
+
+  /**
+   * Not available in an AMQP context - use {@link switchToRpc} instead.
+   *
+   * @throws {ContextNotAvailableException} Always.
+   * @return {WsArguments}
+   */
+  public switchToWs(): WsArguments {
+    throw new ContextNotAvailableException(
+      "amqp",
+      "switchToWs",
+      "switchToRpc",
+    );
   }
 }
 
