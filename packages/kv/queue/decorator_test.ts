@@ -138,6 +138,33 @@ describe(Queued.name, () => {
     ]);
   });
 
+  it("copies inherited metadata instead of writing into the parent class", () => {
+    @QueueHandler()
+    class BaseHandler {
+      @Queued("base")
+      onBase() {}
+    }
+
+    @QueueHandler()
+    class ChildHandler extends BaseHandler {
+      @Queued("child")
+      onChild() {}
+    }
+
+    const base = {
+      event: "base",
+      name: undefined,
+      dto: undefined,
+      method: "onBase",
+    };
+
+    assertEquals(getQueueMetadata(BaseHandler), [base]);
+    assertEquals(getQueueMetadata(ChildHandler), [
+      base,
+      { event: "child", name: undefined, dto: undefined, method: "onChild" },
+    ]);
+  });
+
   it("throws when used on a static method", () => {
     const error = assertThrows(
       () => {

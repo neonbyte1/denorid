@@ -122,10 +122,20 @@ export function Queued(
         } satisfies MessageOptions)
         : eventOrOptions;
 
-    const cache =
-      (ctx.metadata[QUEUE_HANDLER_METADATA] ??= []) as MessageMetadata[];
+    // A subclass sees its parent's array through the metadata prototype chain,
+    // copy it so the parent class keeps its own handlers only.
+    if (!Object.hasOwn(ctx.metadata, QUEUE_HANDLER_METADATA)) {
+      ctx.metadata[QUEUE_HANDLER_METADATA] = [
+        ...(ctx.metadata[QUEUE_HANDLER_METADATA] as
+          | MessageMetadata[]
+          | undefined ?? []),
+      ];
+    }
 
-    cache.push({ ...options, method: ctx.name });
+    (ctx.metadata[QUEUE_HANDLER_METADATA] as MessageMetadata[]).push({
+      ...options,
+      method: ctx.name,
+    });
 
     return target;
   };
