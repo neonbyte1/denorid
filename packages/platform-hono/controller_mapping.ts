@@ -317,8 +317,8 @@ export class HonoControllerMapping extends ControllerMapping {
 
   /**
    * Adds the validated inputs of a request to the Hono request: the body as
-   * `json` or `form`, the query string as `query` and the path parameters as
-   * `param`.
+   * `json` or `form`, the query string as `query`, the path parameters as
+   * `param` and the headers as `header`.
    *
    * @param {Context} c - The Hono context of the request.
    * @param {HonoRequestContext<unknown>} context - The validated request context.
@@ -347,6 +347,13 @@ export class HonoControllerMapping extends ControllerMapping {
       c.req.addValidatedData(
         "param",
         context.validated(route.params) as Record<string, unknown>,
+      );
+    }
+
+    if (route.headers !== undefined) {
+      c.req.addValidatedData(
+        "header",
+        context.validated(route.headers) as Record<string, unknown>,
       );
     }
   }

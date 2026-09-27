@@ -706,8 +706,9 @@ describe(HonoControllerMapping.name, () => {
     async function fetchJson(
       app: Hono,
       path: string,
+      init?: RequestInit,
     ): Promise<[number, unknown]> {
-      const response = await app.request(path);
+      const response = await app.request(path, init);
 
       return [response.status, await response.json()];
     }
@@ -764,6 +765,38 @@ describe(HonoControllerMapping.name, () => {
         validated: { id },
         valid: { id },
       }]);
+    });
+
+    it("validates the headers of @RequestHeaders() routes by lowercase name", async () => {
+      const TenantHeaders = z.object({ "x-tenant-id": z.uuid() });
+      const list = spy((ctx: RequestContext) => ({
+        validated: ctx.validated(TenantHeaders),
+        valid: honoValid(ctx, "header"),
+      }));
+      const app = await registerOnHono({
+        route: { name: "list", headers: TenantHeaders },
+        controller: { list },
+      });
+      const tenant = crypto.randomUUID();
+
+      const [missing] = await fetchJson(app, "/test");
+      const [invalid, invalidBody] = await fetchJson(app, "/test", {
+        headers: { "X-Tenant-Id": "not-a-uuid" },
+      });
+
+      assertEquals(missing, StatusCode.BadRequest);
+      assertEquals(invalid, StatusCode.BadRequest);
+      assertMatch(JSON.stringify(invalidBody), /"x-tenant-id: /);
+      assertSpyCalls(list, 0);
+      assertEquals(
+        await fetchJson(app, "/test", {
+          headers: { "X-Tenant-Id": tenant, Accept: "application/json" },
+        }),
+        [200, {
+          validated: { "x-tenant-id": tenant },
+          valid: { "x-tenant-id": tenant },
+        }],
+      );
     });
   });
 
