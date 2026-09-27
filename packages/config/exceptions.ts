@@ -30,3 +30,18 @@ export class ConfigFileError extends Error {
     this.name = "ConfigFileError";
   }
 }
+
+/**
+ * Thrown when plain `ConfigModule` was set up before
+ * `ConfigModule.forRootAsync()`, which would silently ignore the async
+ * options.
+ */
+export class ConfigModuleImportOrderError extends Error {
+  public constructor() {
+    super(
+      "ConfigModule was imported before ConfigModule.forRootAsync(); " +
+        "list ConfigModule.forRootAsync() before any module importing ConfigModule",
+    );
+    this.name = "ConfigModuleImportOrderError";
+  }
+}
