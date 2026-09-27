@@ -1,7 +1,13 @@
-import { assertInstanceOf, assertStrictEquals } from "@std/assert";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
 import { describe, it } from "node:test";
 import { BadRequestException } from "../exceptions/http/bad_request.ts";
+import { HttpException } from "../exceptions/http/base.ts";
 import { NotFoundException } from "../exceptions/http/not_found.ts";
 import { StatusCode } from "../http/status.ts";
 import { BaseParsePipe } from "./base.ts";
@@ -52,6 +58,28 @@ describe("BaseParsePipe", () => {
 
       assertInstanceOf(caught, NotFoundException);
     });
+
+    for (
+      const statusCode of [
+        StatusCode.ProxyAuthenticationRequired,
+        StatusCode.RangeNotSatisfiable,
+        StatusCode.ExpectationFailed,
+        StatusCode.FailedDependency,
+        StatusCode.UpgradeRequired,
+        StatusCode.PreconditionRequired,
+        StatusCode.TooManyRequests,
+      ] as const
+    ) {
+      it(`throws an HttpException with status ${statusCode}`, () => {
+        const pipe = new StubPipe({ statusCode });
+
+        const caught = assertThrows(() => pipe.transform(undefined, METADATA));
+
+        assertInstanceOf(caught, HttpException);
+        assertEquals(caught.status, statusCode);
+        assertEquals(caught.message, "validation failed");
+      });
+    }
   });
 
   describe("custom exceptionFactory", () => {

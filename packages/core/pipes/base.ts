@@ -8,9 +8,10 @@ import type { ArgumentMetadata, PipeTransform } from "./pipe_transform.ts";
 export interface ParsePipeOptions {
   /**
    * HTTP status code used when the validation factory is auto-generated.
-   * Defaults to `400 Bad Request`.
+   * Only codes with a built-in exception class are accepted; use
+   * `exceptionFactory` for anything else. Defaults to `400 Bad Request`.
    */
-  statusCode?: StatusCode;
+  statusCode?: ErrorHttpStatusCode;
   /**
    * When `true`, `null` and `undefined` values are passed through without
    * triggering a validation error.
@@ -56,8 +57,7 @@ export abstract class BaseParsePipe<
       {};
 
     this.exceptionFactory = exceptionFactory ??
-      ((error: string) =>
-        new HttpErrorByCode[statusCode as ErrorHttpStatusCode](error));
+      ((error: string) => new HttpErrorByCode[statusCode](error));
   }
 
   /**
