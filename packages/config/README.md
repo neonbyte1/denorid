@@ -132,11 +132,7 @@ not matter either.
 
 `forRootAsync` must be listed before every module that imports plain
 `ConfigModule`, otherwise resolving `ConfigService` throws a
-`ConfigModuleImportOrderError`. With `global: true` the order does not matter as
-long as the tokens in `inject` are globally available. Modules that rely on the
-global `ConfigService` (without importing `ConfigModule`) always need globally
-available `inject` tokens: the global copy cannot see the `imports` of
-`forRootAsync`.
+`ConfigModuleImportOrderError`. With `global: true` the order does not matter.
 
 ## License
 
