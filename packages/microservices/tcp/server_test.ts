@@ -45,21 +45,12 @@ function withController<T extends object>(
   return server;
 }
 
-/**
- * Starts `server` on the port from its options and waits until it accepts
- * connections.
- */
-async function start(
-  server: TcpServer,
-): Promise<{ port: number; stopped: Promise<void> }> {
+/** Starts `server` on the port from its options and returns the bound port. */
+async function start(server: TcpServer): Promise<{ port: number }> {
   servers.push(server);
+  await server.listen();
 
-  const stopped = server.listen();
-  const netServer = server["netServer"]!;
-
-  await once(netServer, "listening");
-
-  return { port: (netServer.address() as AddressInfo).port, stopped };
+  return { port: (server["netServer"]!.address() as AddressInfo).port };
 }
 
 async function connectTo(port: number): Promise<Socket> {
@@ -142,12 +133,19 @@ describe(TcpServer.name, () => {
   describe("listen()", () => {
     registerCleanup();
 
-    it("serves until close() and then releases the port", async () => {
-      const server = new TcpServer({ host: "127.0.0.1", port: 0 });
-      const { port, stopped } = await start(server);
+    it("resolves once listening, serves until close() and then releases the port", async () => {
+      const server = withController(
+        new TcpServer({ host: "127.0.0.1", port: 0 }),
+        PingController,
+      );
+      const { port } = await start(server);
+
+      assertEquals(
+        await exchange(await connectTo(port), message("ping", "ready", "id-1")),
+        [{ id: "id-1", isDisposed: true, response: "pong:ready" }],
+      );
 
       await server.close();
-      await stopped;
 
       const refused = net.connect({ host: "127.0.0.1", port });
       const [err] = await once(refused, "error");
@@ -157,10 +155,9 @@ describe(TcpServer.name, () => {
 
     it("serves again when called after close()", async () => {
       const server = withController(new TcpServer({ port: 0 }), PingController);
-      const first = await start(server);
 
+      await start(server);
       await server.close();
-      await first.stopped;
 
       const { port } = await start(server);
 
@@ -202,37 +199,73 @@ describe(TcpServer.name, () => {
       assertEquals(bound, ["127.0.0.1", 3000]);
     });
 
-    it("rejects when the port is already in use", async () => {
-      const { port } = await start(new TcpServer({ port: 0 }));
-      const second = new TcpServer({ port });
+    it("rejects with EADDRINUSE when the port is in use and holds nothing afterwards", async () => {
+      const first = new TcpServer({ port: 0 });
+      const { port } = await start(first);
+      const second = withController(new TcpServer({ port }), PingController);
 
       servers.push(second);
 
-      const err = await assertRejects(() => second.listen());
+      await assertRejects(() => second.listen(), Error, "EADDRINUSE");
+      assertEquals(second["netServer"], undefined);
 
-      assertEquals((err as { code?: string }).code, "EADDRINUSE");
+      // Once the port is free again, the failed server binds it.
+      await first.close();
+      await second.listen();
+
+      assertEquals(
+        await exchange(await connectTo(port), message("ping", "retry", "id-1")),
+        [{ id: "id-1", isDisposed: true, response: "pong:retry" }],
+      );
     });
 
-    it("rejects when the server fails after listening", async () => {
-      const server = new TcpServer({ port: 0 });
-      const { stopped } = await start(server);
+    it("logs server errors after listening and keeps serving", async () => {
+      const server = withController(new TcpServer({ port: 0 }), PingController);
+      using logError = spy(server["logger"], "error");
+      const { port } = await start(server);
+      const failure = new Error("accept failed");
 
-      server["netServer"]!.emit("error", new Error("accept failed"));
+      server["netServer"]!.emit("error", failure);
 
-      await assertRejects(() => stopped, Error, "accept failed");
+      assertEquals(logError.calls.map((call) => call.args), [
+        ["TCP server error", failure],
+      ]);
+      assertEquals(
+        await exchange(await connectTo(port), message("ping", "alive", "id-1")),
+        [{ id: "id-1", isDisposed: true, response: "pong:alive" }],
+      );
     });
   });
 
   describe("close()", () => {
     registerCleanup();
 
-    it("is safe to call before listen()", async () => {
-      await new TcpServer({}).close();
+    it("is safe to call before listen() and twice", async () => {
+      const server = new TcpServer({ port: 0 });
+
+      await server.close();
+      await start(server);
+      await server.close();
+      await server.close();
+    });
+
+    it("stops a pending listen(), which resolves without binding", async () => {
+      const server = new TcpServer({ port: 0 });
+      using logInfo = spy(server["logger"], "log");
+      const listening = server.listen();
+      const netServer = server["netServer"]!;
+
+      await server.close();
+      await listening;
+
+      assertEquals(netServer.listening, false);
+      assertEquals(netServer.address(), null);
+      assertEquals(logInfo.calls.length, 0);
     });
 
     it("destroys open connections", async () => {
       const server = new TcpServer({ port: 0 });
-      const { port, stopped } = await start(server);
+      const { port } = await start(server);
       const accepted = once(server["netServer"]!, "connection");
       const client = await connectTo(port);
 
@@ -242,7 +275,6 @@ describe(TcpServer.name, () => {
 
       await server.close();
       await clientClosed;
-      await stopped;
     });
 
     it("delivers the responses of running handlers before closing connections", async () => {
@@ -260,7 +292,7 @@ describe(TcpServer.name, () => {
       }
 
       const server = withController(new TcpServer({ port: 0 }), SlowCtrl);
-      const { port, stopped } = await start(server);
+      const { port } = await start(server);
       const client = await connectTo(port);
       const responses = responsesOf(client);
 
@@ -271,7 +303,6 @@ describe(TcpServer.name, () => {
 
       release.resolve();
       await closing;
-      await stopped;
 
       assertEquals(await responses, [
         { id: "id-1", isDisposed: true, response: "done" },

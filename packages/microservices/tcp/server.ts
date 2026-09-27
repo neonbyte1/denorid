@@ -38,6 +38,24 @@ function errorText(err: unknown): string {
 }
 
 /**
+ * Stops `server` from accepting connections.
+ *
+ * @param {NetServer} server - The server to close.
+ * @return {Promise<void>} Resolves once the server released its port and every
+ * connection it accepted closed. A server that is not bound (the bind failed
+ * or was cancelled) resolves right away.
+ */
+function release(server: NetServer): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+
+  // The callback gets `ERR_SERVER_NOT_RUNNING` for a server that is not bound,
+  // which still means it is released.
+  server.close(() => resolve());
+
+  return promise;
+}
+
+/**
  * Microservice server using TCP sockets from `node:net`, which works on Deno,
  * Bun and Node.js.
  *
@@ -58,9 +76,12 @@ export class TcpServer extends Server<TcpOptions> {
   private readonly deserializer = new TcpDeserializer();
 
   /**
-   * Starts listening and serves connections until {@link close} is called.
+   * Starts listening. Once listening, the server serves connections until
+   * {@link close} is called; later server errors are logged.
    *
-   * @return {Promise<void>} Resolves once the server was closed, rejects when binding or accepting fails.
+   * @return {Promise<void>} Resolves once the server accepts connections (or
+   * once {@link close} stopped the pending start), rejects when binding fails,
+   * after the server was released.
    */
   public override async listen(): Promise<void> {
     const host = this.options.host ?? "127.0.0.1";
@@ -71,25 +92,48 @@ export class TcpServer extends Server<TcpOptions> {
       { allowHalfOpen: true },
       (socket: Socket) => this.handleConnection(server, socket),
     );
+    const ready = Promise.withResolvers<void>();
+    let listening = false;
 
     this.netServer = server;
 
-    const stopped = Promise.withResolvers<void>();
-
-    server.on("error", stopped.reject);
-    server.once("close", stopped.resolve);
+    // Stays attached: an `error` event nobody listens to crashes the process.
+    server.on("error", (err: Error) => {
+      if (listening) {
+        this.logger.error("TCP server error", err);
+      } else {
+        ready.reject(err);
+      }
+    });
+    // `close()` before the socket is bound cancels the bind: neither
+    // `listening` nor `error` follows then, only `close`.
+    server.once("close", () => ready.resolve());
     server.listen(port, host, () => {
-      this.logger.log(`TCP server listening on ${host}:${port}`);
+      listening = true;
+      ready.resolve();
     });
 
-    await stopped.promise;
+    try {
+      await ready.promise;
+    } catch (err) {
+      this.netServer = undefined;
+      await release(server);
+      throw err;
+    }
+
+    // `close()` started meanwhile and releases the server.
+    if (this.netServer !== server) {
+      return;
+    }
+
+    this.logger.log(`TCP server listening on ${host}:${port}`);
   }
 
   /**
    * Stops accepting connections and dispatching newly received frames, waits
    * until every running handler finished and wrote its response, then
    * destroys every open connection and waits until the listening socket is
-   * released.
+   * released. Safe to call before, during and after {@link listen}.
    *
    * @return {Promise<void>}
    */
@@ -99,16 +143,7 @@ export class TcpServer extends Server<TcpOptions> {
     // Connections stop dispatching once their server is no longer current.
     this.netServer = undefined;
 
-    // Stops accepting connections; the callback fires once every accepted
-    // socket is closed. It gets `ERR_SERVER_NOT_RUNNING` when `listen()`
-    // failed to bind, which still means the server is released.
-    const released = Promise.withResolvers<void>();
-
-    if (server) {
-      server.close(() => released.resolve());
-    } else {
-      released.resolve();
-    }
+    const released = server && release(server);
 
     await Promise.allSettled(
       [...this.connections.values()].flatMap((inFlight) => [...inFlight]),
@@ -118,7 +153,7 @@ export class TcpServer extends Server<TcpOptions> {
       socket.destroy();
     }
 
-    await released.promise;
+    await released;
   }
 
   private async handleConnection(
