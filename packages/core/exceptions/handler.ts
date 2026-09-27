@@ -27,9 +27,12 @@ interface ExceptionFilterEntry {
  *
  * On {@linkcode ExceptionHandler.register}, all providers tagged with
  * `EXCEPTION_FILTER` are resolved and indexed by the exception class they
- * target. When an error is thrown, {@linkcode ExceptionHandler.handle} fans
- * out to all matching filters in priority order and collects their return
- * values.
+ * target. When an error is thrown, {@linkcode ExceptionHandler.handle} looks
+ * up the error's class, then its parent classes, and fans out to all filters
+ * of the first (most specific) class that has any, in priority order, and
+ * collects their return values. A `@Catch(HttpException)` filter therefore
+ * handles every `NotFoundException`, while a `@Catch(NotFoundException)`
+ * filter takes precedence over it for that class.
  *
  * @example
  * ```ts
@@ -45,8 +48,8 @@ export class ExceptionHandler {
   private readonly logger: LoggerService = new Logger(ExceptionHandler.name, {
     timestamp: true,
   });
-  private readonly handlers: WeakMap<Type, ExceptionFilterEntry[]> =
-    new WeakMap();
+  private handlers: WeakMap<Type, ExceptionFilterEntry[]> = new WeakMap();
+  private registering?: Promise<void>;
 
   /**
    * @param {InjectorContext} ctx The injector context used to resolve exception
@@ -59,14 +62,19 @@ export class ExceptionHandler {
    *
    * Iterates over every token tagged with `EXCEPTION_FILTER`, reads its
    * decorator metadata and-when valid-resolves the instance and inserts it
-   * into the internal priority-sorted cache.
+   * into the internal priority-sorted cache. Runs once: later calls return
+   * the first call's result, unless it rejected, in which case the next call
+   * discovers the filters again.
    *
    * @returns {Promise<void>} Resolves once all filters are registered.
    */
-  public async register(): Promise<void> {
-    for (const token of this.ctx.container.getTokensByTag(EXCEPTION_FILTER)) {
-      await this.registerExceptionHandler(token as Type<ExceptionFilter>);
-    }
+  public register(): Promise<void> {
+    this.registering ??= this.discoverFilters().catch((error: unknown) => {
+      this.registering = undefined;
+      throw error;
+    });
+
+    return this.registering;
   }
 
   /**
@@ -74,16 +82,16 @@ export class ExceptionHandler {
    *
    * @param {unknown} error The value thrown during request processing.
    * @returns {boolean} `true` when `error` is an `Error` instance **and** at
-   * least one filter is registered for its constructor, `false` otherwise.
+   * least one filter is registered for its class or one of its parent
+   * classes, `false` otherwise.
    */
   public canHandle(error: unknown): boolean {
-    return error instanceof Error &&
-      this.handlers.has((error as Error).constructor as Type);
+    return error instanceof Error && this.findFilters(error) !== undefined;
   }
 
   /**
-   * Dispatches `error` to all matching exception filters and collects their
-   * return values.
+   * Dispatches `error` to the exception filters of its most specific class
+   * that has filters and collects their return values.
    *
    * - Filters are called concurrently via `Promise.allSettled`.
    * - Rejected filters are logged at `fatal` level and do not interrupt other
@@ -107,7 +115,7 @@ export class ExceptionHandler {
       }
 
       const allSetteled = await Promise.allSettled(
-        (this.handlers.get(error.constructor as Type) ?? []).map((
+        (this.findFilters(error) ?? []).map((
           { exceptionFilter },
         ) => exceptionFilter.catch(error, host)),
       );
@@ -129,15 +137,66 @@ export class ExceptionHandler {
   }
 
   /**
-   * Resolves the filter class from the DI container and registers it in the
-   * cache if it carries valid {@linkcode ExceptionFilterMetadata}.
+   * Finds the filters of the error's class or, when it has none, of the
+   * closest parent class that has some.
    *
+   * @param {Error} error The error to find the filters for.
+   * @returns {ExceptionFilterEntry[]|undefined} The filters sorted by
+   * priority, or `undefined` when no class in the chain has any.
+   *
+   * @internal
+   */
+  private findFilters(error: Error): ExceptionFilterEntry[] | undefined {
+    for (
+      let target: unknown = error.constructor;
+      typeof target === "function";
+      target = Object.getPrototypeOf(target)
+    ) {
+      const entries = this.handlers.get(target as Type);
+
+      if (entries) {
+        return entries;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Resolves every `EXCEPTION_FILTER`-tagged provider into a new cache, which
+   * replaces the current one once all filters are resolved.
+   *
+   * @returns {Promise<void>} Resolves once the cache is replaced.
+   *
+   * @internal
+   */
+  private async discoverFilters(): Promise<void> {
+    const handlers = new WeakMap<Type, ExceptionFilterEntry[]>();
+
+    for (
+      const token of this.ctx.container.getTokensByTag(EXCEPTION_FILTER, true)
+    ) {
+      await this.registerExceptionHandler(
+        handlers,
+        token as Type<ExceptionFilter>,
+      );
+    }
+
+    this.handlers = handlers;
+  }
+
+  /**
+   * Resolves the filter class from the DI container and adds it to `handlers`
+   * if it carries valid {@linkcode ExceptionFilterMetadata}.
+   *
+   * @param {WeakMap<Type, ExceptionFilterEntry[]>} handlers The cache to add the filter to.
    * @param {Type<ExceptionFilter>} filterClass The class decorated with `@Catch`.
    * @returns {Promise<void>}
    *
    * @internal
    */
   private async registerExceptionHandler(
+    handlers: WeakMap<Type, ExceptionFilterEntry[]>,
     filterClass: Type<ExceptionFilter>,
   ): Promise<void> {
     const metadata = filterClass[Symbol.metadata]
@@ -152,7 +211,7 @@ export class ExceptionHandler {
     const exceptionFilter = await this.ctx.resolveInternal(filterClass);
 
     this.registerExceptionFilterInCache(
-      this.getExceptionFilterEntries(metadata.target),
+      this.getExceptionFilterEntries(handlers, metadata.target),
       {
         exceptionFilter,
         priority: metadata.priority ?? 0,
@@ -163,21 +222,25 @@ export class ExceptionHandler {
   /**
    * Retrieves (or lazily creates) the filter entry list for `target`.
    *
+   * @param {WeakMap<Type, ExceptionFilterEntry[]>} handlers The cache holding the lists.
    * @param {Type} target The exception class used as the cache key.
    * @returns {ExceptionFilterEntry[]} The mutable entry list for `target`.
    *
    * @internal
    */
-  private getExceptionFilterEntries(target: Type): ExceptionFilterEntry[] {
-    let handlers = this.handlers.get(target);
+  private getExceptionFilterEntries(
+    handlers: WeakMap<Type, ExceptionFilterEntry[]>,
+    target: Type,
+  ): ExceptionFilterEntry[] {
+    let entries = handlers.get(target);
 
-    if (!handlers) {
-      handlers = [];
+    if (!entries) {
+      entries = [];
 
-      this.handlers.set(target, handlers);
+      handlers.set(target, entries);
     }
 
-    return handlers;
+    return entries;
   }
 
   /**

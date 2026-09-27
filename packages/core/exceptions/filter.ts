@@ -41,6 +41,10 @@ export interface ExceptionFilterMetadata<T extends Error> {
  * Class decorator that marks a class as an exception filter and registers it
  * for a specific exception type.
  *
+ * The filter also handles subclasses of that type, unless a filter is
+ * registered for a more specific class in the error's class hierarchy: only
+ * the filters of the closest class run.
+ *
  * @template T The exception class to catch
  *
  * @param {Type<T>} exceptionClassToFilter The exception class this filter handles
@@ -58,7 +62,8 @@ export function Catch<T extends Error>(
 ): Decorator<ClassDecoratorContext, Type>;
 /**
  * Class decorator that marks a class as an exception filter and registers it
- * for a specific exception type with additional options.
+ * for a specific exception type with additional options. Subclasses without
+ * a filter of their own are handled as well.
  *
  * @template T The exception class to catch
  *
@@ -71,7 +76,8 @@ export function Catch<T extends Error>(
 ): Decorator<ClassDecoratorContext, Type>;
 /**
  * Class decorator that marks a class as an exception filter using a full
- * metadata object.
+ * metadata object. Subclasses of `target` without a filter of their own are
+ * handled as well.
  *
  * @template T The exception class to catch
  *

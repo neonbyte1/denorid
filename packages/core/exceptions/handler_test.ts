@@ -1,11 +1,13 @@
-import type { InjectorContext, Type } from "@denorid/injector";
+import { InjectorContext, Module, type Type } from "@denorid/injector";
 import type { Logger } from "@denorid/logger";
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { assertSpyCalls, spy } from "@std/testing/mock";
 import { describe, it } from "node:test";
 import type { HostArguments } from "../host_arguments.ts";
 import { Catch, type ExceptionFilter } from "./filter.ts";
 import { ExceptionHandler } from "./handler.ts";
+import { HttpException } from "./http/base.ts";
+import { NotFoundException } from "./http/not_found.ts";
 import { IntrinsicException } from "./intrinsic.ts";
 
 describe("ExceptionHandler", () => {
@@ -52,6 +54,32 @@ describe("ExceptionHandler", () => {
   }
 
   describe("register", () => {
+    it("registers filters declared in nested, non-exported modules", async () => {
+      @Catch(TestError)
+      class NestedFilter implements ExceptionFilter<TestError> {
+        public catch(): string {
+          return "nested";
+        }
+      }
+
+      @Module({ providers: [NestedFilter] })
+      class InnerModule {}
+
+      @Module({ imports: [InnerModule] })
+      class FeatureModule {}
+
+      @Module({ imports: [FeatureModule] })
+      class AppModule {}
+
+      await using ctx = await InjectorContext.create(AppModule);
+      const handler = new ExceptionHandler(ctx);
+
+      disableLoggerOutput(handler);
+      await handler.register();
+
+      assertEquals(await handler.handle(new TestError(), mockHost), "nested");
+    });
+
     it("does nothing when no tagged tokens exist", async () => {
       const handler = new ExceptionHandler(makeCtx([], new Map()));
 
@@ -123,6 +151,77 @@ describe("ExceptionHandler", () => {
 
       assertEquals(handler.canHandle(new TestError()), true);
     });
+
+    it("registers every filter once when called repeatedly", async () => {
+      @Catch(TestError)
+      class OnceFilter implements ExceptionFilter<TestError> {
+        catch(): unknown {
+          return "once";
+        }
+      }
+
+      const token = OnceFilter as unknown as Type;
+      const ctx = makeCtx([token], new Map([[token, new OnceFilter()]]));
+      const resolveSpy = spy(ctx, "resolveInternal");
+      const handler = new ExceptionHandler(ctx);
+
+      disableLoggerOutput(handler);
+
+      await Promise.all([handler.register(), handler.register()]);
+      await handler.register();
+
+      assertSpyCalls(resolveSpy, 1);
+      assertEquals(await handler.handle(new TestError(), mockHost), "once");
+    });
+
+    it("discovers the filters again, without leftovers, after a failed registration", async () => {
+      @Catch(TestError)
+      class FirstFilter implements ExceptionFilter<TestError> {
+        catch(): unknown {
+          return "first";
+        }
+      }
+
+      @Catch(TestError)
+      class SecondFilter implements ExceptionFilter<TestError> {
+        catch(): unknown {
+          return "second";
+        }
+      }
+
+      const first = FirstFilter as unknown as Type;
+      const second = SecondFilter as unknown as Type;
+      let failures = 1;
+      const ctx = {
+        container: { getTokensByTag: () => [first, second] },
+        resolveInternal: (token: Type): Promise<ExceptionFilter> => {
+          if (token === second && failures-- > 0) {
+            return Promise.reject(new Error("filter unavailable"));
+          }
+
+          return Promise.resolve(
+            token === first ? new FirstFilter() : new SecondFilter(),
+          );
+        },
+      } as unknown as InjectorContext;
+      const handler = new ExceptionHandler(ctx);
+
+      disableLoggerOutput(handler);
+
+      await assertRejects(
+        () => handler.register(),
+        Error,
+        "filter unavailable",
+      );
+      assertEquals(handler.canHandle(new TestError()), false);
+
+      await handler.register();
+
+      assertEquals(await handler.handle(new TestError(), mockHost), [
+        "first",
+        "second",
+      ]);
+    });
   });
 
   describe("canHandle", () => {
@@ -180,6 +279,41 @@ describe("ExceptionHandler", () => {
       await handler.register();
 
       assertEquals(handler.canHandle(new AnotherError()), false);
+    });
+
+    it("returns true for subclasses of a filtered class", async () => {
+      @Catch(HttpException)
+      class HttpFilter implements ExceptionFilter<HttpException> {
+        catch(): unknown {
+          return "http";
+        }
+      }
+
+      @Catch(Error)
+      class CatchAllFilter implements ExceptionFilter<Error> {
+        catch(): unknown {
+          return "all";
+        }
+      }
+
+      const httpToken = HttpFilter as unknown as Type;
+      const allToken = CatchAllFilter as unknown as Type;
+      const handler = new ExceptionHandler(
+        makeCtx(
+          [httpToken, allToken],
+          new Map<Type, ExceptionFilter>([
+            [httpToken, new HttpFilter()],
+            [allToken, new CatchAllFilter()],
+          ]),
+        ),
+      );
+
+      disableLoggerOutput(handler);
+
+      await handler.register();
+
+      assertEquals(handler.canHandle(new NotFoundException()), true);
+      assertEquals(handler.canHandle(new TypeError("x")), true);
     });
   });
 
@@ -370,6 +504,63 @@ describe("ExceptionHandler", () => {
       await handler.register();
 
       assertEquals(await handler.handle(new TestError(), mockHost), "ok");
+    });
+
+    it("runs only the filters of the closest class in the error's hierarchy", async () => {
+      @Catch(HttpException)
+      class HttpFilter implements ExceptionFilter<HttpException> {
+        catch(exception: HttpException): unknown {
+          return `http ${exception.status}`;
+        }
+      }
+
+      @Catch(NotFoundException)
+      class NotFoundFilter implements ExceptionFilter<NotFoundException> {
+        catch(): unknown {
+          return "not found";
+        }
+      }
+
+      @Catch(Error)
+      class CatchAllFilter implements ExceptionFilter<Error> {
+        catch(): unknown {
+          return "all";
+        }
+      }
+
+      class ConflictException extends HttpException {
+        public constructor() {
+          super("Conflict", 409);
+        }
+      }
+
+      const httpToken = HttpFilter as unknown as Type;
+      const notFoundToken = NotFoundFilter as unknown as Type;
+      const allToken = CatchAllFilter as unknown as Type;
+      const handler = new ExceptionHandler(
+        makeCtx(
+          [httpToken, notFoundToken, allToken],
+          new Map<Type, ExceptionFilter>([
+            [httpToken, new HttpFilter()],
+            [notFoundToken, new NotFoundFilter()],
+            [allToken, new CatchAllFilter()],
+          ]),
+        ),
+      );
+
+      disableLoggerOutput(handler);
+
+      await handler.register();
+
+      assertEquals(
+        await handler.handle(new NotFoundException(), mockHost),
+        "not found",
+      );
+      assertEquals(
+        await handler.handle(new ConflictException(), mockHost),
+        "http 409",
+      );
+      assertEquals(await handler.handle(new TestError(), mockHost), "all");
     });
   });
 
