@@ -39,8 +39,10 @@ type InstanceMessageMetadata = MessageMetadata & {
 
 /**
  * Internal listener that discovers `@QueueHandler` classes on application bootstrap
- * and subscribes each to its respective Deno KV queue.
+ * and subscribes each to its respective KV queue.
  * Closes all connections before application shutdown.
+ * A failing queue subscription is logged, unless it fails because shutdown
+ * closed the store.
  */
 @Injectable()
 export class KvQueueListener
@@ -51,6 +53,8 @@ export class KvQueueListener
 
   @Inject(ExceptionHandler)
   private readonly exceptionHandler!: ExceptionHandler;
+
+  private closing = false;
 
   public constructor(private readonly moduleRef: ModuleRef) {}
 
@@ -65,6 +69,8 @@ export class KvQueueListener
    * @inheritdoc
    */
   public async onBeforeApplicationShutdown(_signal?: string): Promise<void> {
+    this.closing = true;
+
     const connections = await this.moduleRef.get(KvConnections);
 
     connections.close();
@@ -87,7 +93,21 @@ export class KvQueueListener
 
       kv.listenQueue((msg: unknown) => {
         return this.handleMessage(ctx, msg, queueMetadata);
-      });
+      }).catch((err: unknown) => this.handleListenFailure(key, err));
+    }
+  }
+
+  private handleListenFailure(queue: string, err: unknown): void {
+    if (this.closing) {
+      return;
+    }
+
+    const message = `Queue listener for "${queue}" failed`;
+
+    if (err instanceof Error) {
+      this.logger.error(`${message}: ${err.message}`, err.stack);
+    } else {
+      this.logger.error(`${message}: ${String(err)}`);
     }
   }
 

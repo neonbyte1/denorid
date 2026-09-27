@@ -1,3 +1,4 @@
+import type { Kv } from "@deno/kv";
 import type {
   CanActivate,
   ExceptionHandler,
@@ -24,6 +25,8 @@ interface ListenerHarness {
   closeCalls: string[];
   exceptionCalls: unknown[][];
   getCalls: unknown[][];
+  listens: Record<string, PromiseWithResolvers<void>[]>;
+  loggerErrors: unknown[][];
   loggerWarnings: unknown[][];
   resolutionCalls: unknown[][];
   scopes: string[];
@@ -45,16 +48,23 @@ function createHarness(
   const getCalls: unknown[][] = [];
   const resolutionCalls: unknown[][] = [];
   const exceptionCalls: unknown[][] = [];
+  const loggerErrors: unknown[][] = [];
   const loggerWarnings: unknown[][] = [];
+  const listens: Record<string, PromiseWithResolvers<void>[]> = {};
   const scopes: string[] = [];
   const closeCalls: string[] = [];
 
   for (const [name, entry] of Object.entries(harnessOptions.entries)) {
     entry.kv ??= {
       listenQueue: (callback: ListenerCallback) => {
+        const listen = Promise.withResolvers<void>();
+
         (callbacks[name] ??= []).push(callback);
+        (listens[name] ??= []).push(listen);
+
+        return listen.promise;
       },
-    } as unknown as Deno.Kv;
+    } as unknown as Kv;
   }
 
   const connections = {
@@ -112,6 +122,7 @@ function createHarness(
   });
   Object.defineProperty(listener, "logger", {
     value: {
+      error: (...args: unknown[]) => loggerErrors.push(args),
       warn: (...args: unknown[]) => loggerWarnings.push(args),
     },
   });
@@ -121,6 +132,8 @@ function createHarness(
     closeCalls,
     exceptionCalls,
     getCalls,
+    listens,
+    loggerErrors,
     loggerWarnings,
     listener,
     resolutionCalls,
@@ -394,6 +407,67 @@ describe(KvQueueListener.name, () => {
     await harness.listener.onBeforeApplicationShutdown("SIGTERM");
 
     assertEquals(harness.closeCalls, ["close"]);
+  });
+
+  describe("queue subscription failures", () => {
+    // Deno's test runner fails a test on unhandled promise rejections, so each
+    // case also proves that the listenQueue rejection is handled.
+    @QueueHandler("jobs")
+    class JobsHandler {
+      @Queued("event")
+      handle() {}
+    }
+
+    async function bootstrap(): Promise<ListenerHarness> {
+      const harness = createHarness({
+        entries: { jobs: { path: "/tmp/jobs.db", queue: true } },
+        handlers: [JobsHandler],
+        instances: new Map([[JobsHandler, new JobsHandler()]]),
+      });
+
+      await harness.listener.onApplicationBootstrap();
+
+      return harness;
+    }
+
+    function settle(): Promise<void> {
+      return new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+
+    it("logs an Error rejection with the queue name and stack", async () => {
+      const harness = await bootstrap();
+      const failure = new Error("message not found");
+
+      harness.listens.jobs[0].reject(failure);
+      await settle();
+
+      assertEquals(harness.loggerErrors, [[
+        'Queue listener for "jobs" failed: message not found',
+        failure.stack,
+      ]]);
+    });
+
+    it("logs a non-Error rejection without a stack", async () => {
+      const harness = await bootstrap();
+
+      harness.listens.jobs[0].reject("boom");
+      await settle();
+
+      assertEquals(harness.loggerErrors, [[
+        'Queue listener for "jobs" failed: boom',
+      ]]);
+    });
+
+    it("ignores a rejection caused by closing the store during shutdown", async () => {
+      const harness = await bootstrap();
+
+      await harness.listener.onBeforeApplicationShutdown("SIGTERM");
+      harness.listens.jobs[0].reject(new Error("message not found"));
+      await settle();
+
+      assertEquals(harness.closeCalls, ["close"]);
+      assertEquals(harness.loggerErrors, []);
+    });
   });
 
   describe("guard enforcement", () => {
