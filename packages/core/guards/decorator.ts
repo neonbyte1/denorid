@@ -1,12 +1,15 @@
-import {
-  type ClassMethodDecoratorInitializer,
-  type Decorator,
-  InvalidStaticMemberDecoratorUsageError,
-  type MethodDecorator,
-  type Type,
+import type {
+  ClassMethodDecoratorInitializer,
+  Decorator,
+  MethodDecorator,
+  Type,
 } from "@denorid/injector";
 import { CONTROLLER_REQUEST_MAPPING } from "../_constants.ts";
 import { preserveRequestMappingMetadata } from "../http/_request_mapping.ts";
+import {
+  assertInstanceMember,
+  getOwnMetadata,
+} from "../websockets/_metadata.ts";
 import type { CanActivate, CanActivateFn } from "./can_activate.ts";
 
 export const GUARDS_METADATA = Symbol.for("denorid.guards");
@@ -76,7 +79,8 @@ export function getMethodGuards(
  * plain function.
  *
  * @returns {Decorator<ClassDecoratorContext, Type> & MethodDecorator} A
- * decorator applicable to both classes and non-static methods.
+ * decorator applicable to both classes and non-static, non-`#private`
+ * methods. Guards added to a subclass never change its parent class.
  */
 export function UseGuards(
   ...guards: (Type<CanActivate> | CanActivate | CanActivateFn)[]
@@ -91,19 +95,20 @@ export function UseGuards(
     let cache: Set<Type<CanActivate> | CanActivate | CanActivateFn>;
 
     if (ctx.kind === "method") {
-      if (ctx.static) {
-        throw new InvalidStaticMemberDecoratorUsageError(
-          UseGuards.name,
-          ctx.name,
-          "function",
-        );
-      }
+      assertInstanceMember(
+        UseGuards.name,
+        ctx as ClassMethodDecoratorContext,
+        "function",
+      );
 
       cache = preserveRequestMappingMetadata(ctx).guards ??= new Set();
     } else {
-      cache = (ctx.metadata[GUARDS_METADATA] ??= new Set()) as Set<
-        Type<CanActivate> | CanActivate | CanActivateFn
-      >;
+      cache = getOwnMetadata(
+        ctx.metadata,
+        GUARDS_METADATA,
+        (inherited?: Set<Type<CanActivate> | CanActivate | CanActivateFn>) =>
+          new Set(inherited),
+      );
     }
 
     for (const guard of guards) {

@@ -102,6 +102,31 @@ describe("@UseGuards()", () => {
 
       assertEquals(result, ExampleController);
     });
+
+    // Deno links the metadata of a subclass to its parent's only when the
+    // subclass has a class decorator, as `@UseGuards()` is here.
+    it("should not add a subclass guard to the parent or a sibling", () => {
+      const authGuard: CanActivateFn = () => true;
+      const adminGuard: CanActivateFn = () => true;
+      const publicGuard: CanActivateFn = () => true;
+
+      @UseGuards(authGuard)
+      class BaseController {}
+
+      @UseGuards(adminGuard)
+      class AdminController extends BaseController {}
+
+      @UseGuards(publicGuard)
+      class PublicController extends BaseController {}
+
+      const guardsOf = (type: typeof BaseController): unknown[] => [
+        ...(type[Symbol.metadata]?.[GUARDS_METADATA] as Set<unknown>),
+      ];
+
+      assertEquals(guardsOf(BaseController), [authGuard]);
+      assertEquals(guardsOf(AdminController), [authGuard, adminGuard]);
+      assertEquals(guardsOf(PublicController), [authGuard, publicGuard]);
+    });
   });
 
   describe("as a method decorator", () => {
@@ -117,6 +142,21 @@ describe("@UseGuards()", () => {
           void ExampleController;
         },
         InvalidStaticMemberDecoratorUsageError,
+      );
+    });
+
+    it("should throw when decorating a #private method", () => {
+      assertThrows(
+        () => {
+          class ExampleController {
+            @UseGuards(MockGuard)
+            #internal(): void {}
+          }
+
+          void ExampleController;
+        },
+        Error,
+        'Decorator @UseGuards() cannot be applied to private function "#internal"',
       );
     });
 
