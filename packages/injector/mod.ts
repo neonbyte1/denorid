@@ -23,6 +23,8 @@
  * ```
  * @module
  */
+import "./_symbol_metadata.ts";
+
 export * from "./common.ts";
 export * from "./constants.ts";
 export * from "./container.ts";

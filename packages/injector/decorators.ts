@@ -1,3 +1,4 @@
+import "./_symbol_metadata.ts";
 import type { InjectableMetadata, InjectionDependency } from "./_metadata.ts";
 import type {
   Decorator,
