@@ -41,8 +41,9 @@ npx jsr add @denorid/core
 ```
 
 Runtime specific features pick the native API when available: HTTP serving
-(`Deno.serve`, `Bun.serve`, `@hono/node-server`), cron (`Deno.cron`, otherwise
-croner) and KV (`Deno.openKv`, otherwise `@deno/kv`).
+(`Deno.serve`, `Bun.serve`, `@hono/node-server`), WebSockets (Hono's WebSocket
+helper per runtime; socket.io through `@denorid/platform-socket-io`), cron
+(`Deno.cron`, otherwise croner) and KV (`Deno.openKv`, otherwise `@deno/kv`).
 
 ## License
 
