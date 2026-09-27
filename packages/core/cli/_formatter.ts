@@ -1,3 +1,5 @@
+import process from "node:process";
+
 /**
  * 16-colour palette recognised by {@linkcode OutputFormatter}.
  *
@@ -81,20 +83,13 @@ const TAG_PATTERN: RegExp = /<(\/?)([a-zA-Z][a-zA-Z0-9_-]*)>/g;
  * Decides whether ANSI escapes should be emitted to stdout/stderr by default.
  *
  * Honours the `NO_COLOR` environment variable (https://no-color.org) and
- * downgrades to plain output when stdout is not attached to a TTY.
+ * downgrades to plain output when `process.stdout` (`node:process`) is not
+ * attached to a TTY.
  *
  * @returns {boolean} `true` when the terminal accepts ANSI escapes.
  */
 export function shouldDecorate(): boolean {
-  if (Deno.env.get("NO_COLOR") !== undefined) {
-    return false;
-  }
-
-  try {
-    return Deno.stdout.isTerminal();
-  } catch {
-    return false;
-  }
+  return process.env.NO_COLOR === undefined && process.stdout.isTTY === true;
 }
 
 /**

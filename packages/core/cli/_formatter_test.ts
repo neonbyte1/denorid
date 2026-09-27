@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { stub } from "@std/testing/mock";
+import process from "node:process";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { OutputFormatter, shouldDecorate } from "./_formatter.ts";
 
@@ -151,46 +151,67 @@ describe("OutputFormatter", () => {
 });
 
 describe("shouldDecorate()", () => {
-  const previous = Deno.env.get("NO_COLOR");
+  const previousNoColor = process.env.NO_COLOR;
+  const isTTYDescriptor = Object.getOwnPropertyDescriptor(
+    process.stdout,
+    "isTTY",
+  );
+
+  function setIsTTY(value: boolean | undefined): void {
+    Object.defineProperty(process.stdout, "isTTY", {
+      value,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+  }
 
   beforeEach(() => {
-    Deno.env.delete("NO_COLOR");
+    delete process.env.NO_COLOR;
   });
 
   afterEach(() => {
-    if (previous === undefined) {
-      Deno.env.delete("NO_COLOR");
+    if (previousNoColor === undefined) {
+      delete process.env.NO_COLOR;
     } else {
-      Deno.env.set("NO_COLOR", previous);
+      process.env.NO_COLOR = previousNoColor;
+    }
+
+    if (isTTYDescriptor === undefined) {
+      Reflect.deleteProperty(process.stdout, "isTTY");
+    } else {
+      Object.defineProperty(process.stdout, "isTTY", isTTYDescriptor);
     }
   });
 
   it("returns false when NO_COLOR is set (regardless of value)", () => {
-    Deno.env.set("NO_COLOR", "1");
+    setIsTTY(true);
+    process.env.NO_COLOR = "1";
+
     assertEquals(shouldDecorate(), false);
   });
 
   it("returns false when NO_COLOR is set to empty string", () => {
-    Deno.env.set("NO_COLOR", "");
+    setIsTTY(true);
+    process.env.NO_COLOR = "";
+
     assertEquals(shouldDecorate(), false);
   });
 
-  it("delegates to Deno.stdout.isTerminal() when NO_COLOR is unset", () => {
-    using _terminal = stub(Deno.stdout, "isTerminal", () => true);
+  it("returns true when NO_COLOR is unset and stdout is a TTY", () => {
+    setIsTTY(true);
 
     assertEquals(shouldDecorate(), true);
   });
 
   it("returns false when NO_COLOR is unset and stdout is not a TTY", () => {
-    using _terminal = stub(Deno.stdout, "isTerminal", () => false);
+    setIsTTY(false);
 
     assertEquals(shouldDecorate(), false);
   });
 
-  it("returns false when Deno.stdout.isTerminal() throws", () => {
-    using _terminal = stub(Deno.stdout, "isTerminal", () => {
-      throw new Error("not a tty");
-    });
+  it("returns false when stdout does not report isTTY at all (piped stream on Node.js)", () => {
+    setIsTTY(undefined);
 
     assertEquals(shouldDecorate(), false);
   });
