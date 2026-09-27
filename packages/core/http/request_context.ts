@@ -5,6 +5,7 @@ import type {
   PipeTransformFn,
 } from "../pipes/pipe_transform.ts";
 import { isFunction } from "../type_guards.ts";
+import { VALIDATED_INPUTS } from "./_validated.ts";
 
 /**
  * Infers the TypeScript type from a Zod schema, or passes `T` through unchanged
@@ -135,6 +136,41 @@ export abstract class RequestContext<Dto = unknown> {
     key: string,
     transformer: PipeTransform<T> | PipeTransformFn<T>,
   ): T;
+
+  /**
+   * Returns the parsed value of a schema declared on the route with
+   * `@Body()`, `@Form()`, `@Query()` or `@Params()`. Validation runs after
+   * the guards and before the handler, so the value is available in the
+   * handler.
+   *
+   * @example
+   * ```ts
+   * \@Get("/:id")
+   * \@Params(ThreadParams)
+   * public get(ctx: RequestContext): unknown {
+   *   const { id } = ctx.validated(ThreadParams);
+   * }
+   * ```
+   *
+   * @param {T} schema - The schema passed to the decorator.
+   * @return {z.output<T>} The parsed value.
+   * @throws {Error} When the schema is not declared on the route, or read
+   *   before the request was validated (e.g. in a guard).
+   */
+  public validated<T extends ZodType>(schema: T): z.output<T> {
+    const values = VALIDATED_INPUTS.get(this);
+
+    if (!values?.has(schema)) {
+      throw new Error(
+        "RequestContext.validated() was called with a schema that was not " +
+          "validated for this request: declare it on the route with " +
+          "@Body(), @Form(), @Query() or @Params(), and read it after the " +
+          "guards ran.",
+      );
+    }
+
+    return values.get(schema) as z.output<T>;
+  }
 
   /**
    * Applies a pipe transformer to a raw string value.

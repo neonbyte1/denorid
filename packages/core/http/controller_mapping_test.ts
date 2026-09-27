@@ -6,18 +6,37 @@ import {
   type Type,
 } from "@denorid/injector";
 import { Logger } from "@denorid/logger";
-import { assertEquals } from "@std/assert";
-import { type Spy, spy, stub } from "@std/testing/mock";
+import {
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
+import {
+  assertSpyCall,
+  assertSpyCalls,
+  type Spy,
+  spy,
+  stub,
+} from "@std/testing/mock";
 import { beforeEach, describe, it } from "node:test";
+import { z } from "zod";
 import {
   CONTROLLER_METADATA,
   CONTROLLER_REQUEST_MAPPING,
   HTTP_CONTROLLER_METADATA,
 } from "../_constants.ts";
 import type { ExceptionHandler } from "../exceptions/handler.ts";
+import { BadRequestException } from "../exceptions/http/bad_request.ts";
+import { ZodValidationException } from "../exceptions/http/zod_validation.ts";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
 import { GUARDS_METADATA } from "../guards/decorator.ts";
 import type { ExecutionContext } from "../guards/execution_context.ts";
+import type {
+  PipeTransform,
+  PipeTransformFn,
+} from "../pipes/pipe_transform.ts";
 import type { RequestMappingMetadata } from "./_request_mapping.ts";
 import {
   ControllerMapping,
@@ -25,6 +44,7 @@ import {
 } from "./controller_mapping.ts";
 import type { ControllerOptions } from "./controller_options.ts";
 import { HttpMethod } from "./method.ts";
+import { RequestContext } from "./request_context.ts";
 
 describe("ControllerMapping", () => {
   interface RegisterRouteCall {
@@ -50,6 +70,81 @@ describe("ControllerMapping", () => {
         controllerGuards,
         route,
       });
+    }
+  }
+
+  /** Request context serving path parameters and query values, recording reads. */
+  class TestRequestContext extends RequestContext {
+    public readonly reads: string[] = [];
+
+    public constructor(
+      private readonly input: {
+        params?: Record<string, string>;
+        queries?: Record<string, string[]>;
+      } = {},
+    ) {
+      super("req-1", undefined);
+    }
+
+    public override get ip(): string {
+      throw new Error("Method not implemented");
+    }
+
+    public override getUnderlying<T = unknown>(): T {
+      throw new Error("Method not implemented");
+    }
+
+    public override headers(): Record<string, string> {
+      throw new Error("Method not implemented");
+    }
+
+    public override header(_key: string): string | undefined {
+      throw new Error("Method not implemented");
+    }
+
+    public override params(): Record<string, string> {
+      this.reads.push("params");
+
+      return this.input.params ?? {};
+    }
+
+    public override param(key: string): string | undefined;
+    public override param<T>(
+      key: string,
+      transformer: PipeTransform<T> | PipeTransformFn<T>,
+    ): T;
+    public override param<T>(
+      _key: string,
+      _transformer?: PipeTransform<T> | PipeTransformFn<T>,
+    ): string | T | undefined {
+      throw new Error("Method not implemented");
+    }
+
+    public override queries(): Record<string, string[]>;
+    public override queries(key: string): string[];
+    public override queries<T>(
+      key: string,
+      transformer: PipeTransform<T> | PipeTransformFn<T>,
+    ): T[];
+    public override queries<T>(
+      _key?: string,
+      _transformer?: PipeTransform<T> | PipeTransformFn<T>,
+    ): Record<string, string[]> | string[] | T[] {
+      this.reads.push("queries");
+
+      return this.input.queries ?? {};
+    }
+
+    public override query(key: string): string | undefined;
+    public override query<T>(
+      key: string,
+      transformer: PipeTransform<T> | PipeTransformFn<T>,
+    ): T;
+    public override query<T>(
+      _key: string,
+      _transformer?: PipeTransform<T> | PipeTransformFn<T>,
+    ): string | T | undefined {
+      throw new Error("Method not implemented");
     }
   }
 
@@ -303,6 +398,201 @@ describe("ControllerMapping", () => {
       await mapping.register();
 
       assertEquals(mapping.routeCalls.length, 0);
+    });
+  });
+
+  describe("validateRequest()", () => {
+    const Params = z.object({ id: z.coerce.number().int() });
+    const Query = z.object({
+      limit: z.coerce.number().int().max(100).default(20),
+      tags: z.array(z.string()).optional(),
+    });
+    const Body = z.object({ name: z.string().min(1) });
+
+    function createMapping(): TestControllerMapping {
+      const { ctx } = createMockContext([]);
+
+      return new TestControllerMapping({
+        ctx: ctx as never,
+        exceptionHandler: {} as ExceptionHandler,
+        globalGuards: [],
+        cors: undefined,
+      });
+    }
+
+    function validate(
+      context: TestRequestContext,
+      route: Omit<RequestMappingMetadata, "name">,
+      body: () => Promise<unknown> = () => Promise.resolve({ name: "Ada" }),
+    ): {
+      validated: Promise<void>;
+      readBody: Spy<unknown, ["json" | "form"], Promise<unknown>>;
+    } {
+      const readBody = spy((_type: "json" | "form") => body());
+
+      return {
+        validated: createMapping()["validateRequest"](
+          context,
+          { name: "handler", method: HttpMethod.POST, ...route },
+          readBody,
+        ),
+        readBody,
+      };
+    }
+
+    function messageOf(error: BadRequestException): unknown {
+      return typeof error.response === "object"
+        ? error.response.message
+        : error.response;
+    }
+
+    it("exposes the parsed path parameters, query and body", async () => {
+      const context = new TestRequestContext({
+        params: { id: "7" },
+        queries: { limit: ["5"], tags: ["a"] },
+      });
+      const { validated, readBody } = validate(context, {
+        params: Params,
+        query: Query,
+        validation: { type: "json", dto: Body },
+      });
+
+      await validated;
+
+      assertEquals(context.validated(Params), { id: 7 });
+      assertEquals(context.validated(Query), { limit: 5, tags: ["a"] });
+      assertEquals(context.validated(Body), { name: "Ada" });
+      assertStrictEquals(context.dto, context.validated(Body));
+      assertSpyCall(readBody, 0, { args: ["json"] });
+    });
+
+    it("reads the body in the format of the route", async () => {
+      const context = new TestRequestContext();
+      const { validated, readBody } = validate(context, {
+        validation: { type: "form", dto: Body },
+      });
+
+      await validated;
+
+      assertSpyCall(readBody, 0, { args: ["form"] });
+      assertEquals(context.dto, { name: "Ada" });
+    });
+
+    it("rejects invalid path parameters before reading the query and the body", async () => {
+      const context = new TestRequestContext({
+        params: { id: "abc" },
+        queries: { limit: ["5"] },
+      });
+      const { validated, readBody } = validate(context, {
+        params: Params,
+        query: Query,
+        validation: { type: "json", dto: Body },
+      });
+
+      const error = await assertRejects(
+        () => validated,
+        ZodValidationException,
+      );
+
+      assertEquals(error.status, 400);
+      assertEquals(context.reads, ["params"]);
+      assertSpyCalls(readBody, 0);
+    });
+
+    it("rejects an invalid query before reading the body", async () => {
+      const context = new TestRequestContext({ queries: { limit: ["500"] } });
+      const { validated, readBody } = validate(context, {
+        query: Query,
+        validation: { type: "json", dto: Body },
+      });
+
+      const error = await assertRejects(
+        () => validated,
+        ZodValidationException,
+      );
+
+      assertMatch(String(messageOf(error)), /^limit: /);
+      assertSpyCalls(readBody, 0);
+    });
+
+    it("rejects a scalar query key given more than once", async () => {
+      const context = new TestRequestContext({
+        queries: { limit: ["1", "2"] },
+      });
+      const { validated } = validate(context, { query: Query });
+
+      await assertRejects(() => validated, ZodValidationException);
+    });
+
+    it("rejects an invalid body", async () => {
+      const context = new TestRequestContext();
+      const { validated } = validate(
+        context,
+        { validation: { type: "json", dto: Body } },
+        () => Promise.resolve({ name: "" }),
+      );
+
+      await assertRejects(() => validated, ZodValidationException);
+      assertEquals(context.dto, undefined);
+    });
+
+    it("answers a body that cannot be read with Bad Request", async () => {
+      const context = new TestRequestContext();
+      const { validated } = validate(
+        context,
+        { validation: { type: "json", dto: Body } },
+        () => Promise.reject(new SyntaxError("Unexpected token")),
+      );
+
+      const error = await assertRejects(() => validated, BadRequestException);
+
+      assertEquals(error instanceof ZodValidationException, false);
+      assertEquals(messageOf(error), "Malformed request body");
+    });
+
+    it("reads nothing for routes without schemas", async () => {
+      const context = new TestRequestContext();
+      const { validated, readBody } = validate(context, {});
+
+      await validated;
+
+      assertEquals(context.reads, []);
+      assertSpyCalls(readBody, 0);
+      assertEquals(context.dto, undefined);
+    });
+
+    it("runs async refinements", async () => {
+      const Unique = z.object({ name: z.string() }).refine(
+        async ({ name }) => await Promise.resolve(name !== "taken"),
+        "name is taken",
+      );
+      const route = { validation: { type: "json" as const, dto: Unique } };
+      const taken = validate(
+        new TestRequestContext(),
+        route,
+        () => Promise.resolve({ name: "taken" }),
+      );
+      const free = new TestRequestContext();
+
+      const error = await assertRejects(
+        () => taken.validated,
+        ZodValidationException,
+      );
+      await validate(free, route, () => Promise.resolve({ name: "free" }))
+        .validated;
+
+      assertEquals(messageOf(error), ["name is taken"]);
+      assertEquals(free.validated(Unique), { name: "free" });
+    });
+
+    it("lets ctx.validated() throw for schemas the route does not declare", async () => {
+      const context = new TestRequestContext({ params: { id: "1" } });
+
+      assertThrows(() => context.validated(Params), Error, "not validated");
+
+      await validate(context, { params: Params }).validated;
+
+      assertThrows(() => context.validated(Query), Error, "not validated");
     });
   });
 

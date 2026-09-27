@@ -1,15 +1,20 @@
 import type { Type } from "@denorid/injector";
 import { Logger, type LoggerService } from "@denorid/logger";
+import type { ZodType } from "zod";
 import {
   CONTROLLER_METADATA,
   CONTROLLER_REQUEST_MAPPING,
   HTTP_CONTROLLER_METADATA,
 } from "../_constants.ts";
+import { BadRequestException } from "../exceptions/http/bad_request.ts";
+import { ZodValidationException } from "../exceptions/http/zod_validation.ts";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
 import { GUARDS_METADATA } from "../guards/decorator.ts";
 import type { ExecutionContext } from "../guards/execution_context.ts";
 import { isClass, isFunction } from "../type_guards.ts";
+import { createQueryInput } from "./_query_input.ts";
 import type { RequestMappingMetadata } from "./_request_mapping.ts";
+import { VALIDATED_INPUTS } from "./_validated.ts";
 import type { ControllerMappingOptions } from "./adapter.ts";
 import type { ControllerOptions } from "./controller_options.ts";
 import type { RequestContext } from "./request_context.ts";
@@ -76,7 +81,8 @@ export abstract class ControllerMapping {
    * The entries of an array `route.path` are alternatives: register the
    * handler once per entry of `normalizePaths(route.path)`. Before running
    * guards, check {@link matchesHost} for every request and pass requests
-   * for other hosts on.
+   * for other hosts on. After the guards, call {@link validateRequest}
+   * before the controller method.
    *
    * @param {Type<HttpController>} controllerClass - The controller class owning the route.
    * @param {string} controllerBasePath - The fully-resolved base path for the controller.
@@ -100,8 +106,8 @@ export abstract class ControllerMapping {
    * Every entry of the controller path is an alternative base path: the
    * routes are registered once per entry (a missing path counts as one empty
    * path). Route entries without an HTTP method (only `@HttpCode()`,
-   * `@Body()`, `@Form()` or `@UseGuards()` on a method) are not routes and
-   * are skipped.
+   * `@Body()`, `@Form()`, `@Query()`, `@Params()` or `@UseGuards()` on a
+   * method) are not routes and are skipped.
    *
    * @param {Type<HttpController>} controllerClass - The controller class to register.
    * @param {string} basePath - The global path prefix to prepend.
@@ -139,6 +145,91 @@ export abstract class ControllerMapping {
         );
       }
     }
+  }
+
+  /**
+   * Validates the inputs of a request against the schemas declared on the
+   * route, in this order: the path parameters (`@Params()`), the query
+   * string (`@Query()`, see the `@Query()` decorator for the array rule) and
+   * the body (`@Body()` or `@Form()`). Parts without schema are skipped; the
+   * body is only read when the route declares a body schema.
+   *
+   * Every parsed value is available through `context.validated(schema)`;
+   * the parsed body is also assigned to `context.dto`. Adapters call it
+   * after the guards allowed the request and before the controller method.
+   *
+   * @param {RequestContext} context - The context of the request.
+   * @param {RequestMappingMetadata} route - The route of the request.
+   * @param {(type: "json" | "form") => Promise<unknown>} readBody - Reads the
+   *   body as JSON or as form data.
+   * @return {Promise<void>} Resolves when every declared input is valid.
+   * @throws {BadRequestException} When the body cannot be read.
+   * @throws {ZodValidationException} When an input fails its schema.
+   */
+  protected async validateRequest(
+    context: RequestContext,
+    route: RequestMappingMetadata,
+    readBody: (type: "json" | "form") => Promise<unknown>,
+  ): Promise<void> {
+    if (route.params !== undefined) {
+      await this.parseInput(context, route.params, context.params());
+    }
+
+    if (route.query !== undefined) {
+      await this.parseInput(
+        context,
+        route.query,
+        createQueryInput(route.query, context.queries()),
+      );
+    }
+
+    if (route.validation === undefined) {
+      return;
+    }
+
+    const { type, dto } = route.validation;
+    let body: unknown;
+
+    try {
+      body = await readBody(type);
+    } catch {
+      throw new BadRequestException("Malformed request body");
+    }
+
+    context.dto = await this.parseInput(context, dto, body);
+  }
+
+  /**
+   * Parses one input of a request and stores the result for
+   * `context.validated(schema)`.
+   *
+   * @param {RequestContext} context - The context of the request.
+   * @param {ZodType} schema - The schema declared on the route.
+   * @param {unknown} input - The raw input.
+   * @return {Promise<unknown>} The parsed value.
+   * @throws {ZodValidationException} When the input fails the schema.
+   */
+  private async parseInput(
+    context: RequestContext,
+    schema: ZodType,
+    input: unknown,
+  ): Promise<unknown> {
+    const result = await schema.safeParseAsync(input);
+
+    if (!result.success) {
+      throw new ZodValidationException(result.error);
+    }
+
+    let values = VALIDATED_INPUTS.get(context);
+
+    if (values === undefined) {
+      values = new Map();
+      VALIDATED_INPUTS.set(context, values);
+    }
+
+    values.set(schema, result.data);
+
+    return result.data;
   }
 
   /**

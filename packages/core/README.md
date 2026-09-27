@@ -88,6 +88,71 @@ subclasses. For an error, only the filters of its most specific class that has
 filters run: with `@Catch(HttpException)` and `@Catch(Error)`, a
 `NotFoundException` goes to the first one and a `TypeError` to the second.
 
+## Request validation
+
+`@Body()` (JSON), `@Form()` (form data), `@Query()` and `@Params()` validate the
+inputs of a route with Zod schemas. Validation runs after the guards allowed the
+request and before the handler: the path parameters first, then the query
+string, then the body, which is only read when the route declares `@Body()` or
+`@Form()`. An invalid input answers `400 Bad Request` with one message per issue
+(`"limit: Too big: expected number to be <=100"`); a body that cannot be parsed
+answers `400` with `"Malformed request body"`.
+
+```ts
+import {
+  Body,
+  Controller,
+  Get,
+  Params,
+  Post,
+  Query,
+  type RequestContext,
+} from "@denorid/core";
+import { z } from "zod";
+
+const ThreadParams = z.object({ id: z.uuid() });
+const ListQuery = z.object({
+  limit: z.coerce.number().int().max(100).default(20),
+  tags: z.array(z.string()).optional(),
+});
+const CreateThread = z.object({ title: z.string().min(1) });
+
+@Controller("threads")
+export class ThreadController {
+  @Get()
+  @Query(ListQuery)
+  public list(ctx: RequestContext): unknown {
+    const { limit, tags } = ctx.validated(ListQuery);
+    return { limit, tags };
+  }
+
+  @Get(":id")
+  @Params(ThreadParams)
+  public get(ctx: RequestContext): unknown {
+    return { id: ctx.validated(ThreadParams).id };
+  }
+
+  @Post()
+  @Body(CreateThread)
+  public create(ctx: RequestContext<typeof CreateThread>): unknown {
+    return { title: ctx.dto?.title };
+  }
+}
+```
+
+- `ctx.validated(schema)` returns the parsed value (defaults, coercions and
+  transforms applied) of a schema declared on the route; it throws for any other
+  schema. The parsed body is also available as `ctx.dto`.
+- Path parameters and query values are strings: use `z.coerce` for numbers,
+  booleans and dates.
+- Query string: a key given once is passed as a string, a repeated key as a
+  `string[]`. A key whose schema accepts an array (`z.array()`, `z.tuple()` or
+  `z.set()`, also inside `.optional()`, `.default()`, unions, ...) is always a
+  `string[]`, so `?tags=a` gives `["a"]`. A repeated key whose schema expects a
+  single value fails: `?limit=1&limit=2` answers `400` instead of using one of
+  the values.
+- Refinements may be async.
+
 ## Testing
 
 ```ts

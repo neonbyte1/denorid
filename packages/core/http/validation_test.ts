@@ -2,7 +2,9 @@ import { assertEquals, assertExists, assertThrows } from "@std/assert";
 import { describe, it } from "node:test";
 import { z } from "zod";
 import { getRequestMappingMetadata as getMetadata } from "./_request_mapping.ts";
-import { Body, Form } from "./validation.ts";
+import { HttpMethod } from "./method.ts";
+import { Get } from "./request_mapping.ts";
+import { Body, Form, Params, Query } from "./validation.ts";
 
 describe("HTTP: Body decorator", () => {
   it("should throw when decorating a static method", () => {
@@ -103,5 +105,66 @@ describe("HTTP: Form decorator", () => {
     const metadata = getMetadata(ExampleController);
     assertExists(metadata);
     assertEquals(metadata.at(0)?.name, "myHandler");
+  });
+});
+
+describe("HTTP: Query and Params decorators", () => {
+  it("should throw when decorating a static method", () => {
+    const schema = z.object({});
+
+    assertThrows(() => {
+      class _ {
+        @Query(schema)
+        public static stub(): void {}
+      }
+    }, Error);
+    assertThrows(() => {
+      class _ {
+        @Params(schema)
+        public static stub(): void {}
+      }
+    }, Error);
+  });
+
+  it("should add the schemas to the route entry of the method, in any decorator order", () => {
+    const ListQuery = z.object({ limit: z.coerce.number() });
+    const ItemParams = z.object({ id: z.uuid() });
+    const ItemQuery = z.object({ expand: z.string().optional() });
+
+    class ExampleController {
+      @Query(ListQuery)
+      @Get()
+      public list(): void {}
+
+      @Get(":id")
+      @Params(ItemParams)
+      @Query(ItemQuery)
+      public get(): void {}
+    }
+
+    const metadata = getMetadata(ExampleController);
+    assertExists(metadata);
+    assertEquals(
+      metadata.map(({ name, method, query, params }) => ({
+        name,
+        method,
+        query,
+        params,
+      })),
+      [
+        {
+          name: "list",
+          method: HttpMethod.GET,
+          query: ListQuery,
+          params: undefined,
+        },
+        {
+          name: "get",
+          method: HttpMethod.GET,
+          query: ItemQuery,
+          params: ItemParams,
+        },
+      ],
+    );
   });
 });

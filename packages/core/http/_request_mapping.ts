@@ -27,8 +27,9 @@ export interface RequestMappingValidationMetadata {
  * Route entry stored for every decorated controller method.
  *
  * Entries without a `method` come from helper decorators (`@HttpCode()`,
- * `@Body()`, `@Form()`, method-level `@UseGuards()`) on methods that have no
- * HTTP method decorator; they are not registered as routes.
+ * `@Body()`, `@Form()`, `@Query()`, `@Params()`, method-level
+ * `@UseGuards()`) on methods that have no HTTP method decorator; they are not
+ * registered as routes.
  */
 export interface RequestMappingMetadata {
   /** Route path(s) relative to the controller path; an array lists alternatives. */
@@ -41,6 +42,10 @@ export interface RequestMappingMetadata {
   name: string | symbol;
   /** Request body validation, set by `@Body()` or `@Form()`. */
   validation?: RequestMappingValidationMetadata;
+  /** Zod schema the query string is validated against, set by `@Query()`. */
+  query?: ZodType;
+  /** Zod schema the path parameters are validated against, set by `@Params()`. */
+  params?: ZodType;
   /** Method-level guards, set by `@UseGuards()`. */
   guards?: Set<CanActivate | CanActivateFn>;
 }
