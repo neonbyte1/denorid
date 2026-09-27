@@ -78,9 +78,15 @@ export function normalizeProvider(provider: Provider): NormalizedProvider {
       token: provider.provide,
       mode,
       resolve: async (container) => {
-        const deps = await Promise.all(
-          (provider.inject ?? []).map((token) => container.resolve(token)),
-        );
+        // Sequential on purpose: the container tracks in-flight tokens per
+        // container, so resolving siblings concurrently turns shared
+        // dependencies (A -> B -> C, A -> C) into false circular errors.
+        const deps: unknown[] = [];
+
+        for (const token of provider.inject ?? []) {
+          deps.push(await container.resolve(token));
+        }
+
         return provider.useFactory(...deps);
       },
     };

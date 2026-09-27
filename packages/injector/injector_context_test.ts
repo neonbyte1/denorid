@@ -864,6 +864,35 @@ describe("InjectorContext", () => {
     });
   });
 
+  describe("factory dependencies", () => {
+    it("resolves shared dependencies regardless of provider order", async () => {
+      const A = Symbol("A");
+      const B = Symbol("B");
+      const C = Symbol("C");
+
+      @Module({
+        providers: [
+          {
+            provide: A,
+            useFactory: (b: string, c: string) => `a(${b},${c})`,
+            inject: [B, C],
+          },
+          { provide: B, useFactory: (c: string) => `b(${c})`, inject: [C] },
+          { provide: C, useValue: "c" },
+        ],
+        exports: [A],
+      })
+      class AppModule {}
+
+      using errorStub = stub(Logger.prototype, "error");
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      assertEquals(await ctx.resolve<string>(A), "a(b(c),c)");
+      assertEquals(errorStub.calls.length, 0);
+    });
+  });
+
   describe("Dynamic module with static metadata", () => {
     it("should merge static and dynamic metadata", async () => {
       @Module({
