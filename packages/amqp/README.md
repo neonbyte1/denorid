@@ -18,20 +18,22 @@
 deno add jsr:@denorid/amqp
 ```
 
-This package talks to a broker through [`amqplib`](https://www.npmjs.com/package/amqplib) (v2) over Deno's `node:` compatibility layer. A running RabbitMQ broker is required at runtime.
+This package talks to a broker through
+[`amqplib`](https://www.npmjs.com/package/amqplib) (v2) over Deno's `node:`
+compatibility layer. A running RabbitMQ broker is required at runtime.
 
 ## Overview
 
 `@denorid/amqp` covers the five canonical RabbitMQ messaging patterns with a
 decorator-driven consumer runtime and matching sender clients:
 
-| Pattern | Consumer decorator | Sender client | Exchange |
-|---|---|---|---|
-| Work queue | `@Worker` | `WorkerClient` | default (direct) |
-| Publish/Subscribe | `@PubSub` | `PublisherClient` | `fanout` |
-| Routing | `@Routing` | `RoutingClient` | `direct` |
-| Topic | `@Topic` | `TopicClient` | `topic` |
-| RPC (request/reply) | `@Rpc` | `RpcClient` | default (direct) |
+| Pattern             | Consumer decorator | Sender client     | Exchange         |
+| ------------------- | ------------------ | ----------------- | ---------------- |
+| Work queue          | `@Worker`          | `WorkerClient`    | default (direct) |
+| Publish/Subscribe   | `@PubSub`          | `PublisherClient` | `fanout`         |
+| Routing             | `@Routing`         | `RoutingClient`   | `direct`         |
+| Topic               | `@Topic`           | `TopicClient`     | `topic`          |
+| RPC (request/reply) | `@Rpc`             | `RpcClient`       | default (direct) |
 
 The module owns a single shared `AmqpConnection`, asserts each handler's
 topology on bootstrap, dispatches messages with guard + `ExceptionHandler`
@@ -55,10 +57,10 @@ export class AppModule {}
 
 ### Consume messages
 
-Mark a class with `@AmqpConsumer()` and its methods with one of the five
-pattern decorators. Each handler is invoked as `(payload, properties)` where
-`payload` is the decoded body and `properties` is the raw amqplib
-`MessageProperties` (`headers`, `correlationId`, `replyTo`, `contentType`, ...).
+Mark a class with `@AmqpConsumer()` and its methods with one of the five pattern
+decorators. Each handler is invoked as `(payload, properties)` where `payload`
+is the decoded body and `properties` is the raw amqplib `MessageProperties`
+(`headers`, `correlationId`, `replyTo`, `contentType`, ...).
 
 ```ts
 import { AmqpConsumer, PubSub, Rpc, Topic, Worker } from "@denorid/amqp";
@@ -196,8 +198,8 @@ static metadata, independent of the async options factory).
 Handlers honor `@UseGuards()` from `@denorid/core` on the class and the method,
 plus app-wide guards via `AmqpModuleOptions.globalGuards`. Per message the order
 is **global -> controller -> method**; the first guard to return `false` throws
-`ForbiddenException`, which is routed to the framework `ExceptionHandler` and the
-message is `nack`ed (no requeue).
+`ForbiddenException`, which is routed to the framework `ExceptionHandler` and
+the message is `nack`ed (no requeue).
 
 ```ts
 import { UseGuards } from "@denorid/core";
@@ -290,8 +292,8 @@ The shared connection is closed on module destruction, which cascades to every
 consumer and client channel created from it. The explorer also closes its
 consumer channels on graceful shutdown, and `RpcClient` rejects all in-flight
 requests and clears their timers. Manually-instantiated (non-DI) clients do not
-receive the shutdown hook, but their channels are still torn down when the shared
-connection closes.
+receive the shutdown hook, but their channels are still torn down when the
+shared connection closes.
 
 ## License
 

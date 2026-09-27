@@ -98,8 +98,8 @@ stores (Redis, SQLite, ...) clean up cleanly.
 ## Adapters
 
 `@denorid/caching/adapters/redis` re-exports `@keyv/redis` under denorid-style
-names. For other Keyv backends (`@keyv/sqlite`, `@keyv/postgres`, ...) wrap
-them yourself:
+names. For other Keyv backends (`@keyv/sqlite`, `@keyv/postgres`, ...) wrap them
+yourself:
 
 ```ts
 import { Keyv } from "@denorid/caching";
@@ -112,4 +112,5 @@ CachingModule.forRoot({
 
 ## License
 
-The [@denorid/caching](https://github.com/neonbyte1/denorid) package is [MIT licensed](../../LICENSE.md).
+The [@denorid/caching](https://github.com/neonbyte1/denorid) package is
+[MIT licensed](../../LICENSE.md).

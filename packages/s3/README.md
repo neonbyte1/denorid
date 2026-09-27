@@ -50,7 +50,7 @@ export class AppModule {}
     S3Module.forRoot({
       connections: [
         { name: "primary", region: "us-east-1", credentials: prodCreds },
-        { name: "backup",  region: "eu-central-1", credentials: prodCreds },
+        { name: "backup", region: "eu-central-1", credentials: prodCreds },
         {
           name: "minio",
           region: "us-east-1",
@@ -76,7 +76,7 @@ export class AppModule {}
       useFactory: (config: ConfigService) => ({
         connections: [
           { name: "primary", region: config.get("AWS_PRIMARY_REGION") },
-          { name: "backup",  region: config.get("AWS_BACKUP_REGION") },
+          { name: "backup", region: config.get("AWS_BACKUP_REGION") },
         ],
       }),
     }),
@@ -92,10 +92,10 @@ import { InjectStorage, type StorageClient } from "@denorid/s3";
 
 @Injectable()
 export class AvatarService {
-  @InjectStorage()                  // default connection
+  @InjectStorage() // default connection
   private readonly main!: StorageClient;
 
-  @InjectStorage("backup")          // named connection
+  @InjectStorage("backup") // named connection
   private readonly backup!: StorageClient;
 
   async replicate(key: string, body: Uint8Array): Promise<void> {
@@ -108,11 +108,11 @@ export class AvatarService {
 `StorageClient` extends the SDK's `S3` class unchanged, so every command -
 object operations (`putObject`, `getObject`, `deleteObjects`, ...), bucket
 management (`createBucket`, `listBuckets`, `putBucketCors`, ...), multipart
-uploads (`createMultipartUpload`, `uploadPart`, `completeMultipartUpload`,
-...), the `waitUntil*` helpers, the `paginate*` helpers, and any commands
-added in future SDK releases - is available as a method with the SDK's own
-input/output types. `destroy()` is invoked automatically on module
-shutdown, so keep-alive sockets close cleanly.
+uploads (`createMultipartUpload`, `uploadPart`, `completeMultipartUpload`, ...),
+the `waitUntil*` helpers, the `paginate*` helpers, and any commands added in
+future SDK releases - is available as a method with the SDK's own input/output
+types. `destroy()` is invoked automatically on module shutdown, so keep-alive
+sockets close cleanly.
 
 ### Programmatic access to the registry
 
@@ -142,9 +142,9 @@ export class BackupService {
 ## Caveats
 
 - `S3Module.forRoot` registers exactly one module instance per application -
-  declare every connection in a single call. The injector keys module
-  containers by class type, so a second `S3Module.forRoot(...)` would
-  silently drop its providers.
+  declare every connection in a single call. The injector keys module containers
+  by class type, so a second `S3Module.forRoot(...)` would silently drop its
+  providers.
 - Connection names are validated up front; duplicates raise
   `DuplicateS3ConnectionNameError` at module-resolution time.
 - `S3Module.forRoot` is required even for a single connection - there is no
@@ -152,4 +152,5 @@ export class BackupService {
 
 ## License
 
-The [@denorid/s3](https://github.com/neonbyte1/denorid) package is [MIT licensed](../../LICENSE.md).
+The [@denorid/s3](https://github.com/neonbyte1/denorid) package is
+[MIT licensed](../../LICENSE.md).
