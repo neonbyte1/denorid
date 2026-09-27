@@ -116,6 +116,18 @@ Sources are merged in this order, later ones win: `yamlFilePath`, `load`,
 `envFilePath`, runtime environment variables. Objects are merged deeply, any
 other value (including arrays) is replaced. Missing files are skipped.
 
+Merging the runtime environment variables enumerates the whole environment,
+which on Deno requires unscoped `--allow-env`. With a scoped flag such as
+`--allow-env=PORT`, loading throws `NotCapable`; set `ignoreEnvVars: true` and
+read the allowed variables in a `load` factory instead:
+
+```ts
+ConfigModule.forRoot({
+  ignoreEnvVars: true,
+  load: [() => ({ PORT: process.env.PORT })],
+});
+```
+
 Validation works with any schema library, e.g. zod:
 
 ```ts

@@ -61,7 +61,16 @@ export interface ConfigModuleOptions {
    * @default ".env"
    */
   envFilePath?: ConfigFilePath | ConfigFilePath[];
-  /** When `true`, runtime environment variables are not merged. */
+  /**
+   * When `true`, runtime environment variables are not merged.
+   *
+   * Merging them enumerates the whole runtime environment, which on Deno
+   * requires unscoped `--allow-env`; a scoped flag such as
+   * `--allow-env=PORT` makes loading throw `NotCapable`. In that case set
+   * `ignoreEnvVars` and read the allowed variables in a `load` factory
+   * (merged before the `.env` files), e.g.
+   * `load: [() => ({ PORT: process.env.PORT })]`.
+   */
   ignoreEnvVars?: boolean;
   /** Custom configuration factories, merged in order. */
   load?: ConfigFactory[];
