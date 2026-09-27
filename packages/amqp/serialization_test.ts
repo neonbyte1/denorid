@@ -1,4 +1,5 @@
 import { assertEquals, assertInstanceOf } from "@std/assert";
+import type { MessageProperties } from "amqplib";
 import { Buffer } from "node:buffer";
 import { describe, it } from "node:test";
 import { AMQP_SERIALIZER } from "./_constants.ts";
@@ -50,6 +51,42 @@ describe("serialization", () => {
       const bytes = new TextEncoder().encode(JSON.stringify([true, null]));
 
       assertEquals(serializer.deserialize(bytes), [true, null]);
+    });
+
+    it("encodes values JSON cannot represent (a void result) as null", () => {
+      assertEquals(
+        serializer.deserialize(serializer.serialize(undefined)),
+        null,
+      );
+      assertEquals(
+        serializer.deserialize(serializer.serialize(() => {})),
+        null,
+      );
+    });
+
+    it("round-trips a Uint8Array through its content type", () => {
+      // Bytes that happen to be valid JSON must still come back verbatim.
+      const bytes = new TextEncoder().encode("123");
+      const encoded = serializer.serialize(bytes);
+      const contentType = serializer.contentType!(bytes);
+
+      assertEquals(contentType, "application/octet-stream");
+      assertEquals(
+        serializer.deserialize(encoded, { contentType } as MessageProperties),
+        encoded,
+      );
+    });
+
+    it("tags every other value as JSON", () => {
+      const contentType = serializer.contentType!({ a: 1 });
+
+      assertEquals(contentType, "application/json");
+      assertEquals(
+        serializer.deserialize(Buffer.from("[1]"), {
+          contentType,
+        } as MessageProperties),
+        [1],
+      );
     });
   });
 });
