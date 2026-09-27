@@ -126,6 +126,40 @@ describe("Container", () => {
     });
   });
 
+  describe("registerScoped", () => {
+    it("resolves dependencies from the scope and caches instances in the owner", async () => {
+      const owner = new Container(noopLogger);
+      const scope = new Container(noopLogger, { globalContainer: owner });
+      const imported = new Container(noopLogger, {
+        exports: new Set([SimpleService]),
+      });
+
+      imported.register(SimpleService);
+      scope.addChild(imported);
+      owner.registerScoped(scope, DependentService);
+
+      const first = await owner.resolve(DependentService);
+
+      assertInstanceOf(first.simple, SimpleService);
+      assert(first === await owner.resolve(DependentService));
+      assert(!scope.has(DependentService));
+      assertEquals(owner.getInstances(), [first]);
+    });
+
+    it("maps tags of scoped class providers", async () => {
+      const owner = new Container(noopLogger);
+      const scope = new Container(noopLogger, { globalContainer: owner });
+
+      owner.registerScoped(scope, TaggedServiceA);
+
+      assertEquals(owner.getTokensByTag(TAG_A), [TaggedServiceA]);
+      assertInstanceOf(
+        (await owner.getByTag(TAG_A))[0],
+        TaggedServiceA,
+      );
+    });
+  });
+
   describe("resolve", () => {
     useContainer();
 

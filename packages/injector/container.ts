@@ -143,18 +143,47 @@ export class Container {
    */
   public register(...providers: Provider[]): this {
     for (const provider of providers) {
-      const normalized = normalizeProvider(provider);
-
-      this.providers.set(normalized.token, normalized);
-
-      const targetClass = this.getProviderClass(provider);
-
-      if (targetClass) {
-        this.mapTagsToTokens(targetClass, normalized);
-      }
+      this.addProvider(provider, normalizeProvider(provider));
     }
 
     return this;
+  }
+
+  /**
+   * Register providers whose dependencies are resolved from `scope` instead of
+   * this container. Instances are still cached and tracked by this container.
+   *
+   * Used for the providers of global modules: the global container holds
+   * them, while their dependencies may come from the module's imports.
+   *
+   * @param {Container} scope - Container resolving the providers' dependencies.
+   * @param {...Provider[]} providers - Providers passed as rest arguments
+   * @returns {Container} Reference to `this` object.
+   */
+  public registerScoped(scope: Container, ...providers: Provider[]): this {
+    for (const provider of providers) {
+      const normalized = normalizeProvider(provider);
+
+      this.addProvider(provider, {
+        ...normalized,
+        resolve: () => normalized.resolve(scope),
+      });
+    }
+
+    return this;
+  }
+
+  private addProvider(
+    provider: Provider,
+    normalized: NormalizedProvider,
+  ): void {
+    this.providers.set(normalized.token, normalized);
+
+    const targetClass = this.getProviderClass(provider);
+
+    if (targetClass) {
+      this.mapTagsToTokens(targetClass, normalized);
+    }
   }
 
   /**
