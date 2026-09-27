@@ -118,6 +118,26 @@ const app = await DenoridFactory.create(
 await app.listen();
 ```
 
+## Server Lifecycle
+
+`listen()` resolves as soon as the server accepts messages, so
+`await app.listen()` returns and the code after it runs while the server keeps
+serving:
+
+- `TcpServer` resolves once its socket is listening and rejects when binding
+  fails (e.g. `EADDRINUSE`), after releasing the server. Server errors after
+  that are logged.
+- `RmqServer` resolves once it is connected (making up to
+  `maxConnectionAttempts` attempts, `retryDelay` ms apart), the queue is set up
+  and its consumer runs. It rejects, after closing the connection, when it
+  cannot connect or set up the queue. When the broker drops the connection or
+  the consumer channel later on, the server logs it and reconnects: one attempt
+  every `retryDelay` ms (default `1000`) until it consumes again or is closed.
+  Failed attempts are logged.
+
+`close()` (called when the application closes) stops a pending start or
+reconnect, waits for running handlers and releases the socket or connection.
+
 ## License
 
 The [@denorid/microservices](https://github.com/neonbyte1/denorid) package is
