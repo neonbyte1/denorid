@@ -22,6 +22,32 @@ describe("serializePattern", () => {
     );
   });
 
+  it("sorts the keys of nested objects, also inside arrays", () => {
+    const server = serializePattern({
+      cmd: "user",
+      filter: { role: "admin", active: true },
+      sort: [{ field: "name", dir: "asc" }],
+    });
+    const client = serializePattern({
+      sort: [{ dir: "asc", field: "name" }],
+      filter: { active: true, role: "admin" },
+      cmd: "user",
+    });
+
+    assertEquals(server, client);
+    assertEquals(
+      server,
+      '{"cmd":"user","filter":{"active":true,"role":"admin"},"sort":[{"dir":"asc","field":"name"}]}',
+    );
+  });
+
+  it("keeps the order of array items", () => {
+    assertEquals(
+      serializePattern({ path: ["b", "a", null] }),
+      '{"path":["b","a",null]}',
+    );
+  });
+
   it("serialises an empty object", () => {
     assertEquals(serializePattern({}), "{}");
   });
