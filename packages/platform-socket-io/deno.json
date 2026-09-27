@@ -1,0 +1,11 @@
+{
+  "name": "@denorid/platform-socket-io",
+  "version": "1.0.0-beta1",
+  "license": "MIT",
+  "exports": "./mod.ts",
+  "imports": {
+    "@denorid/core": "jsr:@denorid/core@^1.0.0-beta3",
+    "socket.io": "npm:socket.io@^4.8.4",
+    "socket.io-client": "npm:socket.io-client@^4.8.4"
+  }
+}

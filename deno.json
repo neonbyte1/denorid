@@ -13,6 +13,7 @@
     "./packages/logger",
     "./packages/microservices/",
     "./packages/platform-hono",
+    "./packages/platform-socket-io",
     "./packages/s3",
     "./packages/schedule"
   ],
