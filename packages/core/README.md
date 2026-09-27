@@ -34,6 +34,80 @@ const app = await DenoridFactory.create(AppModule, new HonoAdapter());
 app.listen();
 ```
 
+## Application lifecycle
+
+- `app.init()` registers the `@Catch()` exception filters, then runs the
+  `onApplicationBootstrap` hooks (HTTP applications also set up the routes and
+  WebSocket gateways). It runs once: concurrent and later calls share the same
+  promise. When it fails, the next call starts over.
+- `app.listen()` initializes the application first. An HTTP application starts
+  its server only after the initialization succeeded; a failed initialization is
+  rethrown as an unhandled rejection. A microservice application
+  (`DenoridFactory.create(AppModule, server)`) returns the server's `listen()`
+  promise; when the server fails to start it is closed and `listen()` can be
+  called again.
+- `app.startAllMicroservices()` starts the servers added with
+  `app.connectMicroservice()`. A server whose `listen()` rejects right away is
+  closed together with the servers started before it and the error is rethrown.
+  A transport's `listen()` usually settles only when the server stops, so later
+  failures (a port in use, a refused broker connection) are logged and close the
+  failed server.
+- `app.close()` waits for a running initialization, stops the servers and closes
+  the injector context, even when `init()` was never called. Nothing is started
+  once it was called; later calls return the same promise.
+- Applications are `AsyncDisposable`:
+  `await using app = await
+  DenoridFactory.create(AppModule)` closes the
+  application at the end of the block. Closing the injector context runs
+  `onBeforeApplicationShutdown`, `onModuleDestroy` and `onApplicationShutdown`,
+  then disposes every singleton the container created (class and factory
+  providers, not `useValue`) that implements `[Symbol.asyncDispose]()` or
+  `[Symbol.dispose]()`, newest first. Release connections and pools there: other
+  providers can still use them in their shutdown hooks.
+
+```ts
+@Injectable()
+class Database implements AsyncDisposable {
+  private readonly pool = createPool();
+
+  public async [Symbol.asyncDispose](): Promise<void> {
+    await this.pool.end();
+  }
+}
+
+{
+  await using app = await DenoridFactory.create(AppModule);
+  await app.init();
+  // ...
+} // Database pool closed here
+```
+
+## Exception filters
+
+A filter registered with `@Catch(SomeError)` handles `SomeError` and its
+subclasses. For an error, only the filters of its most specific class that has
+filters run: with `@Catch(HttpException)` and `@Catch(Error)`, a
+`NotFoundException` goes to the first one and a `TypeError` to the second.
+
+## Testing
+
+```ts
+import { Test } from "@denorid/core/testing";
+
+const module = await Test.createTestingModule({ imports: [UsersModule] })
+  .overrideProvider(UsersRepository)
+  .useValue({ find: () => [] })
+  .compile();
+```
+
+- `overrideProvider()` replaces the provider wherever its token is declared,
+  including imported and global modules, the core globals of `useCoreGlobals()`
+  and the mocks of `useMocker()`.
+- `useMocker()` only mocks field dependencies of the testing module's providers
+  that nothing provides; the exports of imported modules and globals are kept.
+- `module.get(token, { contextId })` and `module.getByTag(tags, { contextId })`
+  return one transient instance per context, like the application does.
+
 ## WebSockets
 
 Gateways handle WebSocket messages the way controllers handle HTTP requests.
@@ -114,8 +188,8 @@ export class ChatGateway
 }
 ```
 
-Add gateways to the `providers` of a module. Like controllers, a gateway of an
-imported module must also be listed in the module's `exports`.
+Add gateways to the `providers` of any module of the application; a gateway of
+an imported module does not need to be exported.
 
 ### Gateway methods
 
@@ -130,7 +204,11 @@ imported module must also be listed in the module's `exports`.
 - `@UseGuards()` works on gateways and their methods; guards set via
   `app.useGlobalGuards()` apply as well. They run global, class, method and
   receive a `WsExecutionContext` (`ctx.switchToWs()` gives the client, the data
-  and the event). A denied message fails with `"Forbidden resource"`.
+  and the event). A denied message fails with `"Forbidden resource"`. Guard
+  classes are resolved through dependency injection from any module.
+- An event can be handled by one method per server. Gateways with equal options
+  (e.g. the same `path`) share a server, so they cannot subscribe to the same
+  event; the application fails to start otherwise.
 - Errors are passed to the `@Catch()` exception filters. When a filter handles
   the error, its result is delivered like a return value. Otherwise the client
   receives the payload of a thrown `WsException` (`{ status: "error", message }`
