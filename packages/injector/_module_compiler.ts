@@ -49,7 +49,6 @@ export interface CompiledModule {
 export class ModuleCompiler {
   private compiledModules: Map<Type, CompiledModule> = new Map();
   private dynamicModuleCache: Map<DynamicModule, CompiledModule> = new Map();
-  private globalProviders: Provider[] = [];
 
   /**
    * Compile a module and all its imports (depth-first)
@@ -107,18 +106,7 @@ export class ModuleCompiler {
 
     compiled.providers = [...importedProviders, ...ownProviders];
 
-    if (isGlobal) {
-      this.globalProviders.push(...(metadata.providers ?? []));
-    }
-
     return compiled;
-  }
-
-  /**
-   * Get all global providers collected during compilation
-   */
-  public getGlobalProviders(): Provider[] {
-    return [...this.globalProviders];
   }
 
   /**
@@ -166,7 +154,6 @@ export class ModuleCompiler {
   public clear(): void {
     this.compiledModules.clear();
     this.dynamicModuleCache.clear();
-    this.globalProviders = [];
   }
 
   /**

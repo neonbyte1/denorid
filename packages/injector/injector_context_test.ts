@@ -895,6 +895,96 @@ describe("InjectorContext", () => {
     });
   });
 
+  describe("global modules", () => {
+    const NAME = Symbol("NAME");
+    const GREETING = Symbol("GREETING");
+
+    @Module({
+      providers: [{ provide: NAME, useValue: "denorid" }],
+      exports: [NAME],
+    })
+    class NameModule {}
+
+    @Injectable()
+    class Greeter {
+      @Inject(NAME)
+      public name!: string;
+    }
+
+    @Module({})
+    class GreetingModule {
+      static forRoot(): DynamicModule {
+        return {
+          module: GreetingModule,
+          global: true,
+          imports: [NameModule],
+          providers: [
+            Greeter,
+            {
+              provide: GREETING,
+              useFactory: (name: string) => `hello ${name}`,
+              inject: [NAME],
+            },
+          ],
+          exports: [Greeter, GREETING],
+        };
+      }
+    }
+
+    @Injectable()
+    class Consumer {
+      @Inject(GREETING)
+      public greeting!: string;
+
+      @Inject(Greeter)
+      public greeter!: Greeter;
+    }
+
+    @Module({ providers: [Consumer], exports: [Consumer] })
+    class ConsumerModule {}
+
+    it("resolves dependencies of global providers through the module's imports", async () => {
+      @Module({
+        imports: [ConsumerModule, GreetingModule.forRoot()],
+        exports: [Consumer],
+      })
+      class AppModule {}
+
+      using errorStub = stub(Logger.prototype, "error");
+
+      const ctx = await InjectorContext.create(AppModule);
+      const consumer = await ctx.resolve(Consumer);
+
+      assertEquals(consumer.greeting, "hello denorid");
+      assertEquals(consumer.greeter.name, "denorid");
+      assertEquals(errorStub.calls.length, 0);
+    });
+
+    it("does not expose the imports of global modules", async () => {
+      @Module({
+        providers: [{
+          provide: "LEAKED",
+          useFactory: (name: string) => name,
+          inject: [NAME],
+        }],
+        exports: ["LEAKED"],
+      })
+      class LeakModule {}
+
+      @Module({
+        imports: [GreetingModule.forRoot(), LeakModule],
+        exports: ["LEAKED"],
+      })
+      class AppModule {}
+
+      using _errorStub = stub(Logger.prototype, "error");
+
+      const ctx = await InjectorContext.create(AppModule);
+
+      await assertRejects(() => ctx.resolve("LEAKED"), TokenNotFoundError);
+    });
+  });
+
   describe("factory dependencies", () => {
     it("resolves shared dependencies regardless of provider order", async () => {
       const A = Symbol("A");

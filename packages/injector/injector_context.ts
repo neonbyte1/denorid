@@ -104,12 +104,35 @@ export class InjectorContext implements InjectorContextLifecycle {
     const modulesInOrder = compiler.getModulesInInitOrder(compiled);
 
     const globalContainer = new Container(logger);
-    if (options?.useGlobals !== false) {
-      globalContainer.register(...compiler.getGlobalProviders());
-    }
 
     const moduleContainers = new Map<Type, Container>();
     const builtModules = new Set<CompiledModule>();
+
+    const ownProviders = (mod: CompiledModule): Provider[] => {
+      const providerMap = new Map<InjectionToken, Provider>();
+
+      for (const provider of mod.providers) {
+        const token = typeof provider === "function"
+          ? provider
+          : provider.provide;
+
+        providerMap.set(token, provider);
+      }
+
+      const providers: Provider[] = [];
+
+      for (const token of mod.ownTokens) {
+        const provider = providerMap.get(token);
+
+        if (provider) {
+          providers.push(provider);
+        } else if (typeof token === "function") {
+          providers.push(token);
+        }
+      }
+
+      return providers;
+    };
 
     const buildContainer = (mod: CompiledModule): Container => {
       if (builtModules.has(mod)) {
@@ -145,30 +168,35 @@ export class InjectorContext implements InjectorContextLifecycle {
 
       moduleContainers.set(mod.type, container);
 
-      const providerMap = new Map<InjectionToken, Provider>();
-
-      for (const provider of mod.providers) {
-        const token = typeof provider === "function"
-          ? provider
-          : provider.provide;
-
-        providerMap.set(token, provider);
-      }
-
-      for (const token of mod.ownTokens) {
-        const provider = providerMap.get(token);
-
-        if (provider) {
-          container.register(provider);
-        } else if (typeof token === "function") {
-          container.register(token);
-        }
+      for (const provider of ownProviders(mod)) {
+        container.register(provider);
       }
 
       return container;
     };
 
     const rootContainer = buildContainer(compiled);
+
+    if (options?.useGlobals !== false) {
+      // Global module providers live in the global container, but resolve
+      // their dependencies like inside the module: through its imports first.
+      // Later modules override earlier ones for the same token.
+      for (const mod of modulesInOrder) {
+        if (mod.isGlobal) {
+          const scope = new Container(logger, { globalContainer });
+
+          for (const importedMod of mod.imports) {
+            scope.addChild(moduleContainers.get(importedMod.type)!);
+          }
+
+          globalContainer.registerScoped(
+            scope,
+            ...ownProviders(mod).filter((provider) => provider !== mod.type),
+          );
+        }
+      }
+    }
+
     const moduleRefs = new Map<Type, ModuleRef>();
 
     for (const mod of modulesInOrder) {
