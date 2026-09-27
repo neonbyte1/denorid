@@ -1,7 +1,14 @@
 import type { ConsoleCommandInput } from "@denorid/core";
-import { assertEquals } from "@std/assert";
-import { describe, it } from "node:test";
-import { DrizzleCommand } from "./_base.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import { type Stub, stub } from "@std/testing/mock";
+import childProcess, {
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
+import { EventEmitter } from "node:events";
+import process from "node:process";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { DrizzleCommand, runDrizzleKit } from "./_base.ts";
 
 /**
  * Minimal concrete subclass exposing the abstract surface so we can exercise
@@ -23,70 +30,105 @@ class TestDrizzleCommand extends DrizzleCommand {
 }
 
 /**
- * Recorded `new Deno.Command(...)` call.
+ * How the fake child process terminates right after being spawned.
  */
-interface RecordedSpawn {
-  command: string | URL;
-  options: Deno.CommandOptions;
+type ChildOutcome =
+  | { readonly code: number | null; readonly signal: string | null }
+  | { readonly error: Error };
+
+/**
+ * Recorded `childProcess.spawn(...)` call.
+ */
+interface SpawnCall {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly options: SpawnOptions;
 }
 
 /**
- * Test double standing in for {@linkcode Deno.Command} during a test. We need
- * a real constructor (the std mock `stub` invokes its replacement via
- * `.apply`, which class constructors reject), so we wire it up by hand.
+ * Mutable state shared between the spawn stub and the tests of a `describe`.
  */
-function withDenoCommandStub<T>(
-  exitCode: number,
-  fn: (spawns: RecordedSpawn[]) => Promise<T>,
-): Promise<T> {
-  const spawns: RecordedSpawn[] = [];
+interface SpawnHarness {
+  /** Outcome emitted by every fake child spawned during the current test. */
+  outcome: ChildOutcome;
+  /** Calls recorded during the current test. */
+  calls: SpawnCall[];
+}
 
-  class FakeCommand {
-    public constructor(
-      command: string | URL,
-      options: Deno.CommandOptions = {},
-    ) {
-      spawns.push({ command, options });
+/**
+ * Creates an `EventEmitter` standing in for a `ChildProcess`. It emits the
+ * requested outcome on the next microtask, after `runDrizzleKit` attached its
+ * listeners. A spawn failure is followed by `close`, like Node.js does when
+ * the executable cannot be found.
+ */
+function createFakeChild(outcome: ChildOutcome): ChildProcess {
+  const child = new EventEmitter();
+
+  queueMicrotask((): void => {
+    if ("error" in outcome) {
+      child.emit("error", outcome.error);
+      child.emit("close", -2, null);
+    } else {
+      child.emit("close", outcome.code, outcome.signal);
     }
-
-    public output(): Promise<Deno.CommandOutput> {
-      return Promise.resolve({
-        code: exitCode,
-        success: exitCode === 0,
-        signal: null,
-        stdout: new Uint8Array(),
-        stderr: new Uint8Array(),
-      });
-    }
-  }
-
-  // Cast: deliberately swap a Deno built-in for a test double. The runtime
-  // only relies on the constructor + `.output()` surface, which `FakeCommand`
-  // satisfies; the cast is confined to this helper.
-  const denoMut = Deno as unknown as { Command: typeof Deno.Command };
-  const original = denoMut.Command;
-  denoMut.Command = FakeCommand as unknown as typeof Deno.Command;
-
-  return fn(spawns).finally(() => {
-    denoMut.Command = original;
   });
+
+  return child as unknown as ChildProcess;
+}
+
+/**
+ * Replaces `childProcess.spawn` with a recorder returning fake children for
+ * every test of the calling `describe`.
+ */
+function useSpawnStub(): SpawnHarness {
+  const harness: SpawnHarness = {
+    outcome: { code: 0, signal: null },
+    calls: [],
+  };
+  let spawnStub: Stub | undefined;
+
+  beforeEach((): void => {
+    harness.outcome = { code: 0, signal: null };
+    harness.calls = [];
+    spawnStub = stub(
+      childProcess,
+      "spawn",
+      (
+        command: string,
+        args: readonly string[],
+        options: SpawnOptions,
+      ): ChildProcess => {
+        harness.calls.push({ command, args, options });
+
+        return createFakeChild(harness.outcome);
+      },
+    );
+  });
+
+  afterEach((): void => {
+    spawnStub?.restore();
+    spawnStub = undefined;
+  });
+
+  return harness;
 }
 
 describe("DrizzleCommand", () => {
   describe("execute", () => {
-    it("invokes drizzle-kit through deno run with the subclass arguments", async () => {
-      await withDenoCommandStub(0, async (spawns) => {
-        const command = new TestDrizzleCommand("generate", [
-          "--config",
-          "drizzle.config.ts",
-        ]);
+    const harness = useSpawnStub();
 
-        const code = await command.execute({ args: [], options: {} });
+    it("spawns drizzle-kit through deno run with inherited stdio on Deno", async () => {
+      const command = new TestDrizzleCommand("generate", [
+        "--config",
+        "drizzle.config.ts",
+      ]);
 
-        assertEquals(code, 0);
-        assertEquals(spawns.length, 1);
-        assertEquals(spawns[0].command, "deno");
-        assertEquals(spawns[0].options.args, [
+      const code = await command.execute({ args: [], options: {} });
+
+      assertEquals(code, 0);
+      assertEquals(harness.calls, [{
+        command: "deno",
+        args: [
           "run",
           "-A",
           "--node-modules-dir",
@@ -94,37 +136,42 @@ describe("DrizzleCommand", () => {
           "generate",
           "--config",
           "drizzle.config.ts",
-        ]);
-        assertEquals(spawns[0].options.stdout, "inherit");
-        assertEquals(spawns[0].options.stderr, "inherit");
-        assertEquals(spawns[0].options.stdin, "inherit");
-      });
+        ],
+        options: { stdio: "inherit", shell: false },
+      }]);
     });
 
-    it("returns the child process exit code unchanged on failure", async () => {
-      await withDenoCommandStub(42, async () => {
-        const command = new TestDrizzleCommand("migrate");
+    it("resolves with the exit code of the child process", async () => {
+      harness.outcome = { code: 42, signal: null };
 
-        const code = await command.execute({ args: [], options: {} });
-
-        assertEquals(code, 42);
+      const code = await new TestDrizzleCommand("migrate").execute({
+        args: [],
+        options: {},
       });
+
+      assertEquals(code, 42);
     });
 
-    it("appends no extra arguments when the subclass returns an empty array", async () => {
-      await withDenoCommandStub(0, async (spawns) => {
-        const command = new TestDrizzleCommand("migrate");
+    it("resolves with 1 when the child process is terminated by a signal", async () => {
+      harness.outcome = { code: null, signal: "SIGTERM" };
 
-        await command.execute({ args: [], options: {} });
-
-        assertEquals(spawns[0].options.args, [
-          "run",
-          "-A",
-          "--node-modules-dir",
-          "npm:drizzle-kit",
-          "migrate",
-        ]);
+      const code = await new TestDrizzleCommand("migrate").execute({
+        args: [],
+        options: {},
       });
+
+      assertEquals(code, 1);
+    });
+
+    it("rejects with the spawn error when the launcher cannot be started", async () => {
+      const error = new Error("spawn deno ENOENT");
+      harness.outcome = { error };
+
+      const rejection = await assertRejects(() =>
+        new TestDrizzleCommand("migrate").execute({ args: [], options: {} })
+      );
+
+      assertStrictEquals(rejection, error);
     });
 
     it("forwards the parsed input into buildCommandArguments", async () => {
@@ -144,17 +191,64 @@ describe("DrizzleCommand", () => {
         }
       }
 
-      await withDenoCommandStub(0, async () => {
-        const input: ConsoleCommandInput = {
-          args: ["positional"],
-          options: { config: "drizzle.config.ts" },
-        };
+      const input: ConsoleCommandInput = {
+        args: ["positional"],
+        options: { config: "drizzle.config.ts" },
+      };
 
-        await new Capturing().execute(input);
+      await new Capturing().execute(input);
 
-        assertEquals(seen.length, 1);
-        assertEquals(seen[0], input);
-      });
+      assertEquals(seen, [input]);
     });
+  });
+});
+
+describe("runDrizzleKit", () => {
+  const harness = useSpawnStub();
+
+  it("launches drizzle-kit through bun x with the running executable on Bun", async () => {
+    const code = await runDrizzleKit(
+      ["migrate", "--config", "drizzle.config.ts"],
+      { Bun: {} },
+      "linux",
+    );
+
+    assertEquals(code, 0);
+    assertEquals(harness.calls, [{
+      command: process.execPath,
+      args: ["x", "drizzle-kit", "migrate", "--config", "drizzle.config.ts"],
+      options: { stdio: "inherit", shell: false },
+    }]);
+  });
+
+  it("does not use the shell for bun x on Windows", async () => {
+    await runDrizzleKit(["migrate"], { Bun: {} }, "win32");
+
+    assertEquals(harness.calls[0].options.shell, false);
+  });
+
+  it("launches drizzle-kit through npx without a shell on Node.js", async () => {
+    const code = await runDrizzleKit(
+      ["generate", "--name", "init"],
+      {},
+      "linux",
+    );
+
+    assertEquals(code, 0);
+    assertEquals(harness.calls, [{
+      command: "npx",
+      args: ["--yes", "drizzle-kit", "generate", "--name", "init"],
+      options: { stdio: "inherit", shell: false },
+    }]);
+  });
+
+  it("starts npx through the shell on Windows under Node.js", async () => {
+    await runDrizzleKit(["generate"], {}, "win32");
+
+    assertEquals(harness.calls, [{
+      command: "npx",
+      args: ["--yes", "drizzle-kit", "generate"],
+      options: { stdio: "inherit", shell: true },
+    }]);
   });
 });

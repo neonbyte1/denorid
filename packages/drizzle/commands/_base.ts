@@ -2,15 +2,117 @@ import type {
   ConsoleCommandInput,
   ConsoleCommandInterface,
 } from "@denorid/core";
+import childProcess from "node:child_process";
+import process from "node:process";
+
+/**
+ * Minimal view of the runtime globals inspected to decide how `drizzle-kit`
+ * is launched. Only the presence of each entry matters.
+ *
+ * @internal
+ */
+export interface DrizzleKitRuntimeGlobals {
+  /** Defined when running on Deno. */
+  readonly Deno?: unknown;
+  /** Defined when running on Bun. */
+  readonly Bun?: unknown;
+}
+
+/**
+ * Executable, argument list and shell flag used to start `drizzle-kit`.
+ */
+interface DrizzleKitLauncher {
+  /** Executable spawned as the child process. */
+  readonly command: string;
+  /** Arguments passed to {@linkcode DrizzleKitLauncher.command}. */
+  readonly args: string[];
+  /** Whether the child has to be started through the system shell. */
+  readonly shell: boolean;
+}
+
+/**
+ * Picks the launcher matching the current runtime.
+ *
+ * @param {string[]} kitArgs - `drizzle-kit` subcommand followed by its flags.
+ * @param {DrizzleKitRuntimeGlobals} runtime - Runtime globals to inspect.
+ * @param {string} platform - Operating system identifier (`process.platform`).
+ * @returns {DrizzleKitLauncher} Launcher for the detected runtime.
+ */
+function resolveLauncher(
+  kitArgs: string[],
+  runtime: DrizzleKitRuntimeGlobals,
+  platform: string,
+): DrizzleKitLauncher {
+  if (runtime.Deno !== undefined) {
+    return {
+      command: "deno",
+      args: ["run", "-A", "--node-modules-dir", "npm:drizzle-kit", ...kitArgs],
+      shell: false,
+    };
+  }
+
+  if (runtime.Bun !== undefined) {
+    return {
+      command: process.execPath,
+      args: ["x", "drizzle-kit", ...kitArgs],
+      shell: false,
+    };
+  }
+
+  return {
+    command: "npx",
+    args: ["--yes", "drizzle-kit", ...kitArgs],
+    // `npx` is a `.cmd` shim on Windows, which Node.js refuses to spawn
+    // without a shell.
+    shell: platform === "win32",
+  };
+}
+
+/**
+ * Spawns `drizzle-kit` with inherited stdio through the launcher of the
+ * current runtime and resolves to its exit code.
+ *
+ * - Deno: `deno run -A --node-modules-dir npm:drizzle-kit <args>`
+ * - Bun: `<bun executable> x drizzle-kit <args>`
+ * - Node.js: `npx --yes drizzle-kit <args>` (through the shell on Windows)
+ *
+ * @param {string[]} kitArgs - `drizzle-kit` subcommand followed by its flags.
+ * @param {DrizzleKitRuntimeGlobals} [runtime] - Runtime globals used to detect
+ *   the runtime; defaults to `globalThis`.
+ * @param {string} [platform] - Operating system identifier; defaults to
+ *   `process.platform`.
+ * @returns {Promise<number>} Exit code of the child process, `1` when it was
+ *   terminated by a signal.
+ * @throws {Error} When the launcher executable cannot be spawned.
+ *
+ * @internal
+ */
+export function runDrizzleKit(
+  kitArgs: string[],
+  runtime: DrizzleKitRuntimeGlobals = globalThis as DrizzleKitRuntimeGlobals,
+  platform: string = process.platform,
+): Promise<number> {
+  const { command, args, shell } = resolveLauncher(kitArgs, runtime, platform);
+
+  return new Promise<number>((resolve, reject) => {
+    const child = childProcess.spawn(command, args, {
+      stdio: "inherit",
+      shell,
+    });
+
+    child.once("error", reject);
+    child.once("close", (code: number | null): void => resolve(code ?? 1));
+  });
+}
 
 /**
  * Shared base class for every Drizzle CLI command shipped by this package.
  *
  * Concrete subclasses each represent a single `drizzle-kit` subcommand
- * (`generate`, `migrate`, …). The base class owns the boilerplate of
- * spawning `drizzle-kit` through Deno's npm interop; subclasses only need
- * to translate the parsed {@linkcode ConsoleCommandInput} into the flag
- * list the underlying CLI expects.
+ * (`generate`, `migrate`, ...). The base class owns the boilerplate of
+ * spawning `drizzle-kit` on Deno, Bun or Node.js; subclasses only need to
+ * translate the parsed {@linkcode ConsoleCommandInput} into the flag list the
+ * underlying CLI expects.
  *
  * @example Implementing a new command
  * ```ts
@@ -35,9 +137,9 @@ import type {
  */
 export abstract class DrizzleCommand implements ConsoleCommandInterface {
   /**
-   * @param drizzleKitCommand Name of the `drizzle-kit` subcommand to invoke,
-   *   forwarded verbatim to the spawned process (e.g. `"generate"`,
-   *   `"migrate"`).
+   * @param {string} drizzleKitCommand - Name of the `drizzle-kit` subcommand
+   *   to invoke, forwarded verbatim to the spawned process (e.g.
+   *   `"generate"`, `"migrate"`).
    */
   protected constructor(protected readonly drizzleKitCommand: string) {}
 
@@ -45,34 +147,25 @@ export abstract class DrizzleCommand implements ConsoleCommandInterface {
    * Spawns `drizzle-kit` as a child process with inherited stdio and resolves
    * to its exit code.
    *
-   * The child is started via Deno's npm interop
-   * (`deno run -A --node-modules-dir npm:drizzle-kit <command> …`) so users
-   * do not need a separate Node.js toolchain installed. Flags produced by
-   * {@linkcode DrizzleCommand.buildCommandArguments} are appended after the
-   * subcommand name.
+   * The launcher depends on the runtime executing the command:
+   * - Deno: `deno run -A --node-modules-dir npm:drizzle-kit <command> ...`
+   * - Bun: `bun x drizzle-kit <command> ...` (using the running executable)
+   * - Node.js: `npx --yes drizzle-kit <command> ...`
    *
-   * @param input Parsed CLI options/arguments produced by the Denorid runner.
-   * @returns Exit code reported by the `drizzle-kit` child process; `0` on
-   *   success.
+   * Flags produced by {@linkcode DrizzleCommand.buildCommandArguments} are
+   * appended after the subcommand name.
+   *
+   * @param {ConsoleCommandInput} input - Parsed CLI options/arguments produced
+   *   by the Denorid runner.
+   * @returns {Promise<number>} Exit code reported by the `drizzle-kit` child
+   *   process; `0` on success, `1` when it was terminated by a signal.
+   * @throws {Error} When the launcher executable cannot be spawned.
    */
   public async execute(input: ConsoleCommandInput): Promise<number> {
-    const child = new Deno.Command("deno", {
-      args: [
-        "run",
-        "-A",
-        "--node-modules-dir",
-        "npm:drizzle-kit",
-        this.drizzleKitCommand,
-        ...this.buildCommandArguments(input),
-      ],
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "inherit",
-    });
-
-    const { code } = await child.output();
-
-    return code;
+    return await runDrizzleKit([
+      this.drizzleKitCommand,
+      ...this.buildCommandArguments(input),
+    ]);
   }
 
   /**
@@ -80,11 +173,16 @@ export abstract class DrizzleCommand implements ConsoleCommandInterface {
    * `drizzle-kit` invocation.
    *
    * Implementations push one entry per token (e.g.
-   * `["--config", "drizzle.config.ts"]`); the array is forwarded as-is to
-   * {@linkcode Deno.Command}, so no shell quoting is required.
+   * `["--config", "drizzle.config.ts"]`); the array is forwarded as an
+   * argument list to the spawned process, so no shell quoting is required.
+   * On Windows under Node.js `npx` is started through the shell, which joins
+   * the tokens with spaces; tokens containing whitespace or shell
+   * metacharacters are not preserved there.
    *
-   * @param input Parsed CLI options/arguments produced by the Denorid runner.
-   * @returns Flags appended after the `drizzle-kit` subcommand name.
+   * @param {ConsoleCommandInput} input - Parsed CLI options/arguments produced
+   *   by the Denorid runner.
+   * @returns {string[]} Flags appended after the `drizzle-kit` subcommand
+   *   name.
    */
   protected abstract buildCommandArguments(
     input: ConsoleCommandInput,

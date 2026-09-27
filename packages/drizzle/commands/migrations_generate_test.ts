@@ -6,7 +6,7 @@ import { DrizzleGenerateCommand } from "./migrations_generate.ts";
 /**
  * Tiny subclass that exposes the protected `buildCommandArguments` so we can
  * exercise every branch without going through `execute` and stubbing
- * `Deno.Command`.
+ * `childProcess.spawn`.
  */
 class HarnessedGenerate extends DrizzleGenerateCommand {
   public exposeBuildCommandArguments(input: ConsoleCommandInput): string[] {
