@@ -1,5 +1,11 @@
-import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
 import { Buffer } from "node:buffer";
+import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import {
   PublisherClient,
@@ -18,79 +24,87 @@ interface RecordedCall {
   args: unknown[];
 }
 
-interface FakeChannel {
-  calls: RecordedCall[];
-  consumeCallback?: (msg: unknown) => void;
-  assertQueue: (queue: string, opts: unknown) => Promise<{ queue: string }>;
-  assertExchange: (
+class FakeChannel extends EventEmitter {
+  public readonly calls: RecordedCall[] = [];
+  public consumeCallback?: (msg: unknown) => void;
+  public assertQueueGate?: Promise<void>;
+
+  public constructor(private readonly replyQueue = "amq.gen-reply") {
+    super();
+  }
+
+  public async assertQueue(
+    queue: string,
+    opts: unknown,
+  ): Promise<{ queue: string }> {
+    this.calls.push({ method: "assertQueue", args: [queue, opts] });
+    await this.assertQueueGate;
+
+    return { queue: queue || this.replyQueue };
+  }
+
+  public assertExchange(
     exchange: string,
     type: string,
     opts: unknown,
-  ) => Promise<unknown>;
-  publish: (
+  ): Promise<unknown> {
+    this.calls.push({ method: "assertExchange", args: [exchange, type, opts] });
+
+    return Promise.resolve({ exchange });
+  }
+
+  public publish(
     exchange: string,
     key: string,
     content: Buffer,
     opts?: unknown,
-  ) => boolean;
-  sendToQueue: (queue: string, content: Buffer, opts?: unknown) => boolean;
-  consume: (
+  ): boolean {
+    this.calls.push({
+      method: "publish",
+      args: [exchange, key, content, opts],
+    });
+
+    return true;
+  }
+
+  public sendToQueue(queue: string, content: Buffer, opts?: unknown): boolean {
+    this.calls.push({ method: "sendToQueue", args: [queue, content, opts] });
+
+    return true;
+  }
+
+  public consume(
     queue: string,
     fn: (msg: unknown) => void,
     opts: unknown,
-  ) => Promise<{ consumerTag: string }>;
-  close: () => Promise<void>;
+  ): Promise<{ consumerTag: string }> {
+    this.calls.push({ method: "consume", args: [queue, opts] });
+    this.consumeCallback = fn;
+
+    return Promise.resolve({ consumerTag: "tag" });
+  }
+
+  public close(): Promise<void> {
+    this.calls.push({ method: "close", args: [] });
+    this.emit("close");
+
+    return Promise.resolve();
+  }
+
+  /** Delivers a reply to the consumed reply queue. */
+  public reply(
+    correlationId: string | undefined,
+    content: Buffer,
+    contentType?: string,
+  ): void {
+    this.consumeCallback!({
+      properties: { correlationId, contentType },
+      content,
+    });
+  }
 }
 
-function makeChannel(replyQueue = "amq.gen-reply"): FakeChannel {
-  const channel: FakeChannel = {
-    calls: [],
-    assertQueue: (queue, opts) => {
-      channel.calls.push({ method: "assertQueue", args: [queue, opts] });
-
-      return Promise.resolve({ queue: queue || replyQueue });
-    },
-    assertExchange: (exchange, type, opts) => {
-      channel.calls.push({
-        method: "assertExchange",
-        args: [exchange, type, opts],
-      });
-
-      return Promise.resolve({ exchange });
-    },
-    publish: (exchange, key, content, opts) => {
-      channel.calls.push({
-        method: "publish",
-        args: [exchange, key, content, opts],
-      });
-
-      return true;
-    },
-    sendToQueue: (queue, content, opts) => {
-      channel.calls.push({
-        method: "sendToQueue",
-        args: [queue, content, opts],
-      });
-
-      return true;
-    },
-    consume: (queue, fn, opts) => {
-      channel.calls.push({ method: "consume", args: [queue, opts] });
-      channel.consumeCallback = fn;
-
-      return Promise.resolve({ consumerTag: "tag" });
-    },
-    close: () => {
-      channel.calls.push({ method: "close", args: [] });
-
-      return Promise.resolve();
-    },
-  };
-
-  return channel;
-}
-
-function makeConnection(channel: FakeChannel): {
+function makeConnection(...channels: FakeChannel[]): {
   connection: AmqpConnection;
   channelCalls: number;
 } {
@@ -98,6 +112,8 @@ function makeConnection(channel: FakeChannel): {
   const connection = {
     serializer,
     createChannel: () => {
+      const channel = channels[Math.min(channelCalls, channels.length - 1)];
+
       channelCalls++;
 
       return Promise.resolve(channel);
@@ -116,16 +132,35 @@ function call(channel: FakeChannel, method: string): RecordedCall | undefined {
   return channel.calls.find((c) => c.method === method);
 }
 
-function flush(): Promise<void> {
+function count(channel: FakeChannel, method: string): number {
+  return channel.calls.filter((c) => c.method === method).length;
+}
+
+interface SendOptions {
+  correlationId: string;
+  replyTo?: string;
+  contentType?: string;
+  persistent?: boolean;
+}
+
+function sentOptions(channel: FakeChannel, index = 0): SendOptions {
+  // Recorded verbatim from the client's `sendToQueue(queue, content, options)`.
+  const options = channel.calls.filter((c) => c.method === "sendToQueue")[index]
+    .args[2] as SendOptions;
+
+  return options;
+}
+
+function flush(ms = 0): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
-  setTimeout(resolve, 0);
+  setTimeout(resolve, ms);
 
   return promise;
 }
 
 describe(WorkerClient.name, () => {
-  it("asserts the queue and sends a persistent payload", async () => {
-    const channel = makeChannel();
+  it("asserts the queue and sends a persistent JSON payload", async () => {
+    const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new WorkerClient(connection, { queue: "tasks" });
 
@@ -140,29 +175,48 @@ describe(WorkerClient.name, () => {
     assertEquals(serializer.deserialize(sendCall.args[1] as Buffer), {
       job: 1,
     });
-    assertEquals(sendCall.args[2], { persistent: true });
+    assertEquals(sendCall.args[2], {
+      persistent: true,
+      contentType: "application/json",
+    });
+  });
+
+  it("tags a binary payload so receivers skip JSON parsing", async () => {
+    const channel = new FakeChannel();
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, { queue: "tasks" });
+
+    await client.send(new Uint8Array([1, 2]));
+
+    assertEquals(sentOptions(channel).contentType, "application/octet-stream");
   });
 
   it("asserts the queue only once across two sends", async () => {
-    const channel = makeChannel();
+    const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new WorkerClient(connection, { queue: "tasks" });
 
     await client.send({ a: 1 });
     await client.send({ b: 2 });
 
-    assertEquals(
-      channel.calls.filter((c) => c.method === "assertQueue").length,
-      1,
-    );
-    assertEquals(
-      channel.calls.filter((c) => c.method === "sendToQueue").length,
-      2,
-    );
+    assertEquals(count(channel, "assertQueue"), 1);
+    assertEquals(count(channel, "sendToQueue"), 2);
+  });
+
+  it("opens a single channel for concurrent first sends", async () => {
+    const channel = new FakeChannel();
+    const tracked = makeConnection(channel);
+    const client = new WorkerClient(tracked.connection, { queue: "tasks" });
+
+    await Promise.all([client.send({ a: 1 }), client.send({ b: 2 })]);
+
+    assertEquals(tracked.channelCalls, 1);
+    assertEquals(count(channel, "assertQueue"), 1);
+    assertEquals(count(channel, "sendToQueue"), 2);
   });
 
   it("honors durable and persistent overrides", async () => {
-    const channel = makeChannel();
+    const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new WorkerClient(connection, {
       queue: "tasks",
@@ -173,13 +227,89 @@ describe(WorkerClient.name, () => {
     await client.send({ x: 1 });
 
     assertEquals(call(channel, "assertQueue")!.args[1], { durable: false });
-    assertEquals(call(channel, "sendToQueue")!.args[2], { persistent: false });
+    assertEquals(call(channel, "sendToQueue")!.args[2], {
+      persistent: false,
+      contentType: "application/json",
+    });
+  });
+
+  it("omits the content type when the serializer does not provide one", async () => {
+    const channel = new FakeChannel();
+    const connection = {
+      serializer: { serialize: () => Buffer.from("x"), deserialize: () => 0 },
+      createChannel: () => Promise.resolve(channel),
+    } as unknown as AmqpConnection;
+    const client = new WorkerClient(connection, { queue: "tasks" });
+
+    await client.send({ x: 1 });
+
+    assertEquals(sentOptions(channel).contentType, undefined);
+  });
+
+  it("opens a new channel after the previous one closed", async () => {
+    const first = new FakeChannel();
+    const second = new FakeChannel();
+    const tracked = makeConnection(first, second);
+    const client = new WorkerClient(tracked.connection, { queue: "tasks" });
+
+    await client.send({ a: 1 });
+    first.emit("close");
+    await client.send({ b: 2 });
+
+    assertEquals(tracked.channelCalls, 2);
+    assertEquals(count(first, "sendToQueue"), 1);
+    assertEquals(count(second, "sendToQueue"), 1);
+    assertEquals(count(second, "assertQueue"), 1);
+  });
+
+  it("closes the channel and retries on the next send when the setup fails", async () => {
+    const failing = new FakeChannel();
+    const healthy = new FakeChannel();
+    failing.assertQueue = () => Promise.reject(new Error("406 PRECONDITION"));
+    const tracked = makeConnection(failing, healthy);
+    const client = new WorkerClient(tracked.connection, { queue: "tasks" });
+
+    await assertRejects(() => client.send({ a: 1 }), Error, "406");
+    assertEquals(count(failing, "close"), 1);
+
+    await client.send({ b: 2 });
+
+    assertEquals(tracked.channelCalls, 2);
+    assertEquals(count(healthy, "sendToQueue"), 1);
+  });
+
+  it("rethrows the setup error even when closing the channel fails", async () => {
+    const channel = new FakeChannel();
+    channel.assertQueue = () => Promise.reject(new Error("406 PRECONDITION"));
+    channel.close = () => Promise.reject(new Error("already closed"));
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, { queue: "tasks" });
+
+    await assertRejects(() => client.send({ a: 1 }), Error, "406");
+  });
+
+  it("propagates a createChannel failure and retries on the next send", async () => {
+    const channel = new FakeChannel();
+    let attempts = 0;
+    const connection = {
+      serializer,
+      createChannel: () =>
+        ++attempts === 1
+          ? Promise.reject(new Error("ECONNREFUSED"))
+          : Promise.resolve(channel),
+    } as unknown as AmqpConnection;
+    const client = new WorkerClient(connection, { queue: "tasks" });
+
+    await assertRejects(() => client.send({ a: 1 }), Error, "ECONNREFUSED");
+    await client.send({ b: 2 });
+
+    assertEquals(count(channel, "sendToQueue"), 1);
   });
 });
 
 describe(PublisherClient.name, () => {
   it("asserts a fanout exchange and publishes with an empty routing key", async () => {
-    const channel = makeChannel();
+    const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new PublisherClient(connection, { exchange: "logs" });
 
@@ -197,12 +327,13 @@ describe(PublisherClient.name, () => {
     assertEquals(serializer.deserialize(publishCall.args[2] as Buffer), {
       event: "x",
     });
+    assertEquals(publishCall.args[3], { contentType: "application/json" });
   });
 });
 
 describe(RoutingClient.name, () => {
   it("asserts a direct exchange and publishes under the routing key", async () => {
-    const channel = makeChannel();
+    const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new RoutingClient(connection, { exchange: "alerts" });
 
@@ -220,12 +351,13 @@ describe(RoutingClient.name, () => {
     assertEquals(serializer.deserialize(publishCall.args[2] as Buffer), {
       msg: "boom",
     });
+    assertEquals(publishCall.args[3], { contentType: "application/json" });
   });
 });
 
 describe(TopicClient.name, () => {
   it("asserts a topic exchange and publishes under the pattern key", async () => {
-    const channel = makeChannel();
+    const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new TopicClient(connection, { exchange: "metrics" });
 
@@ -243,12 +375,13 @@ describe(TopicClient.name, () => {
     assertEquals(serializer.deserialize(publishCall.args[2] as Buffer), {
       x: 1,
     });
+    assertEquals(publishCall.args[3], { contentType: "application/json" });
   });
 });
 
 describe(RpcClient.name, () => {
   it("asserts an exclusive reply queue, consumes it, and sends with correlation", async () => {
-    const channel = makeChannel("reply-q");
+    const channel = new FakeChannel("reply-q");
     const { connection } = makeConnection(channel);
     const client = new RpcClient(connection, { queue: "rpc" });
 
@@ -269,66 +402,125 @@ describe(RpcClient.name, () => {
       a: 1,
       b: 2,
     });
-    const opts = sendCall.args[2] as { correlationId: string; replyTo: string };
+    const opts = sentOptions(channel);
     assertEquals(opts.replyTo, "reply-q");
+    assertEquals(opts.contentType, "application/json");
 
-    channel.consumeCallback!({
-      properties: { correlationId: opts.correlationId },
-      content: Buffer.from(JSON.stringify({ sum: 3 })),
-    });
+    channel.reply(opts.correlationId, Buffer.from(JSON.stringify({ sum: 3 })));
 
     assertEquals(await promise, { sum: 3 });
     await client.close();
   });
 
+  it("sends concurrent first requests on one channel, all with the reply queue", async () => {
+    const channel = new FakeChannel("reply-q");
+    const gate = Promise.withResolvers<void>();
+    channel.assertQueueGate = gate.promise;
+    const tracked = makeConnection(channel);
+    const client = new RpcClient(tracked.connection, { queue: "rpc" });
+
+    const first = client.request({ n: 1 });
+    await flush();
+    const second = client.request({ n: 2 });
+    await flush();
+
+    // Nothing is published while the reply queue is still being asserted.
+    assertEquals(count(channel, "sendToQueue"), 0);
+
+    gate.resolve();
+    await flush();
+
+    assertEquals(tracked.channelCalls, 1);
+    assertEquals(sentOptions(channel, 0).replyTo, "reply-q");
+    assertEquals(sentOptions(channel, 1).replyTo, "reply-q");
+
+    channel.reply(sentOptions(channel, 0).correlationId, Buffer.from("1"));
+    channel.reply(sentOptions(channel, 1).correlationId, Buffer.from("2"));
+
+    assertEquals(await Promise.all([first, second]), [1, 2]);
+    await client.close();
+  });
+
   it("rejects when the reply carries an err field", async () => {
-    const channel = makeChannel("reply-q");
+    const channel = new FakeChannel("reply-q");
     const { connection } = makeConnection(channel);
     const client = new RpcClient(connection, { queue: "rpc" });
 
     const promise = client.request({ x: 1 });
     await flush();
 
-    const opts = call(channel, "sendToQueue")!.args[2] as {
-      correlationId: string;
-    };
-    channel.consumeCallback!({
-      properties: { correlationId: opts.correlationId },
-      content: Buffer.from(JSON.stringify({ err: "remote boom" })),
-    });
+    channel.reply(
+      sentOptions(channel).correlationId,
+      Buffer.from(JSON.stringify({ err: "remote boom" })),
+    );
 
     await assertRejects(() => promise, Error, "remote boom");
     await client.close();
   });
 
-  it("ignores a reply with no correlationId and an unknown correlationId", async () => {
-    const channel = makeChannel("reply-q");
+  it("rejects the request instead of throwing when the reply cannot be parsed", async () => {
+    const channel = new FakeChannel("reply-q");
+    const { connection } = makeConnection(channel);
+    const client = new RpcClient(connection, { queue: "rpc", timeout: 1_000 });
+
+    const promise = client.request({ x: 1 });
+    await flush();
+
+    // Runs inside amqplib's delivery dispatch: a throw here kills the process.
+    channel.reply(sentOptions(channel).correlationId, Buffer.from("hello"));
+
+    const err = await assertRejects(
+      () => promise,
+      Error,
+      "Failed to parse reply message",
+    );
+    assertInstanceOf(err.cause, SyntaxError);
+    await client.close();
+  });
+
+  it("resolves a binary reply with its raw bytes", async () => {
+    const channel = new FakeChannel("reply-q");
     const { connection } = makeConnection(channel);
     const client = new RpcClient(connection, { queue: "rpc" });
 
     const promise = client.request({ x: 1 });
     await flush();
 
-    channel.consumeCallback!({ properties: {}, content: Buffer.from("{}") });
-    channel.consumeCallback!({
-      properties: { correlationId: "unknown" },
-      content: Buffer.from("{}"),
-    });
+    channel.reply(
+      sentOptions(channel).correlationId,
+      Buffer.from("hello"),
+      "application/octet-stream",
+    );
 
-    const opts = call(channel, "sendToQueue")!.args[2] as {
-      correlationId: string;
-    };
-    channel.consumeCallback!({
-      properties: { correlationId: opts.correlationId },
-      content: Buffer.from(JSON.stringify("ok")),
-    });
+    assertEquals(
+      new TextDecoder().decode(await promise as Uint8Array),
+      "hello",
+    );
+    await client.close();
+  });
+
+  it("ignores a reply with no correlationId and an unknown correlationId", async () => {
+    const channel = new FakeChannel("reply-q");
+    const { connection } = makeConnection(channel);
+    const client = new RpcClient(connection, { queue: "rpc" });
+
+    const promise = client.request({ x: 1 });
+    await flush();
+
+    channel.reply(undefined, Buffer.from("{}"));
+    channel.reply("unknown", Buffer.from("{}"));
+    channel.consumeCallback!(null);
+    channel.reply(
+      sentOptions(channel).correlationId,
+      Buffer.from(JSON.stringify("ok")),
+    );
 
     assertEquals(await promise, "ok");
     await client.close();
   });
 
   it("rejects after the timeout elapses when no reply arrives", async () => {
-    const channel = makeChannel("reply-q");
+    const channel = new FakeChannel("reply-q");
     const { connection } = makeConnection(channel);
     const client = new RpcClient(connection, { queue: "rpc", timeout: 10 });
 
@@ -342,28 +534,115 @@ describe(RpcClient.name, () => {
   });
 
   it("clears the timeout timer when a reply arrives before it fires", async () => {
-    const channel = makeChannel("reply-q");
+    const channel = new FakeChannel("reply-q");
     const { connection } = makeConnection(channel);
     const client = new RpcClient(connection, { queue: "rpc", timeout: 1_000 });
 
     const promise = client.request({ x: 1 });
     await flush();
 
-    const opts = call(channel, "sendToQueue")!.args[2] as {
-      correlationId: string;
-    };
-    channel.consumeCallback!({
-      properties: { correlationId: opts.correlationId },
-      content: Buffer.from(JSON.stringify({ ok: true })),
-    });
+    channel.reply(
+      sentOptions(channel).correlationId,
+      Buffer.from(JSON.stringify({ ok: true })),
+    );
 
     assertEquals(await promise, { ok: true });
     // close() must not throw even though the timer was already cleared.
     await client.close();
   });
 
+  it("rejects without arming a timer when the payload cannot be serialized", async () => {
+    const channel = new FakeChannel("reply-q");
+    const { connection } = makeConnection(channel);
+    const client = new RpcClient(connection, { queue: "rpc", timeout: 10 });
+
+    await assertRejects(() => client.request({ id: 1n }), TypeError);
+
+    // An armed timer would reject an orphaned promise here and fail the run
+    // with an unhandled rejection.
+    await flush(30);
+    assertEquals(count(channel, "sendToQueue"), 0);
+    await client.close();
+  });
+
+  it("rejects without arming a timer when sending throws", async () => {
+    const channel = new FakeChannel("reply-q");
+    channel.sendToQueue = () => {
+      throw new Error("Channel closed");
+    };
+    const { connection } = makeConnection(channel);
+    const client = new RpcClient(connection, { queue: "rpc", timeout: 10 });
+
+    await assertRejects(
+      () => client.request({ x: 1 }),
+      Error,
+      "Channel closed",
+    );
+
+    await flush(30);
+    await client.close();
+  });
+
+  it("rejects pending requests when their channel closes and reconnects on the next request", async () => {
+    const first = new FakeChannel("reply-1");
+    const second = new FakeChannel("reply-2");
+    const tracked = makeConnection(first, second);
+    const client = new RpcClient(tracked.connection, {
+      queue: "rpc",
+      timeout: 1_000,
+    });
+
+    const lost = client.request({ x: 1 });
+    await flush();
+
+    first.emit("close");
+
+    await assertRejects(() => lost, Error, "RPC channel closed");
+
+    const next = client.request({ x: 2 });
+    await flush();
+
+    assertEquals(tracked.channelCalls, 2);
+    assertEquals(sentOptions(second).replyTo, "reply-2");
+
+    second.reply(sentOptions(second).correlationId, Buffer.from("2"));
+    assertEquals(await next, 2);
+    await client.close();
+  });
+
+  it("keeps requests sent on a newer channel when an old channel closes late", async () => {
+    const first = new FakeChannel("reply-1");
+    const second = new FakeChannel("reply-2");
+    const closed = Promise.withResolvers<void>();
+    first.close = () => {
+      first.calls.push({ method: "close", args: [] });
+
+      return closed.promise.then(() => {
+        first.emit("close");
+      });
+    };
+    const { connection } = makeConnection(first, second);
+    const client = new RpcClient(connection, { queue: "rpc" });
+
+    const old = client.request({ x: 1 }).catch((err: Error) => err.message);
+    await flush();
+
+    const closing = client.close();
+    const current = client.request({ x: 2 });
+    await flush();
+
+    closed.resolve();
+    await closing;
+
+    second.reply(sentOptions(second).correlationId, Buffer.from("2"));
+
+    assertEquals(await old, "Connection closed");
+    assertEquals(await current, 2);
+    await client.close();
+  });
+
   it("rejects an in-flight request on close and is idempotent", async () => {
-    const channel = makeChannel("reply-q");
+    const channel = new FakeChannel("reply-q");
     const { connection } = makeConnection(channel);
     const client = new RpcClient(connection, { queue: "rpc" });
 
@@ -376,27 +655,13 @@ describe(RpcClient.name, () => {
 
     // Second close with no channel is a no-op.
     await client.close();
-    assertEquals(
-      channel.calls.filter((c) => c.method === "close").length,
-      1,
-    );
+    assertEquals(count(channel, "close"), 1);
   });
 });
 
 describe("client teardown", () => {
-  it("WorkerClient.onBeforeApplicationShutdown closes the channel", async () => {
-    const channel = makeChannel();
-    const { connection } = makeConnection(channel);
-    const client = new WorkerClient(connection, { queue: "tasks" });
-
-    await client.send({ x: 1 });
-    await client.onBeforeApplicationShutdown();
-
-    assertEquals(call(channel, "close")!.method, "close");
-  });
-
   it("close before any send is a no-op", async () => {
-    const channel = makeChannel();
+    const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new PublisherClient(connection, { exchange: "ex" });
 
@@ -405,80 +670,69 @@ describe("client teardown", () => {
     assertStrictEquals(call(channel, "close"), undefined);
   });
 
-  it("onBeforeApplicationShutdown closes the channel for every client type", async () => {
-    const channel = makeChannel("reply-q");
+  it("closes a channel that was still being set up", async () => {
+    const channel = new FakeChannel();
+    const gate = Promise.withResolvers<void>();
+    channel.assertQueueGate = gate.promise;
     const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, { queue: "tasks" });
 
-    const publisher = new PublisherClient(connection, { exchange: "ex" });
-    await publisher.publish({ a: 1 });
-    await publisher.onBeforeApplicationShutdown();
-
-    const routing = new RoutingClient(connection, { exchange: "ex" });
-    await routing.publish("rk", { a: 1 });
-    await routing.onBeforeApplicationShutdown();
-
-    const topic = new TopicClient(connection, { exchange: "ex" });
-    await topic.publish("a.*", { a: 1 });
-    await topic.onBeforeApplicationShutdown();
-
-    const rpc = new RpcClient(connection, { queue: "rpc" });
-    const rejected = rpc.request({ a: 1 }).catch(() => {});
+    const sending = client.send({ a: 1 });
     await flush();
-    await rpc.onBeforeApplicationShutdown();
-    await rejected;
 
-    assertEquals(
-      channel.calls.filter((c) => c.method === "close").length,
-      4,
-    );
+    const closing = client.close();
+    gate.resolve();
+
+    await sending;
+    await closing;
+
+    assertEquals(count(channel, "close"), 1);
   });
 
-  it("swallows a throwing channel.close() for every client type", async () => {
-    const failingClose = (): Promise<void> =>
-      Promise.reject(new Error("close failed"));
+  it("disposing closes the channel for every client type", async () => {
+    const channel = new FakeChannel("reply-q");
+    const { connection } = makeConnection(channel);
 
-    const workerChannel = makeChannel();
-    workerChannel.close = failingClose;
-    const worker = new WorkerClient(
-      makeConnection(workerChannel).connection,
-      { queue: "tasks" },
-    );
-    await worker.send({ a: 1 });
-    await worker.close();
+    {
+      await using publisher = new PublisherClient(connection, {
+        exchange: "ex",
+      });
+      await publisher.publish({ a: 1 });
+    }
 
-    const publisherChannel = makeChannel();
-    publisherChannel.close = failingClose;
-    const publisher = new PublisherClient(
-      makeConnection(publisherChannel).connection,
-      { exchange: "ex" },
-    );
-    await publisher.publish({ a: 1 });
-    await publisher.close();
+    {
+      await using routing = new RoutingClient(connection, { exchange: "ex" });
+      await routing.publish("rk", { a: 1 });
+    }
 
-    const routingChannel = makeChannel();
-    routingChannel.close = failingClose;
-    const routing = new RoutingClient(
-      makeConnection(routingChannel).connection,
-      { exchange: "ex" },
-    );
-    await routing.publish("rk", { a: 1 });
-    await routing.close();
+    {
+      await using topic = new TopicClient(connection, { exchange: "ex" });
+      await topic.publish("a.*", { a: 1 });
+    }
 
-    const topicChannel = makeChannel();
-    topicChannel.close = failingClose;
-    const topic = new TopicClient(
-      makeConnection(topicChannel).connection,
-      { exchange: "ex" },
-    );
-    await topic.publish("a.*", { a: 1 });
-    await topic.close();
+    {
+      await using worker = new WorkerClient(connection, { queue: "q" });
+      await worker.send({ a: 1 });
+    }
 
-    const rpcChannel = makeChannel("reply-q");
-    rpcChannel.close = failingClose;
-    const rpc = new RpcClient(
-      makeConnection(rpcChannel).connection,
-      { queue: "rpc" },
-    );
+    let rejected: Promise<unknown>;
+
+    {
+      await using rpc = new RpcClient(connection, { queue: "rpc" });
+      rejected = rpc.request({ a: 1 }).catch((err: Error) => err.message);
+      await flush();
+    }
+
+    assertEquals(await rejected, "Connection closed");
+    assertEquals(count(channel, "close"), 5);
+  });
+
+  it("swallows a throwing channel.close()", async () => {
+    const channel = new FakeChannel("reply-q");
+    channel.close = () => Promise.reject(new Error("close failed"));
+    const { connection } = makeConnection(channel);
+    const rpc = new RpcClient(connection, { queue: "rpc" });
+
     const rejected = rpc.request({ a: 1 }).catch(() => {});
     await flush();
     await rpc.close();

@@ -1,5 +1,5 @@
-import type { OnBeforeApplicationShutdown } from "@denorid/injector";
 import type { Channel, ConsumeMessage } from "amqplib";
+import type { Buffer } from "node:buffer";
 import type { AmqpConnection } from "./connection.ts";
 import type {
   ExchangeClientOptions,
@@ -7,19 +7,30 @@ import type {
   WorkerClientOptions,
 } from "./options.ts";
 
+/** A serialized message body plus the `contentType` describing it. */
+interface EncodedMessage {
+  content: Buffer;
+  contentType?: string;
+}
+
 /**
  * Base class for all AMQP clients, owning the lazily-created {@link Channel}
  * and its teardown.
  *
+ * The channel is opened and set up (see {@link setupChannel}) once, shared by
+ * concurrent first calls, and dropped when it closes (broker drop, channel
+ * error), so the next call opens a fresh one.
+ *
  * Construct a concrete client directly with a shared {@link AmqpConnection}.
- * Manually-instantiated (non-DI) clients never receive the
- * {@link AbstractClient.onBeforeApplicationShutdown} hook, but their channel is
- * still torn down when the shared connection closes.
+ * Clients registered through `AmqpModuleOptions.clients` are closed when the
+ * DI container disposes them; manually-instantiated clients should be closed
+ * (or declared with `await using`), but their channel is still torn down when
+ * the shared connection closes.
  *
  * @template T The client-specific options shape.
  */
-export abstract class AbstractClient<T> implements OnBeforeApplicationShutdown {
-  protected channel?: Channel;
+export abstract class AbstractClient<T> implements AsyncDisposable {
+  private channelReady?: Promise<Channel>;
 
   public constructor(
     protected readonly connection: AmqpConnection,
@@ -27,32 +38,117 @@ export abstract class AbstractClient<T> implements OnBeforeApplicationShutdown {
   ) {}
 
   /**
-   * Lazily creates and caches the channel, asserting the queue or exchange
-   * this client targets.
+   * Asserts the queue or exchange this client targets on a freshly created
+   * channel. Runs once per channel, before any caller receives it.
    *
-   * @return {Promise<Channel>} The cached channel.
+   * @param {Channel} channel - The channel to set up.
+   * @return {Promise<void>}
    */
-  protected abstract getChannel(): Promise<Channel>;
+  protected abstract setupChannel(channel: Channel): Promise<void>;
 
   /**
-   * Closes the client channel, swallowing any close error.
+   * Called once a channel handed out by {@link getChannel} closed, for
+   * whatever reason. The channel is already dropped from the cache.
+   *
+   * @param {Channel} _channel - The closed channel.
+   */
+  protected onChannelClosed(_channel: Channel): void {}
+
+  /**
+   * Returns the cached channel, creating and setting it up on first use and
+   * again after the previous channel closed.
+   *
+   * @return {Promise<Channel>} The ready channel.
+   */
+  protected getChannel(): Promise<Channel> {
+    if (this.channelReady) {
+      return this.channelReady;
+    }
+
+    const { promise, resolve, reject } = Promise.withResolvers<Channel>();
+
+    this.channelReady = promise;
+    this.openChannel(promise).then(resolve, reject);
+
+    return promise;
+  }
+
+  /**
+   * Serializes a payload with the connection's serializer.
+   *
+   * @param {unknown} data - The payload.
+   * @return {EncodedMessage} The message body and its content type.
+   */
+  protected encode(data: unknown): EncodedMessage {
+    const { serializer } = this.connection;
+
+    return {
+      content: serializer.serialize(data),
+      contentType: serializer.contentType?.(data),
+    };
+  }
+
+  /**
+   * Closes the client channel (waiting for one still being opened),
+   * swallowing any close error. Idempotent: a second call with no channel is a
+   * no-op; a later call reopens a channel.
    *
    * @return {Promise<void>}
    */
   public async close(): Promise<void> {
+    const ready = this.channelReady;
+
+    this.channelReady = undefined;
+
+    const channel = await ready?.catch(() => undefined);
+
     try {
-      await this.channel?.close();
+      await channel?.close();
       // deno-lint-ignore no-empty
     } catch {}
-
-    this.channel = undefined;
   }
 
   /**
-   * @inheritdoc
+   * Closes the client when the DI container (or an `await using` block)
+   * disposes it.
+   *
+   * @return {Promise<void>}
    */
-  public onBeforeApplicationShutdown(): Promise<void> {
+  public [Symbol.asyncDispose](): Promise<void> {
     return this.close();
+  }
+
+  private async openChannel(ready: Promise<Channel>): Promise<Channel> {
+    try {
+      const channel = await this.connection.createChannel();
+
+      channel.once("close", () => {
+        if (this.channelReady === ready) {
+          this.channelReady = undefined;
+        }
+
+        this.onChannelClosed(channel);
+      });
+
+      try {
+        await this.setupChannel(channel);
+      } catch (err) {
+        try {
+          await channel.close();
+          // deno-lint-ignore no-empty
+        } catch {}
+
+        throw err;
+      }
+
+      return channel;
+    } catch (err) {
+      if (this.channelReady === ready) {
+        this.channelReady = undefined;
+      }
+
+      throw err;
+    }
   }
 }
 
@@ -69,27 +165,19 @@ export class WorkerClient extends AbstractClient<WorkerClientOptions> {
    * @return {Promise<void>}
    */
   public async send(data: unknown): Promise<void> {
+    const { content, contentType } = this.encode(data);
     const channel = await this.getChannel();
 
-    channel.sendToQueue(
-      this.options.queue,
-      this.connection.serializer.serialize(data),
-      {
-        persistent: this.options.persistent ?? true,
-      },
-    );
+    channel.sendToQueue(this.options.queue, content, {
+      persistent: this.options.persistent ?? true,
+      contentType,
+    });
   }
 
-  protected async getChannel(): Promise<Channel> {
-    if (!this.channel) {
-      this.channel = await this.connection.createChannel();
-
-      await this.channel.assertQueue(this.options.queue, {
-        durable: this.options.durable ?? true,
-      });
-    }
-
-    return this.channel;
+  protected async setupChannel(channel: Channel): Promise<void> {
+    await channel.assertQueue(this.options.queue, {
+      durable: this.options.durable ?? true,
+    });
   }
 }
 
@@ -106,25 +194,16 @@ export class PublisherClient extends AbstractClient<ExchangeClientOptions> {
    * @return {Promise<void>}
    */
   public async publish(data: unknown): Promise<void> {
+    const { content, contentType } = this.encode(data);
     const channel = await this.getChannel();
 
-    channel.publish(
-      this.options.exchange,
-      "",
-      this.connection.serializer.serialize(data),
-    );
+    channel.publish(this.options.exchange, "", content, { contentType });
   }
 
-  protected async getChannel(): Promise<Channel> {
-    if (!this.channel) {
-      this.channel = await this.connection.createChannel();
-
-      await this.channel.assertExchange(this.options.exchange, "fanout", {
-        durable: this.options.durable ?? true,
-      });
-    }
-
-    return this.channel;
+  protected async setupChannel(channel: Channel): Promise<void> {
+    await channel.assertExchange(this.options.exchange, "fanout", {
+      durable: this.options.durable ?? true,
+    });
   }
 }
 
@@ -142,25 +221,18 @@ export class RoutingClient extends AbstractClient<ExchangeClientOptions> {
    * @return {Promise<void>}
    */
   public async publish(routingKey: string, data: unknown): Promise<void> {
+    const { content, contentType } = this.encode(data);
     const channel = await this.getChannel();
 
-    channel.publish(
-      this.options.exchange,
-      routingKey,
-      this.connection.serializer.serialize(data),
-    );
+    channel.publish(this.options.exchange, routingKey, content, {
+      contentType,
+    });
   }
 
-  protected async getChannel(): Promise<Channel> {
-    if (!this.channel) {
-      this.channel = await this.connection.createChannel();
-
-      await this.channel.assertExchange(this.options.exchange, "direct", {
-        durable: this.options.durable ?? true,
-      });
-    }
-
-    return this.channel;
+  protected async setupChannel(channel: Channel): Promise<void> {
+    await channel.assertExchange(this.options.exchange, "direct", {
+      durable: this.options.durable ?? true,
+    });
   }
 }
 
@@ -178,29 +250,24 @@ export class TopicClient extends AbstractClient<ExchangeClientOptions> {
    * @return {Promise<void>}
    */
   public async publish(routingKey: string, data: unknown): Promise<void> {
+    const { content, contentType } = this.encode(data);
     const channel = await this.getChannel();
 
-    channel.publish(
-      this.options.exchange,
-      routingKey,
-      this.connection.serializer.serialize(data),
-    );
+    channel.publish(this.options.exchange, routingKey, content, {
+      contentType,
+    });
   }
 
-  protected async getChannel(): Promise<Channel> {
-    if (!this.channel) {
-      this.channel = await this.connection.createChannel();
-
-      await this.channel.assertExchange(this.options.exchange, "topic", {
-        durable: this.options.durable ?? true,
-      });
-    }
-
-    return this.channel;
+  protected async setupChannel(channel: Channel): Promise<void> {
+    await channel.assertExchange(this.options.exchange, "topic", {
+      durable: this.options.durable ?? true,
+    });
   }
 }
 
 interface RpcPendingEntry {
+  /** The channel the request was sent on (its reply queue receives the reply). */
+  channel: Channel;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
   timer?: NodeJS.Timeout;
@@ -210,13 +277,15 @@ interface RpcPendingEntry {
  * Issues request/reply (RPC) calls against a request queue.
  *
  * Each request mints a `correlationId`, registers a pending promise, and
- * publishes to the request queue with a dedicated exclusive reply queue as
- * `replyTo`. Replies are correlated back by `correlationId`.
+ * publishes to the request queue with the channel's dedicated exclusive reply
+ * queue as `replyTo`. Replies are correlated back by `correlationId`. When the
+ * channel closes, its reply queue is gone, so every request still waiting on
+ * it is rejected.
  *
  * @see {@link AbstractClient} for connection and shutdown semantics.
  */
 export class RpcClient extends AbstractClient<RpcClientOptions> {
-  private replyQueue?: string;
+  private readonly replyQueues: WeakMap<Channel, string> = new WeakMap();
   private readonly pending: Map<string, RpcPendingEntry> = new Map();
 
   /**
@@ -227,13 +296,29 @@ export class RpcClient extends AbstractClient<RpcClientOptions> {
    * @return {Promise<T>} The reply payload.
    */
   public async request<T = unknown>(data: unknown): Promise<T> {
+    const { content, contentType } = this.encode(data);
     const channel = await this.getChannel();
     const correlationId = crypto.randomUUID();
     const { promise, resolve, reject } = Promise.withResolvers<T>();
     const entry: RpcPendingEntry = {
+      channel,
       resolve: resolve as (value: unknown) => void,
       reject,
     };
+
+    this.pending.set(correlationId, entry);
+
+    try {
+      channel.sendToQueue(this.options.queue, content, {
+        correlationId,
+        replyTo: this.replyQueues.get(channel),
+        contentType,
+      });
+    } catch (err) {
+      this.pending.delete(correlationId);
+
+      throw err;
+    }
 
     if (this.options.timeout != null) {
       entry.timer = setTimeout(() => {
@@ -241,17 +326,6 @@ export class RpcClient extends AbstractClient<RpcClientOptions> {
         reject(new Error("RPC request timed out"));
       }, this.options.timeout);
     }
-
-    this.pending.set(correlationId, entry);
-
-    channel.sendToQueue(
-      this.options.queue,
-      this.connection.serializer.serialize(data),
-      {
-        correlationId,
-        replyTo: this.replyQueue,
-      },
-    );
 
     return promise;
   }
@@ -263,47 +337,42 @@ export class RpcClient extends AbstractClient<RpcClientOptions> {
    * @return {Promise<void>}
    */
   public override async close(): Promise<void> {
-    const err = new Error("Connection closed");
+    this.rejectPending(new Error("Connection closed"));
 
-    for (const entry of this.pending.values()) {
-      clearTimeout(entry.timer);
-      entry.reject(err);
-    }
-
-    this.pending.clear();
-
-    try {
-      await this.channel?.close();
-      // deno-lint-ignore no-empty
-    } catch {}
-
-    this.channel = undefined;
-    this.replyQueue = undefined;
+    await super.close();
   }
 
-  protected async getChannel(): Promise<Channel> {
-    if (!this.channel) {
-      this.channel = await this.connection.createChannel();
+  protected async setupChannel(channel: Channel): Promise<void> {
+    const reply = await channel.assertQueue("", {
+      exclusive: true,
+      autoDelete: true,
+    });
 
-      const reply = await this.channel.assertQueue("", {
-        exclusive: true,
-        autoDelete: true,
-      });
+    await channel.consume(
+      reply.queue,
+      (msg) => {
+        if (msg !== null) {
+          this.handleReply(msg);
+        }
+      },
+      { noAck: true },
+    );
 
-      this.replyQueue = reply.queue;
+    this.replyQueues.set(channel, reply.queue);
+  }
 
-      await this.channel.consume(
-        this.replyQueue,
-        (msg) => {
-          if (msg !== null) {
-            this.handleReply(msg);
-          }
-        },
-        { noAck: true },
-      );
+  protected override onChannelClosed(channel: Channel): void {
+    this.rejectPending(new Error("RPC channel closed"), channel);
+  }
+
+  private rejectPending(err: Error, channel?: Channel): void {
+    for (const [correlationId, entry] of this.pending) {
+      if (channel === undefined || entry.channel === channel) {
+        this.pending.delete(correlationId);
+        clearTimeout(entry.timer);
+        entry.reject(err);
+      }
     }
-
-    return this.channel;
   }
 
   private handleReply(msg: ConsumeMessage): void {
@@ -322,7 +391,18 @@ export class RpcClient extends AbstractClient<RpcClientOptions> {
     this.pending.delete(correlationId);
     clearTimeout(entry.timer);
 
-    const parsed = this.connection.serializer.deserialize(msg.content);
+    let parsed: unknown;
+
+    try {
+      parsed = this.connection.serializer.deserialize(
+        msg.content,
+        msg.properties,
+      );
+    } catch (err) {
+      entry.reject(new Error("Failed to parse reply message", { cause: err }));
+
+      return;
+    }
 
     if (parsed !== null && typeof parsed === "object" && "err" in parsed) {
       entry.reject(new Error(String(parsed.err)));
