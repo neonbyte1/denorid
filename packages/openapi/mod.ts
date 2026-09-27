@@ -42,4 +42,5 @@
  */
 
 export * from "./decorators.ts";
+export * from "./module_options.ts";
 export * from "./types.ts";
