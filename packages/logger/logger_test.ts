@@ -164,6 +164,43 @@ describe("Logger", () => {
 
       assertEquals(logger["inspectOptions"].depth, 10);
     });
+
+    it("should default colors to false and use single-line output when json=true", () => {
+      const logger = new Logger({ json: true });
+
+      assertEquals(logger["options"].colors, false);
+      assertEquals(logger["inspectOptions"].breakLength, Infinity);
+    });
+
+    it("should keep explicit colors when json=true", () => {
+      const logger = new Logger({ json: true, colors: true });
+
+      assertEquals(logger["options"].colors, true);
+    });
+
+    it("should not mutate a shared options object", () => {
+      const shared = {
+        colors: false,
+        context: "Shared",
+        inspect: { depth: 0 },
+      };
+      const first = new Logger(shared);
+      const second = new Logger(shared);
+
+      assertEquals(shared, {
+        colors: false,
+        context: "Shared",
+        inspect: { depth: 0 },
+      });
+      assertEquals(
+        [first["context"], first["inspectOptions"].depth],
+        ["Shared", 0],
+      );
+      assertEquals(
+        [second["context"], second["inspectOptions"].depth],
+        ["Shared", 0],
+      );
+    });
   });
 
   describe("formatPid", () => {
@@ -404,6 +441,20 @@ describe("Logger", () => {
 
       assertEquals(result, false);
     });
+
+    it("should return true when the error message spans multiple lines", () => {
+      const logger = new Logger();
+      const stack =
+        'Error: Validation failed:\n[\n  { "path": ["PORT"] }\n]\n    at fn (file:///app.ts:3:13)';
+
+      assertEquals(logger["isStackFormat"](stack), true);
+    });
+
+    it("should return false for a multi-line string without stack frames", () => {
+      const logger = new Logger();
+
+      assertEquals(logger["isStackFormat"]("line one\n  at the end"), false);
+    });
   });
 
   describe("getContextAndStackAndMessagesToPrint", () => {
@@ -437,7 +488,33 @@ describe("Logger", () => {
       assertEquals(result, { messages: ["msg"], context: "Ctx" });
     });
 
-    it("should handle multiple messages with string stack at end", () => {
+    it("should drop an undefined stack in the two argument form", () => {
+      const logger = new Logger("Ctx");
+      const result = logger["getContextAndStackAndMessagesToPrint"]([
+        "msg",
+        undefined,
+      ]);
+
+      assertEquals(result, { messages: ["msg"], context: "Ctx" });
+    });
+
+    it("should split message, stack and context in the three argument form", () => {
+      const logger = new Logger("Instance");
+      const stack = "Error: boom\n    at fn (file:///app.ts:1:1)";
+      const result = logger["getContextAndStackAndMessagesToPrint"]([
+        "Something went wrong",
+        stack,
+        "AppModule",
+      ]);
+
+      assertEquals(result, {
+        messages: ["Something went wrong"],
+        context: "AppModule",
+        stack,
+      });
+    });
+
+    it("should use the string before the context as stack", () => {
       const logger = new Logger();
       const result = logger["getContextAndStackAndMessagesToPrint"]([
         "msg1",
@@ -445,11 +522,27 @@ describe("Logger", () => {
         "stackOrCtx",
       ]);
 
-      assertEquals(result.messages, ["msg1", "msg2"]);
-      assertEquals(result.context, "stackOrCtx");
+      assertEquals(result, {
+        messages: ["msg1"],
+        context: "stackOrCtx",
+        stack: "msg2",
+      });
     });
 
-    it("should handle multiple messages with undefined at end", () => {
+    it("should drop an undefined stack in the three argument form", () => {
+      const logger = new Logger("Instance");
+      const result = logger["getContextAndStackAndMessagesToPrint"]([
+        "msg",
+        undefined,
+        "Ctx",
+      ]);
+
+      assertEquals(result.messages, ["msg"]);
+      assertEquals(result.context, "Ctx");
+      assertEquals(result.stack, undefined);
+    });
+
+    it("should drop a trailing undefined without a context", () => {
       const logger = new Logger("Ctx");
       const result = logger["getContextAndStackAndMessagesToPrint"]([
         "msg1",
@@ -457,6 +550,8 @@ describe("Logger", () => {
         undefined,
       ]);
 
+      assertEquals(result.messages, ["msg1", "msg2"]);
+      assertEquals(result.context, "Ctx");
       assertEquals(result.stack, undefined);
     });
 
@@ -498,11 +593,11 @@ describe("Logger", () => {
       assertEquals(result, "TestClass");
     });
 
-    it("should stringify object using inspect", () => {
-      const logger = new Logger({ colors: false });
-      const result = logger["stringifyMessage"]({ key: "value" }, "log");
+    it("should prefix plain objects with their key count", () => {
+      const logger = new Logger({ colors: false, compact: true });
+      const result = logger["stringifyMessage"]({ a: 1, b: 2 }, "log");
 
-      assertMatch(result, /key/);
+      assertEquals(result, "Object(2) { a: 1, b: 2 }");
     });
 
     it("should stringify array", () => {
@@ -583,7 +678,7 @@ describe("Logger", () => {
       assertMatch(capturedOutput, /hello/);
     });
 
-    it("yy", () => {
+    it("should drop every level when no level is enabled", () => {
       const logger = new Logger({ levels: [] });
 
       logger.debug(Date.now());
@@ -594,12 +689,12 @@ describe("Logger", () => {
       logger.error(Date.now());
 
       assertEquals(capturedOutput, "");
+      assertEquals(capturedStderr, "");
     });
 
-    it("xx", () => {
+    it("should print every enabled level with its label", () => {
       const logger = new Logger({
         levels: ["debug", "verbose", "log", "warn", "fatal", "error"],
-        json: false,
       });
 
       logger.debug(Date.now());
@@ -621,28 +716,72 @@ describe("Logger", () => {
       assertMatch(capturedStderr, /FATAL/);
 
       capturedStderr = "";
-      logger.error(
-        Date.now(),
-        "asdasd",
-        `
-This could be
-some stack message
-`,
-      );
+      logger.error(Date.now());
       assertMatch(capturedStderr, /ERROR/);
     });
 
-    it("askljalsdj", () => {
-      const logger = new Logger({ forceConsole: true });
-      logger.error(
-        Date.now(),
-        "asdasd",
-        `
-This could be
-some stack message
-`,
+    it("should print message, context and stack for error(message, stack, context)", () => {
+      const stack = "Error: boom\n    at fn (file:///app.ts:1:1)";
+
+      new Logger("Instance", { colors: false }).error(
+        "Something went wrong",
+        stack,
+        "AppModule",
       );
-      assertMatch(capturedStderr, /some stack message/);
+
+      const writes = stderrWrite.calls.map((call) => String(call.args[0]));
+
+      assertEquals(writes.length, 2);
+      assertMatch(writes[0], / ERROR \[AppModule\] Something went wrong\n$/);
+      assertEquals(writes[1], `${stack}\n`);
+    });
+
+    it("should print the stack of an error with a multi-line message", () => {
+      const stack =
+        'Error: Validation failed:\n[\n  { "path": ["PORT"] }\n]\n    at fn (file:///app.ts:3:13)';
+
+      new Logger({ colors: false }).error("Failed to resolve", stack);
+
+      const writes = stderrWrite.calls.map((call) => String(call.args[0]));
+
+      assertEquals(writes.length, 2);
+      assertMatch(writes[0], / ERROR Failed to resolve\n$/);
+      assertEquals(writes[1], `${stack}\n`);
+    });
+
+    it("should not print an undefined stack", () => {
+      const logger = new Logger("Instance", { colors: false });
+
+      logger.error("first", undefined);
+      logger.error("second", undefined, "Ctx");
+
+      const writes = stderrWrite.calls.map((call) => String(call.args[0]));
+
+      assertEquals(writes.length, 2);
+      assertMatch(writes[0], / ERROR \[Instance\] first\n$/);
+      assertMatch(writes[1], / ERROR \[Ctx\] second\n$/);
+    });
+
+    it("should print the stack through console.error with forceConsole", () => {
+      const errors: unknown[][] = [];
+      const stack = "Error: boom\n    at fn (file:///app.ts:1:1)";
+
+      console.error = (...args: unknown[]): void => {
+        errors.push(args);
+      };
+
+      new Logger({ forceConsole: true, colors: false }).error(
+        "Something went wrong",
+        stack,
+        "AppModule",
+      );
+
+      assertEquals(errors.length, 2);
+      assertMatch(
+        String(errors[0][0]),
+        / ERROR \[AppModule\] Something went wrong$/,
+      );
+      assertEquals(errors[1], [stack]);
     });
   });
 
@@ -763,6 +902,65 @@ some stack message
       logger.log("colored json");
 
       assertMatch(capturedOutput, /message/);
+    });
+
+    it("should emit one parseable JSON line per message by default", () => {
+      const message = { userId: 1, action: "login", note: "x".repeat(100) };
+
+      new Logger("Ctx", { json: true }).log(message);
+
+      assertEquals(stdoutWrite.calls.length, 1);
+
+      const line = String(stdoutWrite.calls[0].args[0]);
+      const parsed = JSON.parse(line);
+
+      assertEquals(line.indexOf("\n"), line.length - 1);
+      assertEquals(
+        [parsed.level, parsed.pid, parsed.context, parsed.message],
+        ["log", process.pid, "Ctx", message],
+      );
+    });
+
+    it("should write the stack of error(message, stack, context) into the stack field", () => {
+      const stack = "Error: boom\n    at fn (file:///app.ts:1:1)";
+
+      new Logger({ json: true }).error("failed", stack, "Ctx");
+
+      assertEquals(stderrWrite.calls.length, 1);
+
+      const parsed = JSON.parse(String(stderrWrite.calls[0].args[0]));
+
+      assertEquals(
+        [parsed.level, parsed.context, parsed.message, parsed.stack],
+        ["error", "Ctx", "failed", stack],
+      );
+    });
+
+    it("should replace circular references instead of throwing", () => {
+      const shared = { id: 1 };
+      const message: Record<string, unknown> = { a: shared, b: [shared] };
+
+      message.self = message;
+
+      new Logger({ json: true, colors: false }).log(message);
+
+      const parsed = JSON.parse(String(stdoutWrite.calls[0].args[0]));
+
+      assertEquals(parsed.message, {
+        a: { id: 1 },
+        b: [{ id: 1 }],
+        self: "[Circular]",
+      });
+    });
+
+    it("should apply the configured inspect options to Map values", () => {
+      new Logger({ json: true, colors: false, inspect: { depth: 0 } }).log(
+        new Map([["k", { deep: { deeper: 1 } }]]),
+      );
+
+      const parsed = JSON.parse(String(stdoutWrite.calls[0].args[0]));
+
+      assertEquals(parsed.message, "Map(1) { 'k' => [Object] }");
     });
   });
 
@@ -948,61 +1146,85 @@ some stack message
       (Logger as unknown as Record<symbol, unknown>)[STATIC_KEY] = undefined;
     });
 
-    it("should set levels on the static Logger instance when called with an array", () => {
-      Logger.overrideLogger(["debug", "verbose"]);
-      const ref = Logger.staticInstanceRef as unknown as Record<
-        string,
-        Record<string, unknown>
-      >;
+    it("should restrict the levels of the static Logger when called with an array", () => {
+      Logger.overrideLogger(["error"]);
+      Logger.log("hidden");
+      Logger.error("shown");
 
-      assertEquals(ref["options"]["levels"], ["debug", "verbose"]);
+      assertEquals(capturedOutput, "");
+      assertMatch(capturedStderr, /shown/);
     });
 
-    it("should set context and save originalContext when called with a string", () => {
-      const ref = Logger.staticInstanceRef as unknown as Record<
-        string,
-        unknown
-      >;
-      (ref as Record<string, unknown>)["context"] = "OriginalCtx";
-
-      Logger.overrideLogger("NewContext");
-
-      assertEquals(ref["context"], "NewContext");
-      assertEquals(ref["originalContext"], "OriginalCtx");
-    });
-
-    it("should restore original context and clear originalContext when called with null", () => {
-      const ref = Logger.staticInstanceRef as unknown as Record<
-        string,
-        unknown
-      >;
-      ref["context"] = "OriginalCtx";
-
-      Logger.overrideLogger("TempCtx");
+    it("should restore an undefined original context when called with null", () => {
+      Logger.overrideLogger("Bootstrap");
+      Logger.log("first");
       Logger.overrideLogger(null);
+      Logger.log("second");
 
-      assertEquals(ref["context"], "OriginalCtx");
-      assertEquals(ref["originalContext"], undefined);
+      const writes = stdoutWrite.calls.map((call) => String(call.args[0]));
+
+      assertMatch(writes[0], /Bootstrap/);
+      assertEquals(writes[1].includes("Bootstrap"), false);
     });
 
-    it("should replace staticInstanceRef with a custom LoggerService when not instanceof Logger", () => {
-      const placeholder: LoggerService = {
+    it("should restore the context from before the first override", () => {
+      Logger.overrideLogger(new Logger("Original", { colors: false }));
+
+      Logger.overrideLogger(null);
+      Logger.log("untouched");
+      Logger.overrideLogger("First");
+      Logger.overrideLogger("Second");
+      Logger.log("overridden");
+      Logger.overrideLogger(null);
+      Logger.log("restored");
+      Logger.overrideLogger("Third");
+      Logger.overrideLogger(null);
+      Logger.log("restored again");
+
+      assertEquals(
+        stdoutWrite.calls.map((call) =>
+          String(call.args[0]).match(/\[(\w+)\] [\w ]+\n$/)?.[1]
+        ),
+        ["Original", "Second", "Original", "Original"],
+      );
+    });
+
+    it("should install a custom LoggerService for static calls", () => {
+      const custom = {
         log: spy((_msg: unknown, ..._args: unknown[]): void => {}),
         warn: () => {},
         fatal: () => {},
         error: () => {},
-      };
-      (Logger as unknown as Record<symbol, unknown>)[STATIC_KEY] = placeholder;
+      } satisfies LoggerService;
 
-      const replacement: LoggerService = {
+      Logger.overrideLogger(custom);
+      Logger.log("routed", "Ctx");
+
+      assertEquals(Logger.staticInstanceRef, custom);
+      assertEquals(custom.log.calls.map((call) => call.args), [[
+        "routed",
+        "Ctx",
+      ]]);
+      assertEquals(capturedOutput, "");
+    });
+
+    it("should ignore level and context overrides while a custom LoggerService is installed", () => {
+      const custom = {
         log: spy((_msg: unknown, ..._args: unknown[]): void => {}),
         warn: () => {},
         fatal: () => {},
         error: () => {},
-      };
-      Logger.overrideLogger(replacement);
+      } satisfies LoggerService;
 
-      assertEquals(Logger.staticInstanceRef, replacement);
+      Logger.overrideLogger(custom);
+      Logger.overrideLogger([]);
+      Logger.overrideLogger("Ignored");
+      Logger.log("still routed");
+
+      assertEquals(Logger.staticInstanceRef, custom);
+      assertEquals(custom.log.calls.map((call) => call.args), [[
+        "still routed",
+      ]]);
     });
   });
 

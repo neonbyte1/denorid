@@ -9,6 +9,7 @@ import {
 import process from "node:process";
 import util, { type InspectOptions } from "node:util";
 import {
+  createCircularSafeReplacer,
   dateTimeFormatter,
   DEFAULT_DEPTH,
   isPlainObject,
@@ -105,8 +106,13 @@ export class Logger implements LoggerService {
 
   /** Active context label for this instance, overridable via {@linkcode Logger.overrideLogger}. */
   private context?: string;
-  /** Saved context label used to restore the original value after a temporary override. */
-  private originalContext?: string;
+  /**
+   * Context label saved by the first {@linkcode Logger.overrideLogger} string
+   * override, restored by `overrideLogger(null)`. `undefined` while no
+   * override is active; the box keeps an `undefined` original context apart
+   * from "no override".
+   */
+  private originalContext?: { value: string | undefined };
   /** Resolved logger options (without `inspect` and `context` which are consumed at construction time). */
   private readonly options: Omit<LoggerOptions, "inspect" | "context">;
   /** `node:util` inspect options derived from {@linkcode LoggerOptions} at construction time. */
@@ -140,26 +146,22 @@ export class Logger implements LoggerService {
     const [context, opts] = typeof contextOrOptions === "string"
       ? [contextOrOptions, options]
       : [contextOrOptions?.context, contextOrOptions];
-
-    this.inspectOptions = opts?.inspect ?? {};
-
-    delete opts?.inspect;
-    delete opts?.context;
+    // copy the caller's objects so a shared options object stays untouched
+    const { inspect, context: _context, ...rest } = opts ?? {};
 
     this.context = context;
-    this.options = opts ?? {};
+    this.options = rest;
     this.options.levels ??= ["log", "warn", "error", "fatal"];
     this.options.prefix ??= "Denorid";
-    this.options.colors ??= true;
+    this.options.colors ??= !this.options.json;
 
+    this.inspectOptions = { ...inspect };
     this.inspectOptions.depth ??= DEFAULT_DEPTH;
     this.inspectOptions.compact = this.options.compact ??
       (this.options.json ?? false);
-    this.inspectOptions.breakLength ??= this.options.colors
-      ? this.options.compact ? Infinity : undefined
-      : !this.options.compact
-      ? undefined
-      : Infinity;
+    this.inspectOptions.breakLength ??= this.inspectOptions.compact
+      ? Infinity
+      : undefined;
   }
 
   /**
@@ -516,7 +518,8 @@ export class Logger implements LoggerService {
 
   /**
    * Restrict which levels the built-in static instance emits.
-   * Messages at levels not in the array are silently dropped.
+   * Messages at levels not in the array are silently dropped. Has no effect
+   * while a custom {@linkcode LoggerService} is installed.
    *
    * @param {LogLevel[]} levels Array of {@linkcode LogLevel} values to enable.
    *
@@ -528,7 +531,9 @@ export class Logger implements LoggerService {
   public static overrideLogger(levels: LogLevel[]): void;
   /**
    * Temporarily override (`string`) or restore (`null`) the context label
-   * used by the static logger instance.
+   * used by the built-in static instance. `null` restores the label that was
+   * active before the first override, even when that label was `undefined`.
+   * Has no effect while a custom {@linkcode LoggerService} is installed.
    *
    * @param {string|null} context New context label, or `null` to revert to the original.
    *
@@ -542,8 +547,9 @@ export class Logger implements LoggerService {
   public static overrideLogger(context: string | null): void;
   /**
    * Replace the static logger singleton with a custom
-   * {@linkcode LoggerService} implementation.
-   * All subsequent static `Logger.*` calls will be forwarded to it.
+   * {@linkcode LoggerService} implementation (a {@linkcode Logger} instance
+   * works as well). All subsequent static `Logger.*` calls will be forwarded
+   * to it.
    *
    * @param {LoggerService} logger Custom logger instance.
    *
@@ -556,25 +562,26 @@ export class Logger implements LoggerService {
   public static overrideLogger(
     data: LogLevel[] | string | null | LoggerService,
   ): void {
-    if (this.staticInstanceRef instanceof Logger) {
-      if (Array.isArray(data)) {
-        this.staticInstanceRef.options.levels = data;
-      } else if (typeof data === "string" || data === null) {
-        if (typeof data === "string") {
-          this.staticInstanceRef.originalContext ??=
-            this.staticInstanceRef.context;
-          this.staticInstanceRef.context = data;
-        } else if (this.staticInstanceRef.originalContext) {
-          this.staticInstanceRef.context =
-            this.staticInstanceRef.originalContext;
-
-          delete this.staticInstanceRef.originalContext;
-        }
-      }
-    } else if (
-      typeof data === "object" && data !== null && !Array.isArray(data)
-    ) {
+    if (typeof data === "object" && data !== null && !Array.isArray(data)) {
       this[STATIC_LOGGER_INSTANCE] = data;
+
+      return;
+    }
+
+    const ref = this.staticInstanceRef;
+
+    if (!(ref instanceof Logger)) {
+      return;
+    }
+
+    if (Array.isArray(data)) {
+      ref.options.levels = data;
+    } else if (typeof data === "string") {
+      ref.originalContext ??= { value: ref.context };
+      ref.context = data;
+    } else if (ref.originalContext) {
+      ref.context = ref.originalContext.value;
+      ref.originalContext = undefined;
     }
   }
 
@@ -659,10 +666,11 @@ export class Logger implements LoggerService {
    * Serialises a single message as a structured JSON log line and writes it
    * to the appropriate stream.
    *
-   * When colors are disabled and `inspectOptions.compact` is `true` the object
-   * is serialised with `JSON.stringify` (using {@linkcode Logger.stringifyReplacer}
-   * for non-serialisable values); otherwise `node:util` `inspect` is used so the output
-   * is pretty-printed.
+   * When colors are disabled and `inspectOptions.compact` is `true` (the
+   * defaults of `json: true`) the object is serialised with `JSON.stringify`,
+   * using {@linkcode Logger.stringifyReplacer} for non-serialisable values and
+   * `"[Circular]"` for circular references; otherwise `node:util` `inspect`
+   * is used so the output is pretty-printed.
    *
    * @param {unknown} message - The value to include as the `message` field.
    * @param {PrintMessageOptions} options - Contextual metadata (level, context, errorStack, ...).
@@ -674,7 +682,14 @@ export class Logger implements LoggerService {
     const logObject = this.getJsonLogObject(message, options);
     const formattedMessage =
       !this.options.colors && this.inspectOptions.compact === true
-        ? `${JSON.stringify(logObject, this.stringifyReplacer)}\n`
+        ? `${
+          JSON.stringify(
+            logObject,
+            createCircularSafeReplacer((key, value) =>
+              this.stringifyReplacer(key, value)
+            ),
+          )
+        }\n`
         : `${util.inspect(logObject, this.inspectOptions)}\n`;
 
     this.writeFormattedMessage(
@@ -684,16 +699,18 @@ export class Logger implements LoggerService {
   }
 
   /**
-   * Replacer function passed to `JSON.stringify` during JSON log serialisation.
+   * Converts a single value during JSON log serialisation. Called for every
+   * value `JSON.stringify` visits in {@linkcode Logger.printAsJson}.
    *
    * Handles value types that are not natively serialisable by JSON:
    * - `bigint` and `symbol` are converted via `.toString()`.
-   * - `Map`, `Set`, and `Error` instances are converted with `node:util` `inspect`.
+   * - `Map`, `Set`, and `Error` instances are converted with `node:util`
+   *   `inspect`, using this logger's inspect options.
    *
    * @param {string} _ - The property key (unused).
    * @param {unknown} value - The value to serialise.
    *
-   * @returns {string} A JSON-safe representation of `value`.
+   * @returns {unknown} A JSON-safe representation of `value`.
    */
   protected stringifyReplacer(_: string, value: unknown): unknown {
     if (typeof value === "bigint" || typeof value === "symbol") {
@@ -777,25 +794,29 @@ export class Logger implements LoggerService {
   }
 
   /**
-   * Returns `true` when `stack` looks like a JavaScript stack trace string
-   * (i.e. a multi-line string where the second line starts with `    at ...:line:col`).
+   * Returns `true` when `stack` looks like a JavaScript stack trace string,
+   * i.e. a string containing a line of the form `    at ...:line:col` after
+   * the first line. The error message in front of the frames may span
+   * multiple lines.
    *
    * @param {unknown} stack - The value to test.
+   * @returns {boolean} `true` if `stack` contains a stack frame line.
    */
-  private isStackFormat(stack: unknown) {
-    return typeof stack === "string" &&
-      /^(.)+\n\s+at .+:\d+:\d+/.test(stack);
+  private isStackFormat(stack: unknown): boolean {
+    return typeof stack === "string" && /\n\s+at .+:\d+:\d+/.test(stack);
   }
 
   /**
    * Extends {@linkcode Logger.getContextAndMessagesToPrint} with stack-trace
    * extraction for error-level log methods.
    *
-   * When exactly two arguments are provided and the second looks like a stack
-   * trace (tested via {@linkcode Logger.isStackFormat}), the second argument is
-   * promoted to the `stack` field. Otherwise the logic falls back to the
-   * standard context/messages split, additionally checking whether the
-   * second-to-last element is a stack string.
+   * With exactly two arguments the second one is promoted to the `stack`
+   * field when it looks like a stack trace (tested via
+   * {@linkcode Logger.isStackFormat}), dropped when it is `undefined` and
+   * used as the context label otherwise. With three or more arguments the
+   * trailing string is the context label and the argument before it is the
+   * stack when it is a string or `undefined`, matching
+   * `error(message, stack, context)`.
    *
    * @param {unknown[]} args - Raw arguments passed to an error log method.
    *
@@ -805,28 +826,32 @@ export class Logger implements LoggerService {
     args: unknown[],
   ): StackMessageContext {
     if (args.length === 2) {
+      if (args[1] === undefined) {
+        return { messages: [args[0]], context: this.context };
+      }
+
       return this.isStackFormat(args[1])
         ? {
           messages: [args[0]],
           context: this.context,
           stack: args[1] as string,
         }
-        : { ...this.getContextAndMessagesToPrint(args) };
+        : this.getContextAndMessagesToPrint(args);
     }
 
-    const ctx = this.getContextAndMessagesToPrint(args);
+    const { messages, context } = this.getContextAndMessagesToPrint(args);
 
-    if (ctx.messages.length <= 1) {
-      return ctx;
+    if (messages.length <= 1) {
+      return { messages, context };
     }
 
-    const lastElement = args.at(-1)!;
+    const stack = messages.at(-1);
 
-    if (typeof lastElement !== "string" && lastElement !== undefined) {
-      return ctx;
+    if (typeof stack !== "string" && stack !== undefined) {
+      return { messages, context };
     }
 
-    return { ...ctx, stack: lastElement };
+    return { messages: messages.slice(0, -1), context, stack };
   }
 
   /**
@@ -1025,7 +1050,7 @@ export class Logger implements LoggerService {
     const text = util.inspect(message, this.inspectOptions);
 
     if (isPlainObject(message)) {
-      return `Object(${Object.keys(text).length}) ${text}`;
+      return `Object(${Object.keys(message).length}) ${text}`;
     }
     if (Array.isArray(message)) {
       return `Array(${message.length}) ${text}`;

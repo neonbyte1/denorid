@@ -54,12 +54,15 @@ export interface LoggerOptions {
    */
   depth?: number;
   /**
-   * Enable ANSI color codes in output.
+   * Enable ANSI color codes in output. Defaults to `false` when `json` is
+   * `true`, so JSON mode emits one `JSON.stringify` line per message.
    * @default true
    */
   colors?: boolean;
   /**
-   * Emit structured JSON output instead of human-readable text.
+   * Emit structured JSON output instead of human-readable text. Combined with
+   * the defaults (`colors: false`, `compact: true`) every message is written
+   * as a single JSON line; circular references become `"[Circular]"`.
    * @default false
    */
   json?: boolean;
