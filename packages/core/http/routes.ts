@@ -1,13 +1,13 @@
 import type { InjectorContext, Type } from "@denorid/injector";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
 import type { RequestMappingMetadata } from "./_request_mapping.ts";
-import { REGISTERED_HTTP_ROUTES } from "./_routes.ts";
+import { HTTP_ROUTE_SOURCES } from "./_routes.ts";
 import type { ControllerOptions } from "./controller_options.ts";
 import type { HttpMethod } from "./method.ts";
 
 /**
- * A route registered by the HTTP application. A route with several paths
- * (path arrays on the controller or the method) is listed once per path.
+ * A route of the HTTP application. A route with several paths (path arrays
+ * on the controller or the method) is listed once per path.
  */
 export interface HttpRoute {
   /** HTTP method of the route. */
@@ -37,13 +37,15 @@ export interface HttpRoute {
 }
 
 /**
- * The routes registered by the HTTP application, e.g. to generate API
- * documentation. Injectable in every application created by
- * `DenoridFactory`.
+ * The routes of the HTTP application, e.g. to generate API documentation.
+ * Injectable in every application created by `DenoridFactory`.
  *
- * The list is filled while the application initializes (`app.init()` or
- * `app.listen()`), after the `onApplicationBootstrap` hooks ran; it is empty
- * before and in applications without HTTP adapter.
+ * The routes are listed as soon as the application is created, without
+ * `app.init()`: the routes its controllers declare, with the base path and
+ * the global guards added so far. Once `app.init()` registered them, the
+ * registered routes are listed. The list is empty in applications without
+ * HTTP adapter. In testing modules with `useCoreGlobals()`, it lists the
+ * routes of their controllers without base path and global guards.
  */
 export class HttpRoutes {
   /**
@@ -52,15 +54,15 @@ export class HttpRoutes {
   public constructor(private readonly ctx: InjectorContext) {}
 
   /**
-   * Returns the registered routes in registration order. The same array is
-   * returned until the application registers its routes again.
+   * Returns the routes in registration order. The same array is returned
+   * until a global guard is added or the application registers its routes.
    *
-   * @return {readonly HttpRoute[]} The registered routes.
+   * @return {readonly HttpRoute[]} The routes.
    */
   public list(): readonly HttpRoute[] {
-    return REGISTERED_HTTP_ROUTES.get(this.ctx) ?? NO_ROUTES;
+    return HTTP_ROUTE_SOURCES.get(this.ctx)?.() ?? NO_ROUTES;
   }
 }
 
-/** Returned while no routes are registered. */
+/** Returned for contexts without routes. */
 const NO_ROUTES: readonly HttpRoute[] = Object.freeze([]);

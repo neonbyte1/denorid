@@ -355,7 +355,10 @@ describe("DenoridFactory", () => {
   });
 
   describe("HttpRoutes", () => {
-    it("lets providers list the routes once the application is initialized", async () => {
+    it("lets providers list the routes before the application is initialized", async () => {
+      const bootstrapped: string[] = [];
+      const guard = (): boolean => true;
+
       @Controller("threads")
       class ThreadController {
         @Get()
@@ -373,6 +376,10 @@ describe("DenoridFactory", () => {
       class RouteReader {
         @Inject(HttpRoutes)
         public readonly routes!: HttpRoutes;
+
+        public onApplicationBootstrap(): void {
+          bootstrapped.push(RouteReader.name);
+        }
       }
 
       @Module({ providers: [ThreadController, RouteReader] })
@@ -391,22 +398,54 @@ describe("DenoridFactory", () => {
         createControllerMapping: (options: ControllerMappingOptions) =>
           Promise.resolve(new SilentControllerMapping(options)),
       }, { basePath: "/api", logger: new Logger("test", { levels: [] }) });
-      const { routes } = await app.get(RouteReader);
 
-      assertEquals(routes.list(), []);
+      app.useGlobalGuards(guard);
+
+      const { routes } = await app.get(RouteReader);
+      const declared = routes.list();
+
+      assertEquals(bootstrapped, []);
+      assertEquals(
+        declared.map(({ method, path, controller, guards }) => [
+          method,
+          path,
+          controller,
+          guards,
+        ]),
+        [
+          [HttpMethod.GET, "/api/threads", ThreadController, [guard]],
+          [HttpMethod.GET, "/api/threads/:id", ThreadController, [guard]],
+        ],
+      );
+
+      await app.init();
+
+      assertEquals(bootstrapped, [RouteReader.name]);
+      assertEquals(routes.list(), declared);
+    });
+
+    it("lists no routes in applications without HTTP adapter", async () => {
+      @Controller("threads")
+      class ThreadController {
+        @Get()
+        public list(): string[] {
+          return [];
+        }
+      }
+
+      @Module({ providers: [ThreadController] })
+      class AppModule {}
+
+      using _log = stub(Logger, "log");
+      await using app = await DenoridFactory.create(AppModule, {
+        logger: new Logger("test", { levels: [] }),
+      });
 
       await app.init();
 
       assertEquals(
-        routes.list().map(({ method, path, controller }) => [
-          method,
-          path,
-          controller,
-        ]),
-        [
-          [HttpMethod.GET, "/api/threads", ThreadController],
-          [HttpMethod.GET, "/api/threads/:id", ThreadController],
-        ],
+        (await app.get(HttpRoutes, { strict: false })).list(),
+        [],
       );
     });
   });

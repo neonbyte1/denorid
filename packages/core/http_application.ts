@@ -7,9 +7,10 @@ import type {
   HttpApplicationContext,
 } from "./application_context.ts";
 import type { CanActivate, CanActivateFn } from "./guards/can_activate.ts";
-import { REGISTERED_HTTP_ROUTES } from "./http/_routes.ts";
+import { collectHttpRoutes, HTTP_ROUTE_SOURCES } from "./http/_routes.ts";
 import type { HttpAdapter } from "./http/adapter.ts";
 import type { CorsOptions } from "./http/cors.ts";
+import type { HttpRoute } from "./http/routes.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
 import { GatewayRuntime } from "./websockets/_gateway_runtime.ts";
 import type { WebSocketAdapter } from "./websockets/adapter.ts";
@@ -74,6 +75,14 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
   private listening?: Promise<void>;
   private webSocketAdapter?: WebSocketAdapter;
   private gateways?: GatewayRuntime;
+  /**
+   * Routes declared by the controllers with the current global guards,
+   * listed by `HttpRoutes` until the routes are registered. Cleared when a
+   * global guard is added.
+   */
+  private declaredRoutes?: readonly HttpRoute[];
+  /** Routes registered by the last successful {@link bootstrap}. */
+  private registeredRoutes?: readonly HttpRoute[];
 
   private readonly globalGuards: Set<CanActivate | CanActivateFn> = new Set();
   private readonly microservices: Map<
@@ -99,12 +108,23 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
       cors: options.cors,
     };
     this.adapter = options.adapter;
+
+    HTTP_ROUTE_SOURCES.set(
+      ctx,
+      (): readonly HttpRoute[] =>
+        this.registeredRoutes ??
+          (this.declaredRoutes ??= collectHttpRoutes(
+            ctx,
+            this.options.basePath ?? "",
+            [...this.globalGuards],
+          )),
+    );
   }
 
   /**
    * Creates the controller mapping, connects the WebSocket gateways, fires
-   * `onApplicationBootstrap`, then registers the routes and publishes them to
-   * `HttpRoutes` (a later bootstrap replaces the list).
+   * `onApplicationBootstrap`, then registers the routes, which `HttpRoutes`
+   * lists from then on (a later bootstrap replaces them).
    *
    * @returns {Promise<void>} Resolves when the application is bootstrapped.
    */
@@ -132,10 +152,7 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
 
     await super.bootstrap();
 
-    REGISTERED_HTTP_ROUTES.set(
-      this.ctx,
-      await controller.register(this.options.basePath),
-    );
+    this.registeredRoutes = await controller.register(this.options.basePath);
   }
 
   /**
@@ -147,6 +164,8 @@ export class HttpApplication extends Application<InternalHttpApplicationOptions>
     for (const guard of guards) {
       this.globalGuards.add(guard);
     }
+
+    this.declaredRoutes = undefined;
   }
 
   /**

@@ -20,9 +20,11 @@ import { ExceptionHandler } from "./exceptions/handler.ts";
 import { IntrinsicException } from "./exceptions/intrinsic.ts";
 import type { HostArguments } from "./host_arguments.ts";
 import type { ControllerMappingOptions, HttpAdapter } from "./http/adapter.ts";
+import { Controller } from "./http/controller.ts";
 import type { ControllerMapping } from "./http/controller_mapping.ts";
 import type { CorsOptions } from "./http/cors.ts";
 import { HttpMethod } from "./http/method.ts";
+import { Get } from "./http/request_mapping.ts";
 import { type HttpRoute, HttpRoutes } from "./http/routes.ts";
 import { HttpApplication } from "./http_application.ts";
 import type { MicroserviceServer } from "./microservices/server.ts";
@@ -138,12 +140,50 @@ describe("HttpApplication", () => {
         register: (): Promise<readonly HttpRoute[]> => Promise.resolve(routes),
       } as unknown as ControllerMapping);
       const httpRoutes = new HttpRoutes(ctx);
+      const app = makeApp({ adapter, ctx });
 
       assertEquals(httpRoutes.list(), []);
 
-      await makeApp({ adapter, ctx }).init();
+      await app.init();
 
       assertStrictEquals(httpRoutes.list(), routes);
+
+      // Guards added after init do not apply to the registered routes.
+      app.useGlobalGuards(() => true);
+
+      assertStrictEquals(httpRoutes.list(), routes);
+    });
+
+    it("lists the declared routes before init until a global guard is added", () => {
+      @Controller("threads")
+      class ThreadController {
+        @Get()
+        public list(): string[] {
+          return [];
+        }
+      }
+
+      const ctx = makeInjectorContext();
+      using _tokens = stub(
+        ctx.container,
+        "getTokensByTag",
+        () => [ThreadController],
+      );
+      const httpRoutes = new HttpRoutes(ctx);
+      const app = makeApp({ ctx });
+      const declared = httpRoutes.list();
+
+      assertStrictEquals(httpRoutes.list(), declared);
+      assertEquals(
+        declared.map(({ method, path, guards }) => [method, path, guards]),
+        [[HttpMethod.GET, "/threads", []]],
+      );
+
+      const guard = (): boolean => true;
+
+      app.useGlobalGuards(guard);
+
+      assertEquals(httpRoutes.list().map(({ guards }) => guards), [[guard]]);
     });
 
     it("passes the cors option to the controller mapping", async () => {

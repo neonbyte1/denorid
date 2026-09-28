@@ -2,6 +2,7 @@ import type { InjectorContext, Type } from "@denorid/injector";
 import {
   CONTROLLER_METADATA,
   CONTROLLER_REQUEST_MAPPING,
+  HTTP_CONTROLLER_METADATA,
 } from "../_constants.ts";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
 import { GUARDS_METADATA } from "../guards/decorator.ts";
@@ -14,13 +15,13 @@ import type { HttpRoute } from "./routes.ts";
 type Guard = Type<CanActivate> | CanActivate | CanActivateFn;
 
 /**
- * Routes registered by the HTTP application of an injector context, set by
- * `HttpApplication` once its controller mapping registered them and read by
- * `HttpRoutes`.
+ * Lists the routes of an injector context, read by `HttpRoutes`. Set by
+ * `HttpApplication` when it is created and by testing modules with core
+ * globals; contexts without an entry have no routes.
  */
-export const REGISTERED_HTTP_ROUTES: WeakMap<
+export const HTTP_ROUTE_SOURCES: WeakMap<
   InjectorContext,
-  readonly HttpRoute[]
+  () => readonly HttpRoute[]
 > = new WeakMap();
 
 /** The route entries of a controller class, read from its metadata. */
@@ -140,4 +141,30 @@ export function createControllerHttpRoutes(
   }
 
   return routes;
+}
+
+/**
+ * Creates the routes declared by the HTTP controllers of an injector context,
+ * the same way `ControllerMapping.register()` registers them.
+ *
+ * @param {InjectorContext} ctx - The injector context.
+ * @param {string} basePath - The global path prefix.
+ * @param {readonly Guard[]} globalGuards - The global guards.
+ * @return {readonly HttpRoute[]} The routes in registration order (frozen).
+ */
+export function collectHttpRoutes(
+  ctx: InjectorContext,
+  basePath: string,
+  globalGuards: readonly Guard[],
+): readonly HttpRoute[] {
+  return Object.freeze(
+    ctx.container.getTokensByTag(HTTP_CONTROLLER_METADATA, true).flatMap(
+      (token) =>
+        createControllerHttpRoutes(
+          token as Type,
+          readControllerRoutes(token as Type, basePath),
+          globalGuards,
+        ),
+    ),
+  );
 }
