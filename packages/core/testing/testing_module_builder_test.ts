@@ -20,6 +20,9 @@ import {
 } from "@std/assert";
 import { afterEach, describe, it } from "node:test";
 import { ExceptionHandler } from "../exceptions/handler.ts";
+import { Controller } from "../http/controller.ts";
+import { HttpMethod } from "../http/method.ts";
+import { Get } from "../http/request_mapping.ts";
 import { HttpRoutes } from "../http/routes.ts";
 import type { TestingModule } from "./testing_module.ts";
 import { Test, TestingModuleBuilder } from "./testing_module_builder.ts";
@@ -519,6 +522,57 @@ describe(TestingModuleBuilder.name, () => {
       assertInstanceOf(svc.exceptionHandler, ExceptionHandler);
       assertInstanceOf(svc.injectorContext, InjectorContext);
       assertEquals(svc.routes.list(), []);
+    });
+
+    it("lists the routes of the testing module and its imports without init", async () => {
+      let bootstrapped = false;
+
+      @Controller("threads")
+      class ThreadController {
+        @Get(":id")
+        public get(): null {
+          return null;
+        }
+      }
+
+      @Controller("users")
+      class UserController {
+        @Get()
+        public list(): string[] {
+          return [];
+        }
+      }
+
+      @Module({ providers: [UserController] })
+      class UserModule {}
+
+      @Injectable()
+      class Relay implements OnApplicationBootstrap {
+        onApplicationBootstrap(): void {
+          bootstrapped = true;
+        }
+      }
+
+      module = await Test.createTestingModule({
+        imports: [UserModule],
+        providers: [ThreadController, Relay],
+      })
+        .useCoreGlobals()
+        .compile();
+
+      const routes = await module.get(HttpRoutes);
+
+      assertStrictEquals(routes.list(), routes.list());
+      assertEquals(
+        routes.list()
+          .map(({ method, path, controller }) => [method, path, controller])
+          .toSorted(([, a], [, b]) => String(a).localeCompare(String(b))),
+        [
+          [HttpMethod.GET, "/threads/:id", ThreadController],
+          [HttpMethod.GET, "/users", UserController],
+        ],
+      );
+      assertEquals(bootstrapped, false);
     });
 
     it("keeps core globals opt-in", async () => {

@@ -12,7 +12,8 @@ import {
   isClassProvider,
 } from "@denorid/injector";
 import { ExceptionHandler } from "../exceptions/handler.ts";
-import { HttpRoutes } from "../http/routes.ts";
+import { collectHttpRoutes, HTTP_ROUTE_SOURCES } from "../http/_routes.ts";
+import { type HttpRoute, HttpRoutes } from "../http/routes.ts";
 import type { MockFactory } from "./mock_factory.ts";
 import { TestingModule } from "./testing_module.ts";
 
@@ -119,6 +120,8 @@ export class TestingModuleBuilder {
   /**
    * Registers the same core global providers that application bootstrap makes
    * available, allowing feature modules to be compiled in isolation.
+   * `HttpRoutes` lists the routes of the controllers of the testing module
+   * and its imports, without base path and global guards.
    *
    * @returns {TestingModuleBuilder}
    */
@@ -149,6 +152,13 @@ export class TestingModuleBuilder {
       overrides: this.overrides,
       beforeInit: (ctx: InjectorContext): void => {
         if (this.coreGlobals) {
+          let routes: readonly HttpRoute[] | undefined;
+
+          HTTP_ROUTE_SOURCES.set(
+            ctx,
+            (): readonly HttpRoute[] =>
+              routes ??= collectHttpRoutes(ctx, "", []),
+          );
           ctx.registerGlobal(
             ...[
               {
