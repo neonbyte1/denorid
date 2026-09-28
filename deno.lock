@@ -849,7 +849,7 @@
     "members": {
       "packages/amqp": {
         "dependencies": [
-          "jsr:@denorid/core@^1.0.0-beta3",
+          "jsr:@denorid/core@^1.0.0-beta5",
           "jsr:@denorid/injector@^1.0.0-beta2",
           "jsr:@denorid/logger@^1.0.0-beta2",
           "jsr:@std/msgpack@^1.0.3",
