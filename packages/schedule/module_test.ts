@@ -10,7 +10,7 @@ import { assertEquals, assertInstanceOf } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
 import { describe, it } from "node:test";
 import { cronHost } from "./_cron_runtime.ts";
-import { Cron } from "./decorator.ts";
+import { Cron, Interval } from "./decorator.ts";
 import { ScheduleModule } from "./module.ts";
 import { SchedulerRegistry } from "./registry.ts";
 
@@ -304,6 +304,44 @@ describe(ScheduleModule.name, () => {
       } finally {
         cronHost.scope = originalScope;
       }
+    });
+
+    it("runs @Interval handlers until the application closes", async () => {
+      const fired: string[] = [];
+
+      @Injectable()
+      class PresenceService {
+        @Interval(10_000)
+        heartbeat() {
+          fired.push("heartbeat");
+        }
+      }
+
+      using time = new FakeTime("2026-01-01T00:00:00.000Z");
+      const module = await Test.createTestingModule({
+        imports: [ScheduleModule],
+        providers: [PresenceService],
+      })
+        .useCoreGlobals()
+        .compile();
+
+      await module.init();
+
+      const registry = await module.get(SchedulerRegistry);
+
+      assertEquals(registry.getIntervals(), ["PresenceService_heartbeat"]);
+
+      for (let step = 0; step < 3; step++) {
+        await time.tickAsync(10_000);
+      }
+
+      assertEquals(fired, ["heartbeat", "heartbeat", "heartbeat"]);
+
+      await module.close();
+      await time.tickAsync(60_000);
+
+      assertEquals(fired, ["heartbeat", "heartbeat", "heartbeat"]);
+      assertEquals(registry.getIntervals(), []);
     });
   });
 });

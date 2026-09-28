@@ -12,7 +12,7 @@ import { cronHost, type CronHostScope } from "./_cron_runtime.ts";
 import { ScheduleExplorer } from "./_explorer.ts";
 import { CronJobRef } from "./cron_job_ref.ts";
 import type { CronSchedule } from "./cron_schedule.ts";
-import { Cron } from "./decorator.ts";
+import { Cron, Interval } from "./decorator.ts";
 import { SchedulerItemAlreadyExistsException } from "./exceptions.ts";
 import { SchedulerRegistry } from "./registry.ts";
 
@@ -93,7 +93,7 @@ describe(ScheduleExplorer.name, () => {
       }
     });
 
-    it("skips providers without cron metadata", async () => {
+    it("skips providers without schedule metadata", async () => {
       class NoMeta {}
 
       Object.defineProperty(NoMeta, Symbol.metadata, { value: {} });
@@ -507,6 +507,166 @@ describe(ScheduleExplorer.name, () => {
         assertEquals([...harness.registry.getCronJobs().keys()], ["existing"]);
         assertEquals(existing.controller.signal.aborted, false);
       } finally {
+        harness.restore();
+      }
+    });
+
+    it("starts intervals under default and explicit names, bound to the instance", async () => {
+      const calls: string[] = [];
+
+      class PresenceService {
+        value = "presence";
+
+        @Interval(10_000)
+        heartbeat() {
+          calls.push(`${this.value}:heartbeat`);
+        }
+
+        @Interval(25_000, { name: "sweep" })
+        sweep() {
+          calls.push(`${this.value}:sweep`);
+        }
+      }
+
+      using time = new FakeTime("2026-01-01T00:00:00.000Z");
+      const harness = createHarness({
+        providers: [PresenceService],
+        instances: new Map([[PresenceService, new PresenceService()]]),
+      });
+
+      try {
+        await harness.explorer.onApplicationBootstrap();
+
+        assertEquals(harness.registry.getIntervals(), [
+          "PresenceService_heartbeat",
+          "sweep",
+        ]);
+        assertEquals(harness.cronCalls.length, 0);
+
+        // One step per tick: the event loop settles each run before the next.
+        for (let step = 0; step < 6; step++) {
+          await time.tickAsync(5_000);
+        }
+
+        assertEquals(calls, [
+          "presence:heartbeat",
+          "presence:heartbeat",
+          "presence:sweep",
+          "presence:heartbeat",
+        ]);
+
+        harness.registry.deleteInterval("PresenceService_heartbeat");
+        harness.registry.deleteInterval("sweep");
+        await time.tickAsync(60_000);
+
+        assertEquals(calls.length, 4);
+      } finally {
+        harness.restore();
+      }
+    });
+
+    it("registers cron jobs and intervals of the same provider", async () => {
+      class TaskService {
+        @Cron("* * * * *")
+        @Interval(10_000)
+        run() {}
+      }
+
+      const harness = createHarness({
+        providers: [TaskService],
+        instances: new Map([[TaskService, new TaskService()]]),
+      });
+
+      try {
+        await harness.explorer.onApplicationBootstrap();
+
+        assertEquals([...harness.registry.getCronJobs().keys()], [
+          "TaskService_run",
+        ]);
+        assertEquals(harness.registry.getIntervals(), ["TaskService_run"]);
+      } finally {
+        harness.registry.onBeforeApplicationShutdown();
+        harness.restore();
+      }
+    });
+
+    it("clears the new interval when its name is already registered", async () => {
+      const calls: string[] = [];
+
+      class TaskService {
+        @Interval(10_000)
+        run() {
+          calls.push("run");
+        }
+      }
+
+      using time = new FakeTime("2026-01-01T00:00:00.000Z");
+      const harness = createHarness({
+        providers: [TaskService],
+        instances: new Map([[TaskService, new TaskService()]]),
+      });
+      const existing = setInterval(() => calls.push("existing"), 60_000);
+
+      harness.registry.addInterval("TaskService_run", existing);
+
+      try {
+        await assertRejects(
+          () => harness.explorer.onApplicationBootstrap(),
+          SchedulerItemAlreadyExistsException,
+        );
+        await time.tickAsync(60_000);
+
+        assertEquals(calls, ["existing"]);
+        assertStrictEquals(
+          harness.registry.getInterval("TaskService_run"),
+          existing,
+        );
+      } finally {
+        harness.registry.onBeforeApplicationShutdown();
+        harness.restore();
+      }
+    });
+
+    it("stops the intervals it registered when a later registration fails", async () => {
+      const calls: string[] = [];
+
+      class PresenceService {
+        @Interval(10_000)
+        heartbeat() {
+          calls.push("heartbeat");
+        }
+      }
+
+      class ReportService {
+        @Cron("* * * * *", { name: "reports.daily" })
+        run() {}
+      }
+
+      using time = new FakeTime("2026-01-01T00:00:00.000Z");
+      const harness = createHarness({
+        providers: [PresenceService, ReportService],
+        instances: new Map<Type, unknown>([
+          [PresenceService, new PresenceService()],
+          [ReportService, new ReportService()],
+        ]),
+        scope: {},
+      });
+      const existing = setInterval(() => calls.push("existing"), 60_000);
+
+      harness.registry.addInterval("existing", existing);
+
+      try {
+        await assertRejects(
+          () => harness.explorer.onApplicationBootstrap(),
+          TypeError,
+          "Invalid cron name",
+        );
+        await time.tickAsync(60_000);
+
+        assertEquals(calls, ["existing"]);
+        assertEquals(harness.registry.getIntervals(), ["existing"]);
+      } finally {
+        harness.registry.onBeforeApplicationShutdown();
         harness.restore();
       }
     });
