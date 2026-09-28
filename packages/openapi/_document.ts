@@ -349,7 +349,7 @@ function createResponse(
  *
  * @param {HttpRoute} route - The route.
  * @param {ApiMetadata[]} guards - Documentation of the route's guards in
- *   evaluation order.
+ *   evaluation order, without excluded guards.
  * @param {ApiMetadata} controller - Documentation of the controller.
  * @param {ApiMetadata} handler - Documentation of the route.
  * @param {SchemaCollector} schemas - Collects the schemas of the document.
@@ -415,7 +415,8 @@ function createResponses(
  * the route's guards, its controller and the route itself is required; the
  * alternatives of each one are combined into the accepted alternatives.
  *
- * @param {ApiMetadata[]} guards - Documentation of the route's guards.
+ * @param {ApiMetadata[]} guards - Documentation of the route's guards,
+ *   without excluded guards.
  * @param {ApiMetadata} controller - Documentation of the controller.
  * @param {ApiMetadata} handler - Documentation of the route.
  * @return {SecurityRequirementObject[] | undefined} The requirements, `[]`
@@ -517,6 +518,8 @@ function convertRouteSchemas(
  *
  * Routes of excluded controllers and excluded routes are left out, and so
  * are routes of controllers with an empty `host` list, which serve no host.
+ * Guards with `@ApiExclude()` are not documented: they add neither
+ * responses nor security requirements.
  * When several routes share a method and path, the first registered one is
  * documented, since it answers the requests.
  *
@@ -554,7 +557,8 @@ export function createDocument(
         readClassMetadata(
           typeof guard === "function" ? guard : guard.constructor,
         ) ?? NO_METADATA
-      );
+      )
+      .filter((guard) => !guard.exclude);
     const method = OPERATION_METHODS[route.method];
     const templates = toPathTemplates(route.path).filter((template) =>
       paths[template.path]?.[method] === undefined

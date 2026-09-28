@@ -976,6 +976,27 @@ describe("createDocument()", () => {
           },
         );
       });
+
+      it("leaves out guards with @ApiExclude()", () => {
+        @ApiExclude()
+        @ApiSecurity("bearer")
+        @ApiResponse(StatusCode.Unauthorized)
+        class OptionalSessionGuard implements CanActivate {
+          public canActivate(): boolean {
+            return true;
+          }
+        }
+
+        const found = operation(
+          [route(PlainController, "find", {
+            guards: [OptionalSessionGuard, new OptionalSessionGuard()],
+          })],
+          "/",
+        );
+
+        assertEquals(found?.responses, { 200: { description: "OK" } });
+        assertEquals(found?.security, undefined);
+      });
     });
   });
 

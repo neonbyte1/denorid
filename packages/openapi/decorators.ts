@@ -224,7 +224,8 @@ export function ApiOperation(options: ApiOperationOptions): MethodDecorator {
  *
  * Routes running a guard get `403` (the response of a guard returning
  * `false`) unless the guard documents its own responses, e.g. `401` of an
- * authentication guard throwing `UnauthorizedException`.
+ * authentication guard throwing `UnauthorizedException`. For a guard that
+ * never denies a request, use {@link ApiExclude}.
  *
  * Streamed responses (OpenAPI 3.2 sequential media types) are documented per
  * item: `itemSchema` for JSON Lines and similar formats, `events` for
@@ -336,10 +337,20 @@ export function ApiSecurity(
 }
 
 /**
- * Leaves a controller or a single route out of the document.
+ * Leaves a controller or a single route out of the document. Applied to a
+ * guard class, the guard is not documented: routes running it get neither
+ * its `403` nor its `@ApiResponse()` and `@ApiSecurity()` decorators, e.g.
+ * for a guard that only reads an optional session and never denies.
+ *
+ * @example
+ * ```ts
+ * \@ApiExclude()
+ * \@Injectable()
+ * class OptionalSessionGuard implements CanActivate {}
+ * ```
  *
  * @return {Decorator<ClassDecoratorContext, Type> & MethodDecorator} A
- *   decorator for controller classes and route methods.
+ *   decorator for guard and controller classes and route methods.
  */
 export function ApiExclude():
   & Decorator<ClassDecoratorContext, Type>
