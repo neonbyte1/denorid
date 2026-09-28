@@ -168,9 +168,13 @@ export class ThreadController {
 
 `HttpRoutes` lists the routes of the HTTP application, e.g. to generate API
 documentation. It is injectable in every application created by `DenoridFactory`
-(and in testing modules with `useCoreGlobals()`). The list is filled while the
-application initializes, after the `onApplicationBootstrap` hooks ran; it is
-empty before and in applications without HTTP adapter.
+(and in testing modules with `useCoreGlobals()`). The routes are listed as soon
+as the application is created, so `app.init()` and the `onApplicationBootstrap`
+hooks are not needed: the list holds the routes the controllers declare, with
+the base path and the global guards added so far. Once `app.init()` registered
+the routes, it holds the registered ones. It is empty in applications without
+HTTP adapter. In testing modules, it lists the routes of the testing module's
+controllers (imports included) without base path and global guards.
 
 ```ts
 import { HttpMethod, HttpRoutes } from "@denorid/core";
