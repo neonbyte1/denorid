@@ -1,4 +1,5 @@
-import { assertEquals, assertInstanceOf } from "@std/assert";
+import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
+import { encode } from "@std/msgpack";
 import type { MessageProperties } from "amqplib";
 import { Buffer } from "node:buffer";
 import { describe, it } from "node:test";
@@ -7,6 +8,7 @@ import {
   AMQP_SERIALIZER as ExportedToken,
   type AmqpSerializer,
   JsonAmqpSerializer,
+  MsgpackAmqpSerializer,
 } from "./serialization.ts";
 
 describe("serialization", () => {
@@ -88,5 +90,85 @@ describe("serialization", () => {
         [1],
       );
     });
+  });
+
+  describe(MsgpackAmqpSerializer.name, () => {
+    const serializer: AmqpSerializer = new MsgpackAmqpSerializer();
+
+    it("round-trips bigint and nested bytes, tagged application/vnd.msgpack", () => {
+      const value = {
+        id: 2n ** 63n,
+        avatar: new Uint8Array([0, 255]),
+        tags: ["a", 1, null, true],
+      };
+      const encoded = serializer.serialize(value);
+      const contentType = serializer.contentType!(value);
+
+      assertInstanceOf(encoded, Buffer);
+      assertEquals(contentType, "application/vnd.msgpack");
+
+      // Untagged bodies are MessagePack for this serializer.
+      for (
+        const decoded of [
+          serializer.deserialize(encoded, { contentType } as MessageProperties),
+          serializer.deserialize(encoded),
+        ] as (typeof value)[]
+      ) {
+        // Nested bytes come back as views into the received body.
+        assertInstanceOf(decoded.avatar, Uint8Array);
+        assertEquals(
+          { ...decoded, avatar: new Uint8Array(decoded.avatar) },
+          value,
+        );
+      }
+    });
+
+    it("encodes a void result as null", () => {
+      assertEquals(
+        serializer.deserialize(serializer.serialize(undefined)),
+        null,
+      );
+    });
+
+    it("round-trips a Uint8Array verbatim through its content type", () => {
+      const bytes = new Uint8Array([0x93, 1, 2, 3]);
+      const encoded = serializer.serialize(bytes);
+      const contentType = serializer.contentType!(bytes);
+
+      assertEquals(contentType, "application/octet-stream");
+      assertEquals(new Uint8Array(encoded), bytes);
+      assertEquals(
+        serializer.deserialize(encoded, { contentType } as MessageProperties),
+        encoded,
+      );
+    });
+
+    it("throws on values MessagePack cannot represent", () => {
+      assertThrows(() => serializer.serialize({ at: new Date(0) }));
+      assertThrows(() => serializer.serialize({ missing: undefined }));
+    });
+  });
+
+  describe("content type decoding", () => {
+    const value = { id: 7, name: "a" };
+    const json = Buffer.from(JSON.stringify(value));
+    const msgpack = encode(value);
+
+    for (
+      const serializer of [
+        new JsonAmqpSerializer(),
+        new MsgpackAmqpSerializer(),
+      ]
+    ) {
+      it(`${serializer.constructor.name} decodes JSON and MessagePack bodies by their tag`, () => {
+        const read = (content: Uint8Array, contentType: string): unknown =>
+          serializer.deserialize(content, { contentType } as MessageProperties);
+
+        assertEquals(read(json, "application/json; charset=utf-8"), value);
+        assertEquals(read(msgpack, "application/vnd.msgpack"), value);
+        assertEquals(read(msgpack, "Application/MsgPack"), value);
+        assertEquals(read(msgpack, "application/x-msgpack"), value);
+      });
+    }
   });
 });
