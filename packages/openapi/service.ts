@@ -6,20 +6,23 @@ import type { OpenApiDocumentOptions } from "./module_options.ts";
 import type { OpenAPIObject } from "./types.ts";
 
 /**
- * Generates the OpenAPI document of the application from its registered
- * routes, provided by {@linkcode OpenApiModule}.
+ * Generates the OpenAPI document of the application from its routes,
+ * provided by {@linkcode OpenApiModule}.
+ *
+ * The routes are known once the application is created: writing the
+ * document needs neither `app.init()` nor the `onApplicationBootstrap` hooks
+ * (e.g. connections to brokers). Add the global guards first.
  *
  * @example Writing the document to a file, e.g. for client generators
  * ```ts
- * const app = await DenoridFactory.create(AppModule, new HonoAdapter());
- * await app.init();
+ * await using app = await DenoridFactory.create(AppModule, new HonoAdapter());
+ * app.useGlobalGuards(new AuthGuard());
  *
  * const openApi = await app.get(OpenApiService, { strict: false });
  * await Deno.writeTextFile(
  *   "openapi.json",
  *   JSON.stringify(openApi.getDocument(), null, 2),
  * );
- * await app.close();
  * ```
  */
 @Injectable()
@@ -33,10 +36,9 @@ export class OpenApiService {
   #cache?: { routes: readonly HttpRoute[]; document: OpenAPIObject };
 
   /**
-   * Returns the document of the registered routes. It is created on the first
-   * call and again once the application registered its routes anew. Routes
-   * are registered while the application initializes: before, the document
-   * has no paths.
+   * Returns the document of the application's routes. It is created on the
+   * first call and again once the routes changed (a global guard was added,
+   * or `app.init()` registered them).
    *
    * @return {OpenAPIObject} The document; do not modify it.
    * @throws {Error} When a route requires a security scheme the module
