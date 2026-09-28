@@ -35,13 +35,31 @@ export interface QueueDeclarationOptions {
    * Default: the broker default (classic).
    */
   queueType?: "classic" | "quorum";
-  /** Exchange rejected messages are dead-lettered to (`x-dead-letter-exchange`). */
+  /**
+   * Exchange rejected messages are dead-lettered to (`x-dead-letter-exchange`).
+   * Default with `deadLetterQueue`: `<queue>.dlx`; otherwise none.
+   */
   deadLetterExchange?: string;
   /**
    * Routing key of dead-lettered messages (`x-dead-letter-routing-key`).
-   * Default: the routing key the message was published with.
+   * Default with `deadLetterQueue`: the queue name; otherwise the routing key
+   * the message was published with.
    */
   deadLetterRoutingKey?: string;
+  /**
+   * Opt-in: also declare the dead-letter topology, so a rejected message
+   * always has somewhere to go. `true` names the dead-letter queue
+   * `<queue>.dlq`, a string names it explicitly.
+   *
+   * The dead-letter exchange (`deadLetterExchange`, default `<queue>.dlx`) is
+   * declared as a durable `direct` exchange and the durable dead-letter queue
+   * (with this queue's `queueType`) is bound to it with the dead-letter routing
+   * key (`deadLetterRoutingKey`, default the queue name), which the queue
+   * dead-letters with. Several queues can thus share one dead-letter exchange.
+   * A message's original routing key stays in its `x-death` header. Requires a
+   * named queue. Default: false, the topology is left to the application.
+   */
+  deadLetterQueue?: boolean | string;
   /**
    * Deliveries after which a quorum queue dead-letters a message that keeps
    * being returned, e.g. by a consumer crashing mid-handler
@@ -133,7 +151,8 @@ export interface RpcOptions {
 
 /**
  * Options for a {@link WorkerClient}. The queue declaration options must match
- * the ones of the `@Worker` consuming the queue.
+ * the ones of the `@Worker` consuming the queue. `deadLetterQueue` only shapes
+ * the queue arguments here; the `@Worker` declares the dead-letter topology.
  */
 export interface WorkerClientOptions extends QueueDeclarationOptions {
   /** Target work queue. */

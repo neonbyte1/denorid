@@ -168,6 +168,25 @@ describe("amqp method decorators", () => {
     );
   });
 
+  it("throws when deadLetterQueue is set on an exchange binding without a named queue", () => {
+    const error = assertThrows(
+      () => {
+        class Consumer {
+          @PubSub({ exchange: "logs", deadLetterQueue: true })
+          onLog(): void {}
+        }
+
+        return Consumer;
+      },
+      Error,
+    );
+
+    assertEquals(
+      error.message,
+      '@PubSub() on "onLog" needs a named queue to declare a dead-letter queue.',
+    );
+  });
+
   it("records a retrying exchange binding with a named queue", () => {
     @AmqpConsumer()
     class Consumer {

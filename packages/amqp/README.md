@@ -336,10 +336,35 @@ A handler that throws (or whose guard denies, or whose body cannot be
 deserialized) has its message rejected without requeue: the broker moves it to
 the `deadLetterExchange` when the queue has one, and drops it otherwise.
 
+### Dead-letter queue
+
+By default the module only sets the queue arguments; the dead-letter exchange
+and a queue bound to it are yours to declare. The broker silently drops messages
+dead-lettered to a missing exchange, or to one where no binding matches. Opt in
+with `deadLetterQueue` to have the module declare them on bootstrap, before the
+consumed queue:
+
+| Declared             | Name                                            | Details                                  |
+| -------------------- | ----------------------------------------------- | ---------------------------------------- |
+| dead-letter exchange | `deadLetterExchange`, default `<queue>.dlx`     | durable, `direct`                        |
+| dead-letter queue    | `deadLetterQueue` string, default `<queue>.dlq` | durable, same `queueType`                |
+| binding              | `deadLetterRoutingKey`, default `<queue>`       | also the key the queue dead-letters with |
+
+Binding each dead-letter queue by its own key lets several queues share one
+dead-letter exchange without mixing their dead letters. The routing key a
+message was published with stays in its `x-death` header. An existing exchange
+of the same name but another type makes the declaration fail (406), and
+`deadLetterQueue` needs a named `queue`.
+
+### Work queue producers
+
 `WorkerClient` declares the work queue too, so give it the same `queueType`,
-`deadLetterExchange`, `deadLetterRoutingKey`, `deliveryLimit` and
-`queueArguments` as the `@Worker`: the broker refuses a redeclaration whose
-arguments differ (406 `PRECONDITION_FAILED`).
+`deadLetterExchange`, `deadLetterRoutingKey`, `deadLetterQueue`, `deliveryLimit`
+and `queueArguments` as the `@Worker`: the broker refuses a redeclaration whose
+arguments differ (406 `PRECONDITION_FAILED`). The client only mirrors the
+arguments; the `@Worker` declares the dead-letter topology.
+
+### Retries
 
 `retry` delays that rejection to ride out transient failures such as a short
 database outage. Each delay gets a fanout exchange and a queue, both named
@@ -348,7 +373,8 @@ return to `<queue>` through the `<queue>.retry` exchange. A failing message is
 copied, with its routing key, to the delay exchange of its attempt and acked
 once the broker confirmed the copy; a copy the broker did not confirm requeues
 the original instead. After the last delay the next failure rejects the message,
-which reaches the dead-letter exchange with its original routing key.
+which reaches the dead-letter exchange with its original routing key (unless
+`deadLetterRoutingKey` or `deadLetterQueue` sets another).
 
 ```ts
 import { AmqpConsumer, Topic } from "@denorid/amqp";
@@ -366,6 +392,8 @@ export class NotificationsConsumer {
     queue: "notifications.forum-events",
     queueType: "quorum",
     deadLetterExchange: "forum.dlx",
+    // Declares forum.dlx and notifications.forum-events.dlq.
+    deadLetterQueue: true,
     deliveryLimit: 5,
     // Up to four runs: immediately, then after 1s, 10s and 60s.
     retry: { delays: [1_000, 10_000, 60_000] },
@@ -386,8 +414,8 @@ export class NotificationsConsumer {
   `ExceptionHandler` see the original pattern. The headers only count for a
   message returning through the queue's own `<queue>.retry` exchange, so a
   message dead-lettered from another retrying queue starts with a fresh count.
-- The module does not declare the dead-letter exchange or its queue. Declare
-  them yourself; the broker drops messages dead-lettered to a missing exchange.
+- Without `deadLetterQueue`, declare the dead-letter exchange and its queue
+  yourself (see [Dead-letter queue](#dead-letter-queue)).
 - `deliveryLimit` (quorum queues) bounds redeliveries of a message whose handler
   never settled it, for example because the process crashed mid-handler.
 - Delivery is at least once: a crash between confirming the retry copy and

@@ -236,7 +236,7 @@ export class WorkerClient extends AbstractClient<WorkerClientOptions> {
   protected async setupChannel(channel: Channel): Promise<void> {
     await channel.assertQueue(
       this.options.queue,
-      queueDeclaration(this.options, {
+      queueDeclaration(this.options.queue, this.options, {
         durable: this.options.durable ?? true,
       }),
     );

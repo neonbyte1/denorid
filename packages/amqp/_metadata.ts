@@ -42,7 +42,8 @@ export interface AmqpBinding {
  * @return {MethodDecorator} The configured method decorator.
  * @throws {InvalidStaticMemberDecoratorUsageError} When applied to a static
  *   method.
- * @throws {Error} When `retry` is set without a named `queue`.
+ * @throws {Error} When `retry` or `deadLetterQueue` is set without a named
+ *   `queue`.
  */
 export function createAmqpBindingDecorator(
   name: string,
@@ -69,6 +70,16 @@ export function createAmqpBindingDecorator(
         `@${name}() on "${
           String(ctx.name)
         }" needs a named queue to retry failed messages.`,
+      );
+    }
+
+    if (
+      "deadLetterQueue" in options && options.deadLetterQueue && !options.queue
+    ) {
+      throw new Error(
+        `@${name}() on "${
+          String(ctx.name)
+        }" needs a named queue to declare a dead-letter queue.`,
       );
     }
 

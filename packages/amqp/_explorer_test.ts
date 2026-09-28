@@ -747,6 +747,88 @@ describe(AmqpExplorer.name, () => {
         ["alerts.q", "alerts", "error"],
       ]);
     });
+
+    it("worker with deadLetterQueue declares the dead-letter exchange and queue before its own queue", async () => {
+      @AmqpConsumer()
+      class WorkerConsumer {
+        @Worker({ queue: "tasks", deadLetterQueue: true })
+        run(): void {}
+      }
+
+      const harness = createHarness({
+        consumers: [WorkerConsumer],
+        instances: new Map([[WorkerConsumer, new WorkerConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      assertEquals(harness.channel.calls.slice(0, 4), [
+        {
+          method: "assertExchange",
+          args: ["tasks.dlx", "direct", { durable: true }],
+        },
+        { method: "assertQueue", args: ["tasks.dlq", { durable: true }] },
+        { method: "bindQueue", args: ["tasks.dlq", "tasks.dlx", "tasks"] },
+        {
+          method: "assertQueue",
+          args: ["tasks", {
+            durable: true,
+            arguments: {
+              "x-dead-letter-exchange": "tasks.dlx",
+              "x-dead-letter-routing-key": "tasks",
+            },
+          }],
+        },
+      ]);
+    });
+
+    it("a named bound queue with deadLetterQueue uses the given exchange, key, queue name and queue type", async () => {
+      @AmqpConsumer()
+      class TopicConsumer {
+        @Topic({
+          exchange: "forum.events",
+          routingKeys: ["post.*"],
+          queue: "notifications",
+          queueType: "quorum",
+          deadLetterExchange: "forum.dlx",
+          deadLetterRoutingKey: "notifications.dead",
+          deadLetterQueue: "forum.dead",
+        })
+        onPost(): void {}
+      }
+
+      const harness = createHarness({
+        consumers: [TopicConsumer],
+        instances: new Map([[TopicConsumer, new TopicConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      assertEquals(argsOf(harness.channel, "assertExchange"), [
+        ["forum.events", "topic", { durable: true }],
+        ["forum.dlx", "direct", { durable: true }],
+      ]);
+      assertEquals(argsOf(harness.channel, "assertQueue"), [
+        ["forum.dead", {
+          durable: true,
+          arguments: { "x-queue-type": "quorum" },
+        }],
+        ["notifications", {
+          exclusive: false,
+          durable: true,
+          autoDelete: false,
+          arguments: {
+            "x-queue-type": "quorum",
+            "x-dead-letter-exchange": "forum.dlx",
+            "x-dead-letter-routing-key": "notifications.dead",
+          },
+        }],
+      ]);
+      assertEquals(argsOf(harness.channel, "bindQueue"), [
+        ["forum.dead", "forum.dlx", "notifications.dead"],
+        ["notifications", "forum.events", "post.*"],
+      ]);
+    });
   });
 
   describe("dispatch", () => {

@@ -33,7 +33,7 @@ import {
   AMQP_SERIALIZER,
 } from "./_constants.ts";
 import { type AmqpBinding, getAmqpBindings } from "./_metadata.ts";
-import { queueDeclaration } from "./_queue.ts";
+import { deadLetterRoute, queueDeclaration } from "./_queue.ts";
 import { AmqpConnection } from "./connection.ts";
 import { AmqpExecutionContext, AmqpHostArguments } from "./host_arguments.ts";
 import type { AmqpModuleOptions } from "./module_options.ts";
@@ -336,7 +336,11 @@ export class AmqpExplorer
         const o = binding.options as WorkerOptions;
         const durable = o.durable ?? true;
 
-        await channel.assertQueue(o.queue, queueDeclaration(o, { durable }));
+        await this.assertDeadLetterTopology(channel, o.queue, o);
+        await channel.assertQueue(
+          o.queue,
+          queueDeclaration(o.queue, o, { durable }),
+        );
         await this.assertRetryTopology(
           channel,
           subscription,
@@ -408,8 +412,8 @@ export class AmqpExplorer
 
   /**
    * Asserts the queue an exchange binding consumes (the named durable queue,
-   * or an exclusive auto-delete server-named one when `queue` is omitted) and
-   * its retry delay queues, and sets the consumer prefetch.
+   * or an exclusive auto-delete server-named one when `queue` is omitted), its
+   * dead-letter topology and retry route, and sets the consumer prefetch.
    *
    * @param {Channel} channel - The consumer channel.
    * @param {Subscription} subscription - The subscription being set up.
@@ -422,9 +426,13 @@ export class AmqpExplorer
     subscription: Subscription,
     o: PubSubOptions | RoutingOptions | TopicOptions,
   ): Promise<string> {
+    const queue = o.queue ?? "";
+
+    await this.assertDeadLetterTopology(channel, queue, o);
+
     const response = await channel.assertQueue(
-      o.queue ?? "",
-      queueDeclaration(o, {
+      queue,
+      queueDeclaration(queue, o, {
         exclusive: !o.queue,
         durable: !!o.queue,
         autoDelete: !o.queue,
@@ -441,6 +449,36 @@ export class AmqpExplorer
     await channel.prefetch(o.prefetch ?? 1);
 
     return response.queue;
+  }
+
+  /**
+   * Asserts the dead-letter topology of a queue that opted into
+   * `deadLetterQueue`: the durable direct dead-letter exchange and the durable
+   * dead-letter queue bound to it with the key the queue dead-letters with.
+   * Declared before the queue so no message is dead-lettered into nothing.
+   *
+   * @param {Channel} channel - The consumer channel.
+   * @param {string} queue - The consumed queue.
+   * @param {ConsumerQueueOptions} o - The binding's queue options.
+   * @return {Promise<void>}
+   */
+  private async assertDeadLetterTopology(
+    channel: Channel,
+    queue: string,
+    o: ConsumerQueueOptions,
+  ): Promise<void> {
+    const route = deadLetterRoute(queue, o);
+
+    if (!route) {
+      return;
+    }
+
+    await channel.assertExchange(route.exchange, "direct", { durable: true });
+    await channel.assertQueue(route.queue, {
+      durable: true,
+      ...(o.queueType && { arguments: { "x-queue-type": o.queueType } }),
+    });
+    await channel.bindQueue(route.queue, route.exchange, route.routingKey);
   }
 
   /**

@@ -318,6 +318,29 @@ describe(WorkerClient.name, () => {
     ]);
   });
 
+  it("mirrors the dead-letter arguments of a worker with deadLetterQueue without declaring its topology", async () => {
+    const channel = new FakeChannel();
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, {
+      queue: "tasks",
+      deadLetterQueue: true,
+    });
+
+    await client.send({ x: 1 });
+
+    assertEquals(channel.calls.map((c) => [c.method, c.args[0]]), [
+      ["assertQueue", "tasks"],
+      ["publish", ""],
+    ]);
+    assertEquals(call(channel, "assertQueue")!.args[1], {
+      durable: true,
+      arguments: {
+        "x-dead-letter-exchange": "tasks.dlx",
+        "x-dead-letter-routing-key": "tasks",
+      },
+    });
+  });
+
   it("omits the content type when the serializer does not provide one", async () => {
     const channel = new FakeChannel();
     const connection = {
