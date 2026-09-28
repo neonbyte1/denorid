@@ -88,16 +88,11 @@ async function callRoute(
 }
 
 describe("OpenApiModule", () => {
-  it("documents the routes registered by the application", async () => {
+  it("documents the routes without initializing the application", async () => {
     const app = await createApp();
 
     try {
       const openApi = await app.get(OpenApiService, { strict: false });
-
-      assertEquals(openApi.getDocument().paths, {});
-
-      await app.init();
-
       const document = openApi.getDocument();
 
       assertStrictEquals(openApi.getDocument(), document);
@@ -108,6 +103,19 @@ describe("OpenApiModule", () => {
       assertEquals(Object.keys(document.components?.schemas ?? {}), [
         "ModuleThread",
       ]);
+
+      app.useGlobalGuards((): boolean => true);
+
+      const guarded = openApi.getDocument();
+
+      assertEquals(
+        Object.keys(guarded.paths?.["/api/threads/{id}"]?.get?.responses ?? {}),
+        ["200", "400", "403"],
+      );
+
+      await app.init();
+
+      assertEquals(openApi.getDocument(), guarded);
     } finally {
       await app.close();
     }
