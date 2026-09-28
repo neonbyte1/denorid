@@ -281,19 +281,34 @@ OpenApiModule.forRootAsync({
 
 ## Writing the document to a file
 
-The document is created from the registered routes, which exist once the
-application is initialized:
+The document is created from the routes the controllers declare, which are known
+as soon as the application is created: `app.init()` and the
+`onApplicationBootstrap` hooks (e.g. broker connections) are not needed. Add the
+global guards before creating the document:
 
 ```ts
-const app = await DenoridFactory.create(AppModule, new HonoAdapter());
-await app.init();
+await using app = await DenoridFactory.create(AppModule, new HonoAdapter(), {
+  basePath: "/api",
+});
+app.useGlobalGuards(new AuthGuard());
 
 const openApi = await app.get(OpenApiService, { strict: false });
 await Deno.writeTextFile(
   "openapi.json",
   JSON.stringify(openApi.getDocument(), null, 2),
 );
-await app.close();
+```
+
+Creating the application creates its providers. To replace providers that need a
+real environment, compile a testing module with `useCoreGlobals()` instead
+(`overrideProvider()`); its routes have no base path and no global guards:
+
+```ts
+await using module = await Test.createTestingModule({ imports: [AppModule] })
+  .useCoreGlobals()
+  .compile();
+
+const document = (await module.get(OpenApiService)).getDocument();
 ```
 
 ## Limitations
