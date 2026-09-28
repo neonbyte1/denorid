@@ -104,7 +104,7 @@ Everything the framework already knows ends up in the document:
 | `@Form(schema)`              | `multipart/form-data` and url-encoded request body                                  |
 | `@HttpCode()`                | Success response (`200` without it)                                                 |
 | Any input schema             | `400 Bad Request` (failed validation)                                               |
-| `@UseGuards()`, global guard | `403 Forbidden` and the `@ApiSecurity()` schemes of the guards                      |
+| `@UseGuards()`, global guard | `403 Forbidden` and the `@ApiSecurity()` schemes of the guards (see below)          |
 | `@Controller({ host })`      | Operation `servers`: `//api.example.com`; a `{host}` variable for a RegExp          |
 
 Request schemas are documented as their input (what they accept), response
@@ -123,9 +123,9 @@ For what the framework cannot know:
 | --------------------------------------- | ------------------------ | --------------------------------------- |
 | `@ApiTags(...tags)`                     | Controller, route        | Groups operations                       |
 | `@ApiOperation({ summary, ... })`       | Route                    | Summary, description, operation id, ... |
-| `@ApiResponse(status, { schema, ... })` | Controller, route        | Documents a response and its body       |
+| `@ApiResponse(status, { schema, ... })` | Guard, controller, route | Documents a response and its body       |
 | `@ApiSecurity(...schemes)`              | Guard, controller, route | Security requirements                   |
-| `@ApiExclude()`                         | Controller, route        | Leaves routes out of the document       |
+| `@ApiExclude()`                         | Guard, controller, route | Leaves routes or a guard out            |
 
 TypeScript types do not exist at runtime, so response bodies are documented with
 `@ApiResponse()`. A controller-level `@ApiResponse()` applies to all of its
@@ -135,6 +135,40 @@ The media type of a response defaults to how the adapter sends the handler
 result: `text/plain` for string, number and boolean schemas, `application/json`
 otherwise. Set `contentType` for other formats. Raw request bodies the route
 reads itself can be documented with `@ApiOperation({ requestBody })`.
+
+## Guard responses
+
+A route running a guard (globally, on its controller or on the route) is
+documented with `403 Forbidden`, the response of a guard returning `false`. A
+guard that throws its own exceptions documents them with `@ApiResponse()`
+instead; a guard that never denies a request is left out with `@ApiExclude()`:
+
+```ts
+@ApiSecurity("bearer")
+@ApiResponse(StatusCode.Unauthorized)
+@Injectable()
+class SessionGuard implements CanActivate {
+  public canActivate(): boolean {
+    throw new UnauthorizedException();
+  }
+}
+
+@ApiResponse(StatusCode.TooManyRequests)
+@Injectable()
+class WriteRateLimitGuard implements CanActivate {}
+
+@ApiExclude()
+@Injectable()
+class OptionalSessionGuard implements CanActivate {}
+```
+
+- Routes behind `SessionGuard` get `401`, routes behind `WriteRateLimitGuard`
+  get `429`, routes behind `OptionalSessionGuard` get neither `403` nor its
+  security requirements.
+- `403` is still added when another guard of the route documents no response.
+- A controller or route response with the same status replaces the guard
+  response; among the guards of a route, the later one wins. Guard responses do
+  not replace the success response of the route.
 
 ## Streamed responses
 
