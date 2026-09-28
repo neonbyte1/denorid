@@ -2,15 +2,20 @@ import {
   type GenericFunction,
   Inject,
   Injectable,
+  type OnApplicationBootstrap,
   type OnModuleInit,
   type Type,
 } from "@denorid/injector";
 import type { AnyRelations, EmptyRelations } from "drizzle-orm";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { fileURLToPath } from "node:url";
 import {
+  DEFAULT_MIGRATIONS_SCHEMA,
+  DEFAULT_MIGRATIONS_TABLE,
   DRIVER_PACKAGES,
   DRIZZLE_CONNECTION_OPTIONS,
+  MIGRATOR_PACKAGES,
   MODULE_OPTIONS,
 } from "./_internal.ts";
 import {
@@ -20,10 +25,13 @@ import {
 } from "./errors.ts";
 import type {
   DrizzleDrivers,
+  DrizzleMigrationOptions,
   DrizzleOrmBaseConnectionOptions,
+  DrizzleOrmConnectionOptions,
   DrizzleOrmModuleOptions,
   DrizzleOrmPostgresConnectionOptions,
   DrizzleOrmSqliteConnectionOptions,
+  DrizzlePostgresMigrationOptions,
   DrizzlePostgresPoolOptions,
 } from "./module_options.ts";
 
@@ -47,6 +55,23 @@ interface DrizzleConnection {
  * The `drizzle()` factory exported by a driver package.
  */
 type DrizzleFactory = GenericFunction<DrizzleConnection>;
+
+/**
+ * Configuration of drizzle-orm's `migrate(db, config)`.
+ */
+interface MigrationConfig {
+  migrationsFolder: string;
+  migrationsTable: string;
+  migrationsSchema?: string;
+}
+
+/**
+ * The `migrate()` function exported by a drizzle-orm migrator.
+ */
+type DrizzleMigrator = (
+  db: DrizzleConnection,
+  config: MigrationConfig,
+) => Promise<unknown>;
 
 /**
  * Type representing a bag of Drizzle ORM table definitions, usually the
@@ -382,7 +407,12 @@ export type DrizzleSqliteDatabase<
  * after every shutdown hook ran), so other providers can still query in their
  * `onModuleDestroy` / `onApplicationShutdown` hooks.
  *
+ * The `migrations` of a connection are applied in
+ * {@linkcode DrizzleService.onApplicationBootstrap}, see
+ * {@linkcode DrizzleService.migrate}.
+ *
  * @implements {OnModuleInit}
+ * @implements {OnApplicationBootstrap}
  * @implements {AsyncDisposable}
  *
  * @example Basic injection and usage
@@ -494,7 +524,8 @@ export type DrizzleSqliteDatabase<
  * ```
  */
 @Injectable()
-export class DrizzleService implements OnModuleInit, AsyncDisposable {
+export class DrizzleService
+  implements OnModuleInit, OnApplicationBootstrap, AsyncDisposable {
   /**
    * Module configuration options injected during initialization.
    *
@@ -532,6 +563,17 @@ export class DrizzleService implements OnModuleInit, AsyncDisposable {
   >;
 
   /**
+   * The connection options, each with its name, as normalized by
+   * {@linkcode DrizzleService.onModuleInit}.
+   */
+  private connectionOptions: readonly DrizzleOrmConnectionOptions[] = [];
+
+  /**
+   * The `drizzle()` factory of every driver imported so far.
+   */
+  private readonly factories = new Map<DrizzleDrivers, DrizzleFactory>();
+
+  /**
    * Lifecycle event, called when the module gets loaded and establishes all connections.
    *
    * @see {@linkcode OnModuleInit}
@@ -541,14 +583,12 @@ export class DrizzleService implements OnModuleInit, AsyncDisposable {
       ? this[MODULE_OPTIONS]
       : [{ name: "default", ...this[MODULE_OPTIONS] }];
 
-    const drizzleFactories: Map<DrizzleDrivers, DrizzleFactory> = new Map();
     const postgresMetdata = {} as { drizzle: DrizzleFactory; Pool?: Type };
 
+    this.connectionOptions = options;
+
     for (const option of options) {
-      const factory = await this.getDrizzleFactory(
-        drizzleFactories,
-        option,
-      );
+      const factory = await this.getDrizzleFactory(this.factories, option);
 
       this.connections[option.type] ??= new Map();
 
@@ -568,6 +608,55 @@ export class DrizzleService implements OnModuleInit, AsyncDisposable {
 
           break;
       }
+    }
+  }
+
+  /**
+   * Lifecycle event, called by `app.init()` before the application serves
+   * requests: applies the pending migrations of every connection whose
+   * `migrations` are not opted out with `applyOnBootstrap: false`, like
+   * {@linkcode DrizzleService.migrate}. A failed migration makes `app.init()`
+   * reject.
+   *
+   * Bootstrap hooks run in creation order, so providers injecting
+   * `DrizzleService` bootstrap after the migrations. Call
+   * {@linkcode DrizzleService.migrate} before `app.init()` when a provider
+   * that does not inject it has to wait for them too.
+   *
+   * @returns {Promise<void>} Resolves once the migrations are applied.
+   * @throws {Error} Naming the connection whose migrations failed, with the
+   *   failure as `cause`.
+   * @see {@linkcode OnApplicationBootstrap}
+   */
+  public async onApplicationBootstrap(): Promise<void> {
+    for (const options of this.connectionOptions) {
+      if (options.migrations?.applyOnBootstrap !== false) {
+        await this.applyMigrations(options);
+      }
+    }
+  }
+
+  /**
+   * Applies the pending migrations of every connection with `migrations`,
+   * one connection after the other, through drizzle-orm's migrator. Needs no
+   * `drizzle-kit`, only read access to the migrations folders.
+   *
+   * The pending migrations of a connection are applied in one transaction.
+   *
+   * @returns {Promise<void>} Resolves once the migrations are applied.
+   * @throws {Error} Naming the connection whose migrations failed, with the
+   *   failure as `cause`.
+   *
+   * @example Migrating in a separate step, without starting the application
+   * ```ts
+   * await using app = await DenoridFactory.create(AppModule);
+   *
+   * await (await app.get(DrizzleService, { strict: false })).migrate();
+   * ```
+   */
+  public async migrate(): Promise<void> {
+    for (const options of this.connectionOptions) {
+      await this.applyMigrations(options);
     }
   }
 
@@ -948,6 +1037,64 @@ export class DrizzleService implements OnModuleInit, AsyncDisposable {
   }
 
   /**
+   * Applies the pending migrations of a connection with drizzle-orm's
+   * migrator of its driver; does nothing for a connection without
+   * `migrations`.
+   *
+   * @private
+   * @param {DrizzleOrmConnectionOptions} options - The connection options.
+   * @returns {Promise<void>} Resolves once the migrations are applied.
+   * @throws {DrizzleConnectionNotFoundError} If the connection was not
+   *   established.
+   * @throws {Error} Naming the connection, with the migration failure as
+   *   `cause`.
+   */
+  private async applyMigrations(
+    options: DrizzleOrmConnectionOptions,
+  ): Promise<void> {
+    const migrations: DrizzleMigrationOptions | undefined = options.migrations;
+
+    if (!migrations) {
+      return;
+    }
+
+    const db = this.getConnection<DrizzleConnection>(
+      options.type,
+      options.name,
+    ) as DrizzleConnection;
+    const config: MigrationConfig = {
+      migrationsFolder: migrations.folder instanceof URL
+        ? fileURLToPath(migrations.folder)
+        : migrations.folder,
+      migrationsTable: migrations.table ?? DEFAULT_MIGRATIONS_TABLE,
+    };
+
+    try {
+      // The migrators ship with drizzle-orm, which the driver of the
+      // established connection was imported from.
+      const { migrate } = await this.import<{ migrate: DrizzleMigrator }>(
+        MIGRATOR_PACKAGES[options.type],
+      ) as { migrate: DrizzleMigrator };
+
+      await migrate(
+        db,
+        options.type === "postgres"
+          ? {
+            ...config,
+            migrationsSchema: (migrations as DrizzlePostgresMigrationOptions)
+              .schema ?? DEFAULT_MIGRATIONS_SCHEMA,
+          }
+          : config,
+      );
+    } catch (cause) {
+      throw new Error(
+        `Failed to migrate ${options.type} connection: ${options.name}`,
+        { cause },
+      );
+    }
+  }
+
+  /**
    * Retrieves or imports the Drizzle factory function for a specific database driver.
    *
    * This method implements lazy loading and caching of Drizzle factory functions.
@@ -1106,7 +1253,9 @@ export class DrizzleService implements OnModuleInit, AsyncDisposable {
    * fully-qualified `npm:` URL at publish time. Using literals here keeps
    * the peer-optional semantics (dynamic import, failures handled by
    * {@linkcode DrizzleService.tryImport}) while making the dependencies
-   * visible to JSR's publish-time analyzer.
+   * visible to JSR's publish-time analyzer. The migrators of the drivers are
+   * loaded through it as well: only apps with `migrations` load them, next
+   * to the driver they belong to.
    */
   private async import<T = Record<PropertyKey, unknown>>(
     name: string,
@@ -1118,6 +1267,14 @@ export class DrizzleService implements OnModuleInit, AsyncDisposable {
         )) as unknown as Partial<T>;
       case "drizzle-orm/libsql":
         return (await import("drizzle-orm/libsql")) as unknown as Partial<T>;
+      case "drizzle-orm/node-postgres/migrator":
+        return (await import(
+          "drizzle-orm/node-postgres/migrator"
+        )) as unknown as Partial<T>;
+      case "drizzle-orm/libsql/migrator":
+        return (await import(
+          "drizzle-orm/libsql/migrator"
+        )) as unknown as Partial<T>;
       case "pg":
         return (await import("pg")) as unknown as Partial<T>;
       default:

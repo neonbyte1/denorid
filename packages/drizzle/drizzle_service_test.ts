@@ -1,13 +1,17 @@
 import {
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
 import { assertSpyCalls, spy, type Stub, stub } from "@std/testing/mock";
+import { sql } from "drizzle-orm";
 import { pgTable } from "drizzle-orm/pg-core";
 import { sqliteTable } from "drizzle-orm/sqlite-core";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import { MODULE_OPTIONS } from "./_internal.ts";
 import { DrizzleService } from "./drizzle_service.ts";
 import {
@@ -606,6 +610,164 @@ describe("DrizzleService", () => {
       await service[Symbol.asyncDispose]();
 
       assertSpyCalls(pool.end, 1);
+    });
+  });
+
+  describe("migrations", () => {
+    let dir: string;
+    let migrating: DrizzleService;
+
+    function useMigrations(): void {
+      beforeEach(async () => {
+        dir = await Deno.makeTempDir();
+        migrating = new DrizzleService();
+      });
+
+      afterEach(async () => {
+        await migrating[Symbol.asyncDispose]();
+        await Deno.remove(dir, { recursive: true });
+      });
+    }
+
+    const configure = (options: unknown): void => {
+      Object.defineProperty(migrating, MODULE_OPTIONS, { value: options });
+    };
+
+    /** Writes a migration the way `drizzle-kit generate` lays it out. */
+    const writeMigration = async (
+      name: string,
+      statements: string,
+    ): Promise<void> => {
+      await Deno.mkdir(join(dir, "drizzle", name), { recursive: true });
+      await Deno.writeTextFile(
+        join(dir, "drizzle", name, "migration.sql"),
+        statements,
+      );
+    };
+
+    const tables = async (): Promise<string[]> =>
+      (await migrating.sqlite().all<{ name: string }>(
+        sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+      )).map(({ name }) => name);
+
+    describe("sqlite", () => {
+      useMigrations();
+
+      it("applies the pending migrations on bootstrap, each one once", async () => {
+        await writeMigration(
+          "20260928120000_users",
+          "CREATE TABLE users (id integer PRIMARY KEY, name text);",
+        );
+        configure({
+          type: "sqlite",
+          database: join(dir, "app.db"),
+          migrations: { folder: pathToFileURL(join(dir, "drizzle")) },
+        });
+        await migrating.onModuleInit();
+
+        await migrating.onApplicationBootstrap();
+
+        assertEquals(await tables(), ["__drizzle_migrations", "users"]);
+
+        await writeMigration(
+          "20260928130000_posts",
+          "CREATE TABLE posts (id integer PRIMARY KEY);",
+        );
+        await migrating.migrate();
+
+        assertEquals(await tables(), [
+          "__drizzle_migrations",
+          "posts",
+          "users",
+        ]);
+        assertEquals(
+          await migrating.sqlite().all(
+            sql`SELECT name FROM __drizzle_migrations ORDER BY id`,
+          ),
+          [{ name: "20260928120000_users" }, { name: "20260928130000_posts" }],
+        );
+      });
+
+      it("leaves migrations with applyOnBootstrap: false to migrate()", async () => {
+        await writeMigration(
+          "20260928120000_users",
+          "CREATE TABLE users (id integer PRIMARY KEY);",
+        );
+        configure([
+          {
+            type: "sqlite",
+            name: "default",
+            database: join(dir, "app.db"),
+            migrations: {
+              folder: join(dir, "drizzle"),
+              table: "applied_migrations",
+              applyOnBootstrap: false,
+            },
+          },
+          { type: "sqlite", name: "cache", database: ":memory:" },
+        ]);
+        await migrating.onModuleInit();
+
+        await migrating.onApplicationBootstrap();
+
+        assertEquals(await tables(), []);
+
+        await migrating.migrate();
+
+        assertEquals(await tables(), ["applied_migrations", "users"]);
+      });
+
+      it("rejects naming the connection when a migration fails, applying none of the pending ones", async () => {
+        await writeMigration(
+          "20260928120000_users",
+          "CREATE TABLE users (id integer PRIMARY KEY);",
+        );
+        await writeMigration("20260928130000_broken", "CREATE TABLE users;");
+        configure([{
+          type: "sqlite",
+          name: "main",
+          database: join(dir, "app.db"),
+          migrations: { folder: join(dir, "drizzle") },
+        }]);
+        await migrating.onModuleInit();
+
+        const error = await assertRejects(
+          () => migrating.onApplicationBootstrap(),
+          Error,
+          "Failed to migrate sqlite connection: main",
+        );
+
+        assertInstanceOf(error.cause, Error);
+        assertEquals(
+          await migrating.sqlite("main").all(
+            sql`SELECT name FROM sqlite_master WHERE name = 'users'`,
+          ),
+          [],
+        );
+      });
+
+      it("rejects on bootstrap when the connection could not be established", async () => {
+        configure({
+          type: "sqlite",
+          database: join(dir, "app.db"),
+          migrations: { folder: join(dir, "drizzle") },
+        });
+        using _import = stub(
+          migrating,
+          // @ts-ignore - private import seam
+          "import",
+          () => Promise.resolve({}),
+        );
+        await assertRejects(
+          () => migrating.onModuleInit(),
+          DrizzleFactoryNotFoundError,
+        );
+
+        await assertRejects(
+          () => migrating.onApplicationBootstrap(),
+          DrizzleConnectionNotFoundError,
+        );
+      });
     });
   });
 
