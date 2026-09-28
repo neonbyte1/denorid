@@ -291,8 +291,15 @@ describe(AmqpModule.name, () => {
           return Promise.resolve({ queue: "tasks" });
         }
 
-        public sendToQueue(_queue: string, content: Buffer): boolean {
+        public publish(
+          _exchange: string,
+          _routingKey: string,
+          content: Buffer,
+          _options: unknown,
+          confirm: (err: Error | null) => void,
+        ): boolean {
           events.push(`send:${new TextDecoder().decode(content)}`);
+          confirm(null);
 
           return true;
         }
@@ -306,7 +313,7 @@ describe(AmqpModule.name, () => {
       }
 
       class FakeModel extends EventEmitter {
-        public createChannel(): Promise<FakeChannel> {
+        public createConfirmChannel(): Promise<FakeChannel> {
           return Promise.resolve(new FakeChannel());
         }
 

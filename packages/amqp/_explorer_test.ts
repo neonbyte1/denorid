@@ -36,9 +36,26 @@ interface RecordedCall {
   args: unknown[];
 }
 
+/** How the fake broker answers a publish carrying a confirm callback. */
+type ConfirmMode = "ack" | "nack" | "hold";
+
+/** Callback amqplib calls once the broker confirmed (or nacked) a publish. */
+type ConfirmCallback = (err: Error | null) => void;
+
+/** A consumed message as the explorer reads it. */
+interface FakeMessage {
+  content: Buffer;
+  fields: Record<string, unknown>;
+  properties: Record<string, unknown>;
+}
+
 class FakeChannel extends EventEmitter {
   public readonly calls: RecordedCall[] = [];
   public consumeCallback?: (msg: unknown) => void;
+  /** Answer to the next confirmed publishes. */
+  public confirm: ConfirmMode = "ack";
+  /** Confirm callbacks withheld while {@link confirm} is `"hold"`. */
+  public readonly heldConfirms: ConfirmCallback[] = [];
 
   public constructor(private readonly generatedQueue = "amq.gen-q") {
     super();
@@ -93,8 +110,21 @@ class FakeChannel extends EventEmitter {
     return Promise.resolve({});
   }
 
-  public sendToQueue(queue: string, content: Buffer, opts?: unknown): boolean {
+  public sendToQueue(
+    queue: string,
+    content: Buffer,
+    opts?: unknown,
+    cb?: ConfirmCallback,
+  ): boolean {
     this.calls.push({ method: "sendToQueue", args: [queue, content, opts] });
+
+    if (cb) {
+      if (this.confirm === "hold") {
+        this.heldConfirms.push(cb);
+      } else {
+        cb(this.confirm === "nack" ? new Error("message nacked") : null);
+      }
+    }
 
     return true;
   }
@@ -128,7 +158,9 @@ function makeMessage(opts: {
   correlationId?: string;
   contentType?: string;
   headers?: Record<string, unknown>;
-}): unknown {
+  /** Further message properties (messageId, userId, ...). */
+  properties?: Record<string, unknown>;
+}): FakeMessage {
   return {
     content: opts.content ?? Buffer.from(JSON.stringify(opts.payload ?? {})),
     fields: {
@@ -143,6 +175,7 @@ function makeMessage(opts: {
       correlationId: opts.correlationId,
       contentType: opts.contentType,
       headers: opts.headers,
+      ...opts.properties,
     },
   };
 }
@@ -162,7 +195,7 @@ function createHarness(opts: {
   consumers: Type[];
   instances: Map<Type, unknown>;
   channel?: FakeChannel;
-  /** Channels (or connection failures) handed out by successive createChannel calls. */
+  /** Channels (or connection failures) handed out by successive createConfirmChannel calls. */
   channels?: (FakeChannel | Error)[];
   options?: AmqpModuleOptions;
   serializer?: AmqpSerializer;
@@ -178,7 +211,7 @@ function createHarness(opts: {
   let created = 0;
 
   const connection = {
-    createChannel: () => {
+    createConfirmChannel: () => {
       const next = pool[Math.min(created++, pool.length - 1)];
 
       return next instanceof Error
@@ -273,6 +306,10 @@ function createHarness(opts: {
 
 function call(channel: FakeChannel, method: string): RecordedCall | undefined {
   return channel.calls.find((c) => c.method === method);
+}
+
+function argsOf(channel: FakeChannel, method: string): unknown[][] {
+  return channel.calls.filter((c) => c.method === method).map((c) => c.args);
 }
 
 function methods(channel: FakeChannel): string[] {
@@ -466,6 +503,172 @@ describe(AmqpExplorer.name, () => {
         { durable: false },
       ]);
       assertEquals(call(harness.channel, "prefetch")!.args, [1]);
+    });
+
+    it("worker declares the typed queue options and queueArguments as queue arguments", async () => {
+      @AmqpConsumer()
+      class WorkerConsumer {
+        @Worker({
+          queue: "tasks",
+          queueType: "quorum",
+          deadLetterExchange: "dlx",
+          deadLetterRoutingKey: "tasks.dead",
+          deliveryLimit: 5,
+          queueArguments: { "x-max-length": 100, "x-queue-type": "classic" },
+        })
+        run(): void {}
+      }
+
+      const harness = createHarness({
+        consumers: [WorkerConsumer],
+        instances: new Map([[WorkerConsumer, new WorkerConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      assertEquals(call(harness.channel, "assertQueue")!.args, [
+        "tasks",
+        {
+          durable: true,
+          arguments: {
+            "x-max-length": 100,
+            // The typed option wins over the same raw argument.
+            "x-queue-type": "quorum",
+            "x-dead-letter-exchange": "dlx",
+            "x-dead-letter-routing-key": "tasks.dead",
+            "x-delivery-limit": 5,
+          },
+        },
+      ]);
+    });
+
+    it("a named bound queue gets the queue arguments", async () => {
+      @AmqpConsumer()
+      class TopicConsumer {
+        @Topic({
+          exchange: "metrics",
+          routingKeys: ["cpu.*"],
+          queue: "metrics.q",
+          deadLetterExchange: "dlx",
+          queueArguments: { "x-max-length": 10 },
+        })
+        onMetric(): void {}
+      }
+
+      const harness = createHarness({
+        consumers: [TopicConsumer],
+        instances: new Map([[TopicConsumer, new TopicConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      assertEquals(call(harness.channel, "assertQueue")!.args, [
+        "metrics.q",
+        {
+          exclusive: false,
+          durable: true,
+          autoDelete: false,
+          arguments: { "x-max-length": 10, "x-dead-letter-exchange": "dlx" },
+        },
+      ]);
+      assertEquals(call(harness.channel, "bindQueue")!.args, [
+        "metrics.q",
+        "metrics",
+        "cpu.*",
+      ]);
+      assertEquals(call(harness.channel, "consume")!.args[0], "metrics.q");
+    });
+
+    it("worker asserts one delay queue per distinct retry delay, following its type and durability", async () => {
+      @AmqpConsumer()
+      class WorkerConsumer {
+        @Worker({
+          queue: "tasks",
+          queueType: "quorum",
+          retry: { delays: [1000, 5000, 1000] },
+        })
+        run(): void {}
+
+        @Worker({ queue: "jobs", durable: false, retry: { delays: [500] } })
+        runJob(): void {}
+      }
+
+      const tasks = makeChannel();
+      const jobs = makeChannel();
+      const harness = createHarness({
+        consumers: [WorkerConsumer],
+        instances: new Map([[WorkerConsumer, new WorkerConsumer()]]),
+        channels: [tasks, jobs],
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      assertEquals(argsOf(tasks, "assertQueue"), [
+        ["tasks", { durable: true, arguments: { "x-queue-type": "quorum" } }],
+        ["tasks.retry.1000", {
+          durable: true,
+          arguments: {
+            "x-queue-type": "quorum",
+            "x-message-ttl": 1000,
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": "tasks",
+          },
+        }],
+        ["tasks.retry.5000", {
+          durable: true,
+          arguments: {
+            "x-queue-type": "quorum",
+            "x-message-ttl": 5000,
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": "tasks",
+          },
+        }],
+      ]);
+      assertEquals(call(tasks, "consume")!.args[0], "tasks");
+      // Without a queueType the delay queue keeps the broker default type.
+      assertEquals(argsOf(jobs, "assertQueue"), [
+        ["jobs", { durable: false }],
+        ["jobs.retry.500", {
+          durable: false,
+          arguments: {
+            "x-message-ttl": 500,
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": "jobs",
+          },
+        }],
+      ]);
+    });
+
+    it("a named bound queue gets durable delay queues", async () => {
+      @AmqpConsumer()
+      class RoutingConsumer {
+        @Routing({
+          exchange: "alerts",
+          routingKeys: ["error"],
+          queue: "alerts.q",
+          retry: { delays: [2000] },
+        })
+        onAlert(): void {}
+      }
+
+      const harness = createHarness({
+        consumers: [RoutingConsumer],
+        instances: new Map([[RoutingConsumer, new RoutingConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      assertEquals(argsOf(harness.channel, "assertQueue"), [
+        ["alerts.q", { exclusive: false, durable: true, autoDelete: false }],
+        ["alerts.q.retry.2000", {
+          durable: true,
+          arguments: {
+            "x-message-ttl": 2000,
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": "alerts.q",
+          },
+        }],
+      ]);
     });
   });
 
@@ -1369,6 +1572,306 @@ describe(AmqpExplorer.name, () => {
         "Unhandled error in AMQP message handler",
       );
       assertEquals(harness.cleared, harness.scopes);
+    });
+  });
+
+  describe("retry", () => {
+    @AmqpConsumer()
+    class RetryConsumer {
+      @Worker({ queue: "tasks", retry: { delays: [1000, 5000] } })
+      run(): void {
+        throw new Error("handler boom");
+      }
+    }
+
+    it("moves a failed message to the delay queue of its first attempt and acks it once the broker confirmed", async () => {
+      const channel = makeChannel();
+      channel.confirm = "hold";
+
+      const harness = createHarness({
+        consumers: [RetryConsumer],
+        instances: new Map([[RetryConsumer, new RetryConsumer()]]),
+        channel,
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      const msg = makeMessage({
+        payload: { job: 1 },
+        routingKey: "tasks",
+        correlationId: "corr-r",
+        contentType: "application/json",
+        headers: { "x-trace": "abc" },
+        properties: { messageId: "m-1", deliveryMode: 2, userId: "guest" },
+      });
+      channel.consumeCallback!(msg);
+      await flush();
+
+      const [queue, content, options] = call(channel, "sendToQueue")!.args;
+      assertEquals(queue, "tasks.retry.1000");
+      assertStrictEquals(content, msg.content);
+      // Every original property but userId travels with the copy.
+      assertEquals(options, {
+        replyTo: undefined,
+        correlationId: "corr-r",
+        contentType: "application/json",
+        messageId: "m-1",
+        deliveryMode: 2,
+        headers: {
+          "x-trace": "abc",
+          "x-retry-count": 1,
+          "x-original-exchange": "",
+          "x-original-routing-key": "tasks",
+        },
+      });
+      // Not settled before the broker confirmed the copy.
+      assertEquals(argsOf(channel, "ack"), []);
+      assertEquals(argsOf(channel, "nack"), []);
+
+      channel.heldConfirms[0](null);
+      await flush();
+
+      assertEquals(argsOf(channel, "ack"), [[msg]]);
+      assertEquals(argsOf(channel, "nack"), []);
+      assertEquals(harness.exceptionCalls.length, 1);
+      assertEquals(harness.loggerErrors, []);
+    });
+
+    it("moves a message that was retried before to the delay queue of its next attempt", async () => {
+      const harness = createHarness({
+        consumers: [RetryConsumer],
+        instances: new Map([[RetryConsumer, new RetryConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      const msg = makeMessage({
+        routingKey: "tasks",
+        headers: {
+          "x-retry-count": 1,
+          "x-original-exchange": "",
+          "x-original-routing-key": "tasks",
+        },
+      });
+      harness.channel.consumeCallback!(msg);
+      await flush();
+
+      assertEquals(argsOf(harness.channel, "sendToQueue"), [[
+        "tasks.retry.5000",
+        msg.content,
+        {
+          replyTo: undefined,
+          correlationId: undefined,
+          contentType: undefined,
+          headers: {
+            "x-retry-count": 2,
+            "x-original-exchange": "",
+            "x-original-routing-key": "tasks",
+          },
+        },
+      ]]);
+      assertEquals(argsOf(harness.channel, "ack"), [[msg]]);
+      assertEquals(argsOf(harness.channel, "nack"), []);
+    });
+
+    it("rejects a message that used up its retries", async () => {
+      const harness = createHarness({
+        consumers: [RetryConsumer],
+        instances: new Map([[RetryConsumer, new RetryConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      const msg = makeMessage({
+        routingKey: "tasks",
+        headers: { "x-retry-count": 2 },
+      });
+      harness.channel.consumeCallback!(msg);
+      await flush();
+
+      assertEquals(argsOf(harness.channel, "sendToQueue"), []);
+      assertEquals(argsOf(harness.channel, "nack"), [[msg, false, false]]);
+      assertEquals(argsOf(harness.channel, "ack"), []);
+    });
+
+    it("logs and requeues the message when the broker nacks the retry copy", async () => {
+      const channel = makeChannel();
+      channel.confirm = "nack";
+
+      const harness = createHarness({
+        consumers: [RetryConsumer],
+        instances: new Map([[RetryConsumer, new RetryConsumer()]]),
+        channel,
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      const msg = makeMessage({ routingKey: "tasks" });
+      channel.consumeCallback!(msg);
+      await flush();
+
+      const [message, err] = harness.loggerErrors[0];
+      assertEquals(harness.loggerErrors.length, 1);
+      assertEquals(message, "Failed to schedule a retry of an AMQP message");
+      assertInstanceOf(err, Error);
+      assertEquals(err.message, "message nacked");
+      assertEquals(argsOf(channel, "nack"), [[msg, false, true]]);
+      assertEquals(argsOf(channel, "ack"), []);
+    });
+
+    it("logs and requeues the message when the retry copy cannot be published", async () => {
+      const channel = makeChannel();
+      channel.sendToQueue = () => {
+        throw new Error("Channel closing");
+      };
+
+      const harness = createHarness({
+        consumers: [RetryConsumer],
+        instances: new Map([[RetryConsumer, new RetryConsumer()]]),
+        channel,
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      const msg = makeMessage({ routingKey: "tasks" });
+      channel.consumeCallback!(msg);
+      await flush();
+
+      const [message, err] = harness.loggerErrors[0];
+      assertEquals(harness.loggerErrors.length, 1);
+      assertEquals(message, "Failed to schedule a retry of an AMQP message");
+      assertInstanceOf(err, Error);
+      assertEquals(err.message, "Channel closing");
+      assertEquals(argsOf(channel, "nack"), [[msg, false, true]]);
+      assertEquals(argsOf(channel, "ack"), []);
+    });
+
+    it("takes the pattern from the original routing key of a message returning from a delay queue", async () => {
+      @AmqpConsumer()
+      class TopicConsumer {
+        @Topic({
+          exchange: "metrics",
+          routingKeys: ["cpu.*"],
+          queue: "metrics.q",
+          retry: { delays: [1000, 5000] },
+        })
+        onMetric(): void {
+          throw new Error("metric boom");
+        }
+      }
+
+      const harness = createHarness({
+        consumers: [TopicConsumer],
+        instances: new Map([[TopicConsumer, new TopicConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      // Dead-lettered back from the delay queue through the default exchange.
+      const msg = makeMessage({
+        routingKey: "metrics.q",
+        exchange: "",
+        headers: {
+          "x-retry-count": 1,
+          "x-original-exchange": "metrics",
+          "x-original-routing-key": "cpu.load",
+        },
+      });
+      harness.channel.consumeCallback!(msg);
+      await flush();
+
+      const host = harness.exceptionCalls[0].host;
+      assertInstanceOf(host, AmqpHostArguments);
+      assertEquals(host.switchToRpc().getPattern(), "cpu.load");
+
+      // The next attempt keeps the original route.
+      assertEquals(argsOf(harness.channel, "sendToQueue"), [[
+        "metrics.q.retry.5000",
+        msg.content,
+        {
+          replyTo: undefined,
+          correlationId: undefined,
+          contentType: undefined,
+          headers: {
+            "x-retry-count": 2,
+            "x-original-exchange": "metrics",
+            "x-original-routing-key": "cpu.load",
+          },
+        },
+      ]]);
+    });
+
+    it("takes the pattern from the original exchange of a returning message published without a routing key", async () => {
+      @AmqpConsumer()
+      class PubSubConsumer {
+        @PubSub({
+          exchange: "logs",
+          queue: "logs.q",
+          retry: { delays: [1000] },
+        })
+        onLog(): void {
+          throw new Error("log boom");
+        }
+      }
+
+      const harness = createHarness({
+        consumers: [PubSubConsumer],
+        instances: new Map([[PubSubConsumer, new PubSubConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      const msg = makeMessage({
+        routingKey: "logs.q",
+        exchange: "",
+        headers: {
+          "x-retry-count": 1,
+          "x-original-exchange": "logs",
+          "x-original-routing-key": "",
+        },
+      });
+      harness.channel.consumeCallback!(msg);
+      await flush();
+
+      const host = harness.exceptionCalls[0].host;
+      assertInstanceOf(host, AmqpHostArguments);
+      assertEquals(host.switchToRpc().getPattern(), "logs");
+      assertEquals(argsOf(harness.channel, "nack"), [[msg, false, false]]);
+    });
+
+    it("ignores retry headers when the binding does not retry", async () => {
+      @AmqpConsumer()
+      class TopicConsumer {
+        @Topic({ exchange: "metrics", routingKeys: ["cpu.*"] })
+        onMetric(): void {
+          throw new Error("metric boom");
+        }
+      }
+
+      const harness = createHarness({
+        consumers: [TopicConsumer],
+        instances: new Map([[TopicConsumer, new TopicConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      const msg = makeMessage({
+        routingKey: "cpu.load",
+        exchange: "metrics",
+        headers: {
+          "x-retry-count": 0,
+          "x-original-exchange": "other",
+          "x-original-routing-key": "spoofed",
+        },
+      });
+      harness.channel.consumeCallback!(msg);
+      await flush();
+
+      const host = harness.exceptionCalls[0].host;
+      assertInstanceOf(host, AmqpHostArguments);
+      assertEquals(host.switchToRpc().getPattern(), "cpu.load");
+      assertEquals(argsOf(harness.channel, "sendToQueue"), []);
+      assertEquals(argsOf(harness.channel, "nack"), [[msg, false, false]]);
     });
   });
 

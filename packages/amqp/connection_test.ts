@@ -5,7 +5,7 @@ import {
   assertRejects,
   assertStrictEquals,
 } from "@std/assert";
-import { assertSpyCalls, stub } from "@std/testing/mock";
+import { assertSpyCall, assertSpyCalls, stub } from "@std/testing/mock";
 import amqplib from "amqplib";
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
@@ -18,6 +18,7 @@ class FakeChannel extends EventEmitter {}
 
 class FakeModel extends EventEmitter {
   public closeCalls = 0;
+  public readonly confirmChannel = new FakeChannel();
 
   public constructor(private readonly closeThrows = false) {
     super();
@@ -25,6 +26,10 @@ class FakeModel extends EventEmitter {
 
   public createChannel(): Promise<FakeChannel> {
     return Promise.resolve(new FakeChannel());
+  }
+
+  public createConfirmChannel(): Promise<FakeChannel> {
+    return Promise.resolve(this.confirmChannel);
   }
 
   public close(): Promise<void> {
@@ -214,6 +219,31 @@ describe(AmqpConnection.name, () => {
       const result = await connection.createChannel();
 
       assertStrictEquals(result as unknown, channel);
+      await connection.close();
+    });
+  });
+
+  describe("createConfirmChannel()", () => {
+    it("returns the model's confirm channel and logs its errors", async () => {
+      using logError = stub(Logger.prototype, "error");
+      const model = new FakeModel();
+      using _s = stub(
+        amqplib,
+        "connect",
+        () => Promise.resolve(model as never),
+      );
+
+      const connection = makeConnection();
+      const channel = await connection.createConfirmChannel();
+
+      assertStrictEquals(channel as unknown, model.confirmChannel);
+
+      const err = new Error("Channel closed by server: 406");
+      // Without a listener EventEmitter#emit("error") throws.
+      channel.emit("error", err);
+
+      assertSpyCall(logError, 0, { args: ["AMQP channel error", err] });
+      assertSpyCalls(logError, 1);
       await connection.close();
     });
   });

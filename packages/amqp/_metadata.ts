@@ -36,10 +36,13 @@ export interface AmqpBinding {
  * Builds a method decorator that records a single {@link AmqpBinding} on the
  * owning class' metadata.
  *
- * @param {string} name - Decorator name reported in the static-usage error.
+ * @param {string} name - Decorator name reported in usage errors.
  * @param {AmqpPatternType} type - The messaging pattern literal.
  * @param {AmqpBindingOptions} options - The per-type topology options.
  * @return {MethodDecorator} The configured method decorator.
+ * @throws {InvalidStaticMemberDecoratorUsageError} When applied to a static
+ *   method.
+ * @throws {Error} When `retry` is set without a named `queue`.
  */
 export function createAmqpBindingDecorator(
   name: string,
@@ -58,6 +61,14 @@ export function createAmqpBindingDecorator(
         name,
         ctx.name,
         "function",
+      );
+    }
+
+    if ("retry" in options && options.retry && !options.queue) {
+      throw new Error(
+        `@${name}() on "${
+          String(ctx.name)
+        }" needs a named queue to retry failed messages.`,
       );
     }
 

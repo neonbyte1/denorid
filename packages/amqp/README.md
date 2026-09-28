@@ -107,7 +107,9 @@ export class AppModule {}
 ### Send messages
 
 Clients are instantiated directly with the shared `AmqpConnection`. Each owns a
-lazily-created channel that asserts its topology once on first send.
+lazily-created channel that asserts its topology once on first send. Inject the
+connection into a field (`@Inject` is a field decorator); its expression form
+builds a client from the resolved connection.
 
 ```ts
 import { Inject, Injectable } from "@denorid/injector";
@@ -121,19 +123,20 @@ import {
 
 @Injectable()
 export class OrderProducer {
-  private readonly worker: WorkerClient;
-  private readonly publisher: PublisherClient;
-  private readonly topic: TopicClient;
-  private readonly rpc: RpcClient;
+  @Inject(AmqpConnection, (c) => new WorkerClient(c, { queue: "orders" }))
+  private readonly worker!: WorkerClient;
 
-  public constructor(
-    @Inject(AmqpConnection) connection: AmqpConnection,
-  ) {
-    this.worker = new WorkerClient(connection, { queue: "orders" });
-    this.publisher = new PublisherClient(connection, { exchange: "logs" });
-    this.topic = new TopicClient(connection, { exchange: "metrics" });
-    this.rpc = new RpcClient(connection, { queue: "math.add", timeout: 5_000 });
-  }
+  @Inject(AmqpConnection, (c) => new PublisherClient(c, { exchange: "logs" }))
+  private readonly publisher!: PublisherClient;
+
+  @Inject(AmqpConnection, (c) => new TopicClient(c, { exchange: "metrics" }))
+  private readonly topic!: TopicClient;
+
+  @Inject(
+    AmqpConnection,
+    (c) => new RpcClient(c, { queue: "math.add", timeout: 5_000 }),
+  )
+  private readonly rpc!: RpcClient;
 
   async run(): Promise<void> {
     await this.worker.send({ id: 1 });
@@ -150,6 +153,24 @@ export class OrderProducer {
 (`publish(routingKey, data)`); `WorkerClient` and `PublisherClient` take only
 the payload.
 
+Clients publish on a channel in confirm mode: `send()` / `publish()` resolve
+only once the broker confirmed the message, and reject when the broker refused
+it or the channel closed first. Messages are persistent by default
+(`persistent: false` on the client options opts out), so a message routed to a
+durable queue survives a broker restart once `publish()` resolved.
+
+Every `send()` / `publish()` takes optional per-message properties as its last
+argument: `messageId`, `headers`, `correlationId`, `type`, `timestamp` and a
+`persistent` override.
+
+```ts
+await this.topic.publish("post.created", event, {
+  messageId: event.id,
+  type: "post.created",
+  headers: { traceparent },
+});
+```
+
 ### Register clients declaratively
 
 Instead of constructing clients by hand, declare them with `clients` on the
@@ -159,10 +180,20 @@ anywhere. The `type` selects the client class (`worker`, `pub-sub`, `routing`,
 `topic`, `rpc`); the remaining fields are that client's options.
 
 ```ts
-import { Inject, Injectable } from "@denorid/injector";
+import { Inject, Injectable, Module } from "@denorid/injector";
 import { AmqpModule, type WorkerClient } from "@denorid/amqp";
 
 export const ORDERS_CLIENT = Symbol("ORDERS_CLIENT");
+
+@Injectable()
+export class OrderProducer {
+  @Inject(ORDERS_CLIENT)
+  private readonly orders!: WorkerClient;
+
+  run(): Promise<void> {
+    return this.orders.send({ id: 1 });
+  }
+}
 
 @Module({
   imports: [
@@ -177,17 +208,6 @@ export const ORDERS_CLIENT = Symbol("ORDERS_CLIENT");
   providers: [OrderProducer],
 })
 export class AppModule {}
-
-@Injectable()
-export class OrderProducer {
-  public constructor(
-    @Inject(ORDERS_CLIENT) private readonly orders: WorkerClient,
-  ) {}
-
-  run(): Promise<void> {
-    return this.orders.send({ id: 1 });
-  }
-}
 ```
 
 `clients` is honored by both `forRoot` and `forRootAsync` (the registrations are
@@ -199,8 +219,10 @@ Handlers honor `@UseGuards()` from `@denorid/core` on the class and the method,
 plus app-wide guards via `AmqpModuleOptions.globalGuards`. Per message the order
 is **global -> controller -> method**; the first guard to return `false` throws
 `ForbiddenException`, which is routed to the framework `ExceptionHandler` and
-the message is `nack`ed (no requeue). Class guards are resolved per message from
-the whole application, so they can be provided by any module.
+the message is handled like any failed message (see
+[Queue arguments, dead-lettering and retries](#queue-arguments-dead-lettering-and-retries)).
+Class guards are resolved per message from the whole application, so they can be
+provided by any module.
 
 ```ts
 import { UseGuards } from "@denorid/core";
@@ -292,6 +314,72 @@ AmqpModule.forRootAsync({
 });
 ```
 
+## Queue arguments, dead-lettering and retries
+
+`@Worker`, `@PubSub`, `@Routing` and `@Topic` accept queue arguments for the
+queue they consume:
+
+| Option                 | Queue argument              |
+| ---------------------- | --------------------------- |
+| `queueType`            | `x-queue-type`              |
+| `deadLetterExchange`   | `x-dead-letter-exchange`    |
+| `deadLetterRoutingKey` | `x-dead-letter-routing-key` |
+| `deliveryLimit`        | `x-delivery-limit`          |
+| `queueArguments`       | any other `x-` argument     |
+
+A handler that throws (or whose guard denies, or whose body cannot be
+deserialized) has its message rejected without requeue: the broker moves it to
+the `deadLetterExchange` when the queue has one, and drops it otherwise.
+
+`retry` delays that rejection to ride out transient failures such as a short
+database outage. Each delay gets a queue named `<queue>.retry.<delay>` whose
+messages expire after `delay` milliseconds and return to `<queue>`. A failing
+message is copied to the delay queue of its attempt and acked once the broker
+confirmed the copy; a copy the broker did not confirm requeues the original
+instead. After the last delay the next failure rejects the message.
+
+```ts
+import { AmqpConsumer, Topic } from "@denorid/amqp";
+import { Inject } from "@denorid/injector";
+import type { MessageProperties } from "amqplib";
+
+@AmqpConsumer()
+export class NotificationsConsumer {
+  @Inject(NotificationService)
+  private readonly notifications!: NotificationService;
+
+  @Topic({
+    exchange: "forum.events",
+    routingKeys: ["post.*", "comment.*"],
+    queue: "notifications.forum-events",
+    queueType: "quorum",
+    deadLetterExchange: "forum.dlx",
+    deliveryLimit: 5,
+    // Up to four runs: immediately, then after 1s, 10s and 60s.
+    retry: { delays: [1_000, 10_000, 60_000] },
+  })
+  async onForumEvent(
+    event: ForumEvent,
+    properties: MessageProperties,
+  ): Promise<void> {
+    await this.notifications.handle(properties.messageId, event);
+  }
+}
+```
+
+- `retry` needs a named `queue`; the decorator throws otherwise.
+- Delay queues inherit `queueType` and the durability of the consumed queue.
+- A retried message carries the headers `x-retry-count`, `x-original-exchange`
+  and `x-original-routing-key`. Guards and the `ExceptionHandler` see the
+  original routing key as the pattern.
+- The module does not declare the dead-letter exchange or its queue. Declare
+  them yourself; the broker drops messages dead-lettered to a missing exchange.
+- `deliveryLimit` (quorum queues) bounds redeliveries of a message whose handler
+  never settled it, for example because the process crashed mid-handler.
+- Delivery is at least once: a crash between confirming the retry copy and
+  acking the original, or before a handler's ack, redelivers a message. Make
+  handlers idempotent, for example keyed by `messageId`.
+
 ## Failure handling
 
 - Connection and channel `error` events are logged; they never crash the
@@ -303,10 +391,10 @@ AmqpModule.forRootAsync({
 - `RpcClient` rejects the requests waiting on a channel when that channel
   closes, and rejects a reply it cannot deserialize.
 - A message whose body cannot be deserialized is routed to the
-  `ExceptionHandler` and `nack`ed (an RPC caller gets an `{ err }` reply)
-  instead of blocking the consumer. When an RPC handler succeeds but its result
-  cannot be serialized, the caller gets an `{ err }` reply and the message is
-  still acked.
+  `ExceptionHandler` and handled like a failed message (an RPC caller gets an
+  `{ err }` reply) instead of blocking the consumer. When an RPC handler
+  succeeds but its result cannot be serialized, the caller gets an `{ err }`
+  reply and the message is still acked.
 
 ```ts
 AmqpModule.forRoot({ url: "amqp://localhost", reconnectDelay: 5_000 });

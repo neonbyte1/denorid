@@ -24,13 +24,29 @@ interface RecordedCall {
   args: unknown[];
 }
 
+type ConfirmCallback = (err: Error | null) => void;
+
 class FakeChannel extends EventEmitter {
   public readonly calls: RecordedCall[] = [];
   public consumeCallback?: (msg: unknown) => void;
   public assertQueueGate?: Promise<void>;
+  /**
+   * How the fake broker answers a publish: `"ack"` confirms it right away,
+   * `"nack"` rejects it like amqplib (`message nacked`), `"hold"` parks the
+   * confirm callback in {@link heldConfirms}.
+   */
+  public confirm: "ack" | "nack" | "hold" = "ack";
+  public readonly heldConfirms: ConfirmCallback[] = [];
 
   public constructor(private readonly replyQueue = "amq.gen-reply") {
     super();
+
+    // Like amqplib's ConfirmChannel: unconfirmed publishes fail on close.
+    this.on("close", () => {
+      for (const cb of this.heldConfirms.splice(0)) {
+        cb(new Error("channel closed"));
+      }
+    });
   }
 
   public async assertQueue(
@@ -57,12 +73,19 @@ class FakeChannel extends EventEmitter {
     exchange: string,
     key: string,
     content: Buffer,
-    opts?: unknown,
+    opts: unknown,
+    cb: ConfirmCallback,
   ): boolean {
     this.calls.push({
       method: "publish",
       args: [exchange, key, content, opts],
     });
+
+    if (this.confirm === "hold") {
+      this.heldConfirms.push(cb);
+    } else {
+      cb(this.confirm === "ack" ? null : new Error("message nacked"));
+    }
 
     return true;
   }
@@ -111,7 +134,7 @@ function makeConnection(...channels: FakeChannel[]): {
   let channelCalls = 0;
   const connection = {
     serializer,
-    createChannel: () => {
+    createConfirmChannel: () => {
       const channel = channels[Math.min(channelCalls, channels.length - 1)];
 
       channelCalls++;
@@ -151,6 +174,15 @@ function sentOptions(channel: FakeChannel, index = 0): SendOptions {
   return options;
 }
 
+function publishOptions(
+  channel: FakeChannel,
+  index = 0,
+): Record<string, unknown> {
+  // Recorded from the client's `publish(exchange, key, content, options, cb)`.
+  return channel.calls.filter((c) => c.method === "publish")[index]
+    .args[3] as Record<string, unknown>;
+}
+
 function flush(ms = 0): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
@@ -159,7 +191,7 @@ function flush(ms = 0): Promise<void> {
 }
 
 describe(WorkerClient.name, () => {
-  it("asserts the queue and sends a persistent JSON payload", async () => {
+  it("asserts the queue and publishes a persistent JSON payload through the default exchange", async () => {
     const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new WorkerClient(connection, { queue: "tasks" });
@@ -170,15 +202,17 @@ describe(WorkerClient.name, () => {
     assertEquals(assertCall.args[0], "tasks");
     assertEquals(assertCall.args[1], { durable: true });
 
-    const sendCall = call(channel, "sendToQueue")!;
-    assertEquals(sendCall.args[0], "tasks");
-    assertEquals(serializer.deserialize(sendCall.args[1] as Buffer), {
+    const publishCall = call(channel, "publish")!;
+    assertEquals(publishCall.args[0], "");
+    assertEquals(publishCall.args[1], "tasks");
+    assertEquals(serializer.deserialize(publishCall.args[2] as Buffer), {
       job: 1,
     });
-    assertEquals(sendCall.args[2], {
+    assertEquals(publishCall.args[3], {
       persistent: true,
       contentType: "application/json",
     });
+    assertEquals(count(channel, "sendToQueue"), 0);
   });
 
   it("tags a binary payload so receivers skip JSON parsing", async () => {
@@ -188,7 +222,10 @@ describe(WorkerClient.name, () => {
 
     await client.send(new Uint8Array([1, 2]));
 
-    assertEquals(sentOptions(channel).contentType, "application/octet-stream");
+    assertEquals(
+      publishOptions(channel).contentType,
+      "application/octet-stream",
+    );
   });
 
   it("asserts the queue only once across two sends", async () => {
@@ -200,7 +237,7 @@ describe(WorkerClient.name, () => {
     await client.send({ b: 2 });
 
     assertEquals(count(channel, "assertQueue"), 1);
-    assertEquals(count(channel, "sendToQueue"), 2);
+    assertEquals(count(channel, "publish"), 2);
   });
 
   it("opens a single channel for concurrent first sends", async () => {
@@ -212,7 +249,7 @@ describe(WorkerClient.name, () => {
 
     assertEquals(tracked.channelCalls, 1);
     assertEquals(count(channel, "assertQueue"), 1);
-    assertEquals(count(channel, "sendToQueue"), 2);
+    assertEquals(count(channel, "publish"), 2);
   });
 
   it("honors durable and persistent overrides", async () => {
@@ -227,7 +264,7 @@ describe(WorkerClient.name, () => {
     await client.send({ x: 1 });
 
     assertEquals(call(channel, "assertQueue")!.args[1], { durable: false });
-    assertEquals(call(channel, "sendToQueue")!.args[2], {
+    assertEquals(publishOptions(channel), {
       persistent: false,
       contentType: "application/json",
     });
@@ -237,13 +274,13 @@ describe(WorkerClient.name, () => {
     const channel = new FakeChannel();
     const connection = {
       serializer: { serialize: () => Buffer.from("x"), deserialize: () => 0 },
-      createChannel: () => Promise.resolve(channel),
+      createConfirmChannel: () => Promise.resolve(channel),
     } as unknown as AmqpConnection;
     const client = new WorkerClient(connection, { queue: "tasks" });
 
     await client.send({ x: 1 });
 
-    assertEquals(sentOptions(channel).contentType, undefined);
+    assertEquals(publishOptions(channel).contentType, undefined);
   });
 
   it("opens a new channel after the previous one closed", async () => {
@@ -257,8 +294,8 @@ describe(WorkerClient.name, () => {
     await client.send({ b: 2 });
 
     assertEquals(tracked.channelCalls, 2);
-    assertEquals(count(first, "sendToQueue"), 1);
-    assertEquals(count(second, "sendToQueue"), 1);
+    assertEquals(count(first, "publish"), 1);
+    assertEquals(count(second, "publish"), 1);
     assertEquals(count(second, "assertQueue"), 1);
   });
 
@@ -275,7 +312,7 @@ describe(WorkerClient.name, () => {
     await client.send({ b: 2 });
 
     assertEquals(tracked.channelCalls, 2);
-    assertEquals(count(healthy, "sendToQueue"), 1);
+    assertEquals(count(healthy, "publish"), 1);
   });
 
   it("rethrows the setup error even when closing the channel fails", async () => {
@@ -288,12 +325,12 @@ describe(WorkerClient.name, () => {
     await assertRejects(() => client.send({ a: 1 }), Error, "406");
   });
 
-  it("propagates a createChannel failure and retries on the next send", async () => {
+  it("propagates a createConfirmChannel failure and retries on the next send", async () => {
     const channel = new FakeChannel();
     let attempts = 0;
     const connection = {
       serializer,
-      createChannel: () =>
+      createConfirmChannel: () =>
         ++attempts === 1
           ? Promise.reject(new Error("ECONNREFUSED"))
           : Promise.resolve(channel),
@@ -303,12 +340,12 @@ describe(WorkerClient.name, () => {
     await assertRejects(() => client.send({ a: 1 }), Error, "ECONNREFUSED");
     await client.send({ b: 2 });
 
-    assertEquals(count(channel, "sendToQueue"), 1);
+    assertEquals(count(channel, "publish"), 1);
   });
 });
 
 describe(PublisherClient.name, () => {
-  it("asserts a fanout exchange and publishes with an empty routing key", async () => {
+  it("asserts a fanout exchange and publishes a persistent message with an empty routing key", async () => {
     const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new PublisherClient(connection, { exchange: "logs" });
@@ -327,12 +364,33 @@ describe(PublisherClient.name, () => {
     assertEquals(serializer.deserialize(publishCall.args[2] as Buffer), {
       event: "x",
     });
-    assertEquals(publishCall.args[3], { contentType: "application/json" });
+    assertEquals(publishCall.args[3], {
+      persistent: true,
+      contentType: "application/json",
+    });
+  });
+
+  it("honors durable and persistent overrides", async () => {
+    const channel = new FakeChannel();
+    const { connection } = makeConnection(channel);
+    const client = new PublisherClient(connection, {
+      exchange: "logs",
+      durable: false,
+      persistent: false,
+    });
+
+    await client.publish({ event: "x" });
+
+    assertEquals(call(channel, "assertExchange")!.args[2], { durable: false });
+    assertEquals(publishOptions(channel), {
+      persistent: false,
+      contentType: "application/json",
+    });
   });
 });
 
 describe(RoutingClient.name, () => {
-  it("asserts a direct exchange and publishes under the routing key", async () => {
+  it("asserts a direct exchange and publishes a persistent message under the routing key", async () => {
     const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new RoutingClient(connection, { exchange: "alerts" });
@@ -351,12 +409,15 @@ describe(RoutingClient.name, () => {
     assertEquals(serializer.deserialize(publishCall.args[2] as Buffer), {
       msg: "boom",
     });
-    assertEquals(publishCall.args[3], { contentType: "application/json" });
+    assertEquals(publishCall.args[3], {
+      persistent: true,
+      contentType: "application/json",
+    });
   });
 });
 
 describe(TopicClient.name, () => {
-  it("asserts a topic exchange and publishes under the pattern key", async () => {
+  it("asserts a topic exchange and publishes a persistent message under the pattern key", async () => {
     const channel = new FakeChannel();
     const { connection } = makeConnection(channel);
     const client = new TopicClient(connection, { exchange: "metrics" });
@@ -375,7 +436,112 @@ describe(TopicClient.name, () => {
     assertEquals(serializer.deserialize(publishCall.args[2] as Buffer), {
       x: 1,
     });
-    assertEquals(publishCall.args[3], { contentType: "application/json" });
+    assertEquals(publishCall.args[3], {
+      persistent: true,
+      contentType: "application/json",
+    });
+  });
+
+  it("forwards per-message properties next to the client persistence", async () => {
+    const channel = new FakeChannel();
+    const { connection } = makeConnection(channel);
+    const client = new TopicClient(connection, { exchange: "posts" });
+
+    await client.publish("post.created", { id: 7 }, {
+      messageId: "evt-7",
+      headers: { traceparent: "00-abc-def-01" },
+      correlationId: "corr-7",
+      type: "post.created",
+      timestamp: 1_700_000_000,
+    });
+
+    assertEquals(publishOptions(channel), {
+      messageId: "evt-7",
+      headers: { traceparent: "00-abc-def-01" },
+      correlationId: "corr-7",
+      type: "post.created",
+      timestamp: 1_700_000_000,
+      persistent: true,
+      contentType: "application/json",
+    });
+  });
+
+  it("lets a per-message persistent flag override the client default", async () => {
+    const channel = new FakeChannel();
+    const { connection } = makeConnection(channel);
+    const client = new TopicClient(connection, {
+      exchange: "posts",
+      persistent: false,
+    });
+
+    await client.publish("post.created", { id: 7 }, { persistent: true });
+    await client.publish("post.viewed", { id: 7 });
+
+    assertEquals(publishOptions(channel, 0).persistent, true);
+    assertEquals(publishOptions(channel, 1).persistent, false);
+  });
+});
+
+describe("publisher confirms", () => {
+  it("resolves only once the broker confirmed the message", async () => {
+    const channel = new FakeChannel();
+    channel.confirm = "hold";
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, { queue: "tasks" });
+    let resolved = false;
+
+    const sending = client.send({ a: 1 }).then(() => {
+      resolved = true;
+    });
+    await flush();
+
+    assertEquals(count(channel, "publish"), 1);
+    assertEquals(resolved, false);
+
+    channel.heldConfirms.shift()!(null);
+    await sending;
+  });
+
+  it("rejects when the broker nacks the message", async () => {
+    const channel = new FakeChannel();
+    channel.confirm = "nack";
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, { queue: "tasks" });
+
+    await assertRejects(
+      () => client.send({ a: 1 }),
+      Error,
+      "message nacked",
+    );
+  });
+
+  it("rejects when the channel closes before the broker confirmed the message", async () => {
+    const channel = new FakeChannel();
+    channel.confirm = "hold";
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, { queue: "tasks" });
+
+    const sending = client.send({ a: 1 });
+    await flush();
+
+    channel.emit("close");
+
+    await assertRejects(() => sending, Error, "channel closed");
+  });
+
+  it("rejects when publishing throws", async () => {
+    const channel = new FakeChannel();
+    channel.publish = () => {
+      throw new Error("Channel closed");
+    };
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, { queue: "tasks" });
+
+    await assertRejects(
+      () => client.send({ a: 1 }),
+      Error,
+      "Channel closed",
+    );
   });
 });
 

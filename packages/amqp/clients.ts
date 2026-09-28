@@ -1,8 +1,9 @@
-import type { Channel, ConsumeMessage } from "amqplib";
+import type { Channel, ConfirmChannel, ConsumeMessage } from "amqplib";
 import type { Buffer } from "node:buffer";
 import type { AmqpConnection } from "./connection.ts";
 import type {
   ExchangeClientOptions,
+  PublishOptions,
   RpcClientOptions,
   WorkerClientOptions,
 } from "./options.ts";
@@ -14,12 +15,14 @@ interface EncodedMessage {
 }
 
 /**
- * Base class for all AMQP clients, owning the lazily-created {@link Channel}
- * and its teardown.
+ * Base class for all AMQP clients, owning the lazily-created
+ * {@link ConfirmChannel} and its teardown.
  *
- * The channel is opened and set up (see {@link setupChannel}) once, shared by
- * concurrent first calls, and dropped when it closes (broker drop, channel
- * error), so the next call opens a fresh one.
+ * The channel is opened in confirm mode and set up (see {@link setupChannel})
+ * once, shared by concurrent first calls, and dropped when it closes (broker
+ * drop, channel error), so the next call opens a fresh one. Messages sent
+ * through {@link publishConfirmed} resolve only once the broker confirmed
+ * them.
  *
  * Construct a concrete client directly with a shared {@link AmqpConnection}.
  * Clients registered through `AmqpModuleOptions.clients` are closed when the
@@ -30,7 +33,7 @@ interface EncodedMessage {
  * @template T The client-specific options shape.
  */
 export abstract class AbstractClient<T> implements AsyncDisposable {
-  private channelReady?: Promise<Channel>;
+  private channelReady?: Promise<ConfirmChannel>;
 
   public constructor(
     protected readonly connection: AmqpConnection,
@@ -41,10 +44,10 @@ export abstract class AbstractClient<T> implements AsyncDisposable {
    * Asserts the queue or exchange this client targets on a freshly created
    * channel. Runs once per channel, before any caller receives it.
    *
-   * @param {Channel} channel - The channel to set up.
+   * @param {ConfirmChannel} channel - The channel to set up.
    * @return {Promise<void>}
    */
-  protected abstract setupChannel(channel: Channel): Promise<void>;
+  protected abstract setupChannel(channel: ConfirmChannel): Promise<void>;
 
   /**
    * Called once a channel handed out by {@link getChannel} closed, for
@@ -58,14 +61,16 @@ export abstract class AbstractClient<T> implements AsyncDisposable {
    * Returns the cached channel, creating and setting it up on first use and
    * again after the previous channel closed.
    *
-   * @return {Promise<Channel>} The ready channel.
+   * @return {Promise<ConfirmChannel>} The ready channel.
    */
-  protected getChannel(): Promise<Channel> {
+  protected getChannel(): Promise<ConfirmChannel> {
     if (this.channelReady) {
       return this.channelReady;
     }
 
-    const { promise, resolve, reject } = Promise.withResolvers<Channel>();
+    const { promise, resolve, reject } = Promise.withResolvers<
+      ConfirmChannel
+    >();
 
     this.channelReady = promise;
     this.openChannel(promise).then(resolve, reject);
@@ -86,6 +91,50 @@ export abstract class AbstractClient<T> implements AsyncDisposable {
       content: serializer.serialize(data),
       contentType: serializer.contentType?.(data),
     };
+  }
+
+  /**
+   * Serializes and publishes a message, resolving once the broker confirmed
+   * it. From then on the broker is responsible for the message: a persistent
+   * message routed to a durable queue survives a broker restart.
+   *
+   * @param {string} exchange - The target exchange (`""` is the default
+   *   exchange, routing by queue name).
+   * @param {string} routingKey - The routing key.
+   * @param {unknown} data - The payload.
+   * @param {boolean} persistent - Persistence used when the message options
+   *   do not set it.
+   * @param {PublishOptions} [options] - Per-message properties.
+   * @return {Promise<void>}
+   * @throws {Error} When the broker rejects the message or the channel closes
+   *   before the broker confirmed it.
+   */
+  protected async publishConfirmed(
+    exchange: string,
+    routingKey: string,
+    data: unknown,
+    persistent: boolean,
+    options: PublishOptions = {},
+  ): Promise<void> {
+    const { content, contentType } = this.encode(data);
+    const channel = await this.getChannel();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    channel.publish(
+      exchange,
+      routingKey,
+      content,
+      { ...options, persistent: options.persistent ?? persistent, contentType },
+      (err: unknown): void => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      },
+    );
+
+    return promise;
   }
 
   /**
@@ -118,9 +167,11 @@ export abstract class AbstractClient<T> implements AsyncDisposable {
     return this.close();
   }
 
-  private async openChannel(ready: Promise<Channel>): Promise<Channel> {
+  private async openChannel(
+    ready: Promise<ConfirmChannel>,
+  ): Promise<ConfirmChannel> {
     try {
-      const channel = await this.connection.createChannel();
+      const channel = await this.connection.createConfirmChannel();
 
       channel.once("close", () => {
         if (this.channelReady === ready) {
@@ -159,19 +210,21 @@ export abstract class AbstractClient<T> implements AsyncDisposable {
  */
 export class WorkerClient extends AbstractClient<WorkerClientOptions> {
   /**
-   * Publishes a message to the work queue.
+   * Publishes a message to the work queue. Resolves once the broker
+   * confirmed it.
    *
    * @param {unknown} data - The payload to send.
+   * @param {PublishOptions} [options] - Per-message properties.
    * @return {Promise<void>}
    */
-  public async send(data: unknown): Promise<void> {
-    const { content, contentType } = this.encode(data);
-    const channel = await this.getChannel();
-
-    channel.sendToQueue(this.options.queue, content, {
-      persistent: this.options.persistent ?? true,
-      contentType,
-    });
+  public send(data: unknown, options?: PublishOptions): Promise<void> {
+    return this.publishConfirmed(
+      "",
+      this.options.queue,
+      data,
+      this.options.persistent ?? true,
+      options,
+    );
   }
 
   protected async setupChannel(channel: Channel): Promise<void> {
@@ -188,16 +241,21 @@ export class WorkerClient extends AbstractClient<WorkerClientOptions> {
  */
 export class PublisherClient extends AbstractClient<ExchangeClientOptions> {
   /**
-   * Broadcasts a message to the fanout exchange.
+   * Broadcasts a message to the fanout exchange. Resolves once the broker
+   * confirmed it.
    *
    * @param {unknown} data - The payload to publish.
+   * @param {PublishOptions} [options] - Per-message properties.
    * @return {Promise<void>}
    */
-  public async publish(data: unknown): Promise<void> {
-    const { content, contentType } = this.encode(data);
-    const channel = await this.getChannel();
-
-    channel.publish(this.options.exchange, "", content, { contentType });
+  public publish(data: unknown, options?: PublishOptions): Promise<void> {
+    return this.publishConfirmed(
+      this.options.exchange,
+      "",
+      data,
+      this.options.persistent ?? true,
+      options,
+    );
   }
 
   protected async setupChannel(channel: Channel): Promise<void> {
@@ -215,18 +273,25 @@ export class PublisherClient extends AbstractClient<ExchangeClientOptions> {
 export class RoutingClient extends AbstractClient<ExchangeClientOptions> {
   /**
    * Publishes a message to the direct exchange under the given routing key.
+   * Resolves once the broker confirmed it.
    *
    * @param {string} routingKey - The exact routing key.
    * @param {unknown} data - The payload to publish.
+   * @param {PublishOptions} [options] - Per-message properties.
    * @return {Promise<void>}
    */
-  public async publish(routingKey: string, data: unknown): Promise<void> {
-    const { content, contentType } = this.encode(data);
-    const channel = await this.getChannel();
-
-    channel.publish(this.options.exchange, routingKey, content, {
-      contentType,
-    });
+  public publish(
+    routingKey: string,
+    data: unknown,
+    options?: PublishOptions,
+  ): Promise<void> {
+    return this.publishConfirmed(
+      this.options.exchange,
+      routingKey,
+      data,
+      this.options.persistent ?? true,
+      options,
+    );
   }
 
   protected async setupChannel(channel: Channel): Promise<void> {
@@ -244,18 +309,25 @@ export class RoutingClient extends AbstractClient<ExchangeClientOptions> {
 export class TopicClient extends AbstractClient<ExchangeClientOptions> {
   /**
    * Publishes a message to the topic exchange under the given routing key.
+   * Resolves once the broker confirmed it.
    *
-   * @param {string} routingKey - The routing key (may contain `*` / `#`).
+   * @param {string} routingKey - The routing key, e.g. `post.created`.
    * @param {unknown} data - The payload to publish.
+   * @param {PublishOptions} [options] - Per-message properties.
    * @return {Promise<void>}
    */
-  public async publish(routingKey: string, data: unknown): Promise<void> {
-    const { content, contentType } = this.encode(data);
-    const channel = await this.getChannel();
-
-    channel.publish(this.options.exchange, routingKey, content, {
-      contentType,
-    });
+  public publish(
+    routingKey: string,
+    data: unknown,
+    options?: PublishOptions,
+  ): Promise<void> {
+    return this.publishConfirmed(
+      this.options.exchange,
+      routingKey,
+      data,
+      this.options.persistent ?? true,
+      options,
+    );
   }
 
   protected async setupChannel(channel: Channel): Promise<void> {

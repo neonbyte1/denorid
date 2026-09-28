@@ -144,4 +144,47 @@ describe("amqp method decorators", () => {
       'Decorator @Worker() cannot be applied to static function "run".',
     );
   });
+
+  it("throws when retry is set on an exchange binding without a named queue", () => {
+    const error = assertThrows(
+      () => {
+        class Consumer {
+          @Topic({
+            exchange: "metrics",
+            routingKeys: ["cpu.*"],
+            retry: { delays: [1000] },
+          })
+          onMetric(): void {}
+        }
+
+        return Consumer;
+      },
+      Error,
+    );
+
+    assertEquals(
+      error.message,
+      '@Topic() on "onMetric" needs a named queue to retry failed messages.',
+    );
+  });
+
+  it("records a retrying exchange binding with a named queue", () => {
+    @AmqpConsumer()
+    class Consumer {
+      @PubSub({ exchange: "logs", queue: "logs.q", retry: { delays: [1000] } })
+      onLog(): void {}
+    }
+
+    assertEquals(bindings(Consumer), [
+      {
+        type: "pub-sub",
+        method: "onLog",
+        options: {
+          exchange: "logs",
+          queue: "logs.q",
+          retry: { delays: [1000] },
+        },
+      },
+    ]);
+  });
 });

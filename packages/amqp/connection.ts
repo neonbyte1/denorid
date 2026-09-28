@@ -1,6 +1,10 @@
 import { Inject, Injectable } from "@denorid/injector";
 import { Logger } from "@denorid/logger";
-import amqplib, { type Channel, type ChannelModel } from "amqplib";
+import amqplib, {
+  type Channel,
+  type ChannelModel,
+  type ConfirmChannel,
+} from "amqplib";
 import {
   AMQP_MODULE_OPTIONS,
   AMQP_SERIALIZER,
@@ -84,13 +88,22 @@ export class AmqpConnection implements AsyncDisposable {
    */
   public async createChannel(): Promise<Channel> {
     const model = await this.connect();
-    const channel = await model.createChannel();
 
-    channel.on("error", (err: Error) => {
-      this.logger.error("AMQP channel error", err);
-    });
+    return this.watch(await model.createChannel());
+  }
 
-    return channel;
+  /**
+   * Opens a channel in confirm mode on the shared connection: the broker
+   * acknowledges every message published on it once it took responsibility
+   * for it. Channel `error` events are logged; callers that cache the channel
+   * should drop it on its `close` event.
+   *
+   * @return {Promise<ConfirmChannel>} The created confirm channel.
+   */
+  public async createConfirmChannel(): Promise<ConfirmChannel> {
+    const model = await this.connect();
+
+    return this.watch(await model.createConfirmChannel());
   }
 
   /**
@@ -126,6 +139,14 @@ export class AmqpConnection implements AsyncDisposable {
    */
   public [Symbol.asyncDispose](): Promise<void> {
     return this.close();
+  }
+
+  private watch<C extends Channel>(channel: C): C {
+    channel.on("error", (err: Error) => {
+      this.logger.error("AMQP channel error", err);
+    });
+
+    return channel;
   }
 
   private async open(): Promise<ChannelModel> {
