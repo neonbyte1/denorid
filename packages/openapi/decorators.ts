@@ -211,13 +211,20 @@ export function ApiOperation(options: ApiOperationOptions): MethodDecorator {
 }
 
 /**
- * Documents a response of a route, or of every route of a controller (e.g.
- * `401` for a controller behind authentication). A route response replaces
- * the controller response with the same status; for the same status on the
- * same class or method, the outermost decorator wins.
+ * Documents a response of a route, of every route of a controller (e.g.
+ * `401` for a controller behind authentication), or of every route running a
+ * guard (globally, on its controller or on the route). A route response
+ * replaces the controller response with the same status, which replaces the
+ * guard response; for the same status on the same class or method, the
+ * outermost decorator wins.
  *
- * Routes without a documented `1xx`-`3xx` response get the success response
- * of the framework: the `@HttpCode()` status, `200` without one.
+ * Routes without a `1xx`-`3xx` response documented on the controller or the
+ * route get the success response of the framework: the `@HttpCode()`
+ * status, `200` without one.
+ *
+ * Routes running a guard get `403` (the response of a guard returning
+ * `false`) unless the guard documents its own responses, e.g. `401` of an
+ * authentication guard throwing `UnauthorizedException`.
  *
  * Streamed responses (OpenAPI 3.2 sequential media types) are documented per
  * item: `itemSchema` for JSON Lines and similar formats, `events` for
@@ -246,11 +253,23 @@ export function ApiOperation(options: ApiOperationOptions): MethodDecorator {
  * public events(): Response {}
  * ```
  *
+ * @example Guards
+ * ```ts
+ * \@ApiSecurity("bearer")
+ * \@ApiResponse(StatusCode.Unauthorized)
+ * \@Injectable()
+ * class SessionGuard implements CanActivate {}
+ *
+ * \@ApiResponse(StatusCode.TooManyRequests)
+ * \@Injectable()
+ * class WriteRateLimitGuard implements CanActivate {}
+ * ```
+ *
  * @param {ApiResponseStatus} status - Status code, or `default`.
  * @param {ApiResponseOptions} [options] - Description, body or item schema,
  *   events and media type.
  * @return {Decorator<ClassDecoratorContext, Type> & MethodDecorator} A
- *   decorator for controller classes and route methods.
+ *   decorator for guard and controller classes and route methods.
  */
 export function ApiResponse(
   status: ApiResponseStatus,

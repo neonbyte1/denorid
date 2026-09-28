@@ -341,11 +341,15 @@ function createResponse(
 
 /**
  * Creates the responses of a route: the documented ones (route responses
- * replace controller responses), the success response of the framework
- * (`@HttpCode()`, `200` without one) unless a `1xx`-`3xx` response is
- * documented, `400` for routes validating input and `403` for guarded routes.
+ * replace controller responses, which replace guard responses; among the
+ * guards, a later one replaces an earlier one), the success response of the
+ * framework (`@HttpCode()`, `200` without one) unless the controller or the
+ * route documents a `1xx`-`3xx` response, `400` for routes validating input
+ * and `403` for routes running a guard without documented responses.
  *
  * @param {HttpRoute} route - The route.
+ * @param {ApiMetadata[]} guards - Documentation of the route's guards in
+ *   evaluation order.
  * @param {ApiMetadata} controller - Documentation of the controller.
  * @param {ApiMetadata} handler - Documentation of the route.
  * @param {SchemaCollector} schemas - Collects the schemas of the document.
@@ -353,11 +357,19 @@ function createResponse(
  */
 function createResponses(
   route: HttpRoute,
+  guards: ApiMetadata[],
   controller: ApiMetadata,
   handler: ApiMetadata,
   schemas: SchemaCollector,
 ): Record<string, ResponseObject> {
-  const documented = new Map([...controller.responses, ...handler.responses]);
+  const routeResponses = new Map([
+    ...controller.responses,
+    ...handler.responses,
+  ]);
+  const documented = new Map([
+    ...guards.flatMap((guard) => [...guard.responses]),
+    ...routeResponses,
+  ]);
   const responses: Record<string, ResponseObject> = {};
 
   for (const [status, options] of documented) {
@@ -365,7 +377,7 @@ function createResponses(
   }
 
   if (
-    ![...documented.keys()].some((status) =>
+    ![...routeResponses.keys()].some((status) =>
       status !== "default" && status < StatusCode.BadRequest
     )
   ) {
@@ -386,7 +398,10 @@ function createResponses(
     };
   }
 
-  if (route.guards.length > 0 && !documented.has(StatusCode.Forbidden)) {
+  if (
+    guards.some((guard) => guard.responses.size === 0) &&
+    !documented.has(StatusCode.Forbidden)
+  ) {
     responses[StatusCode.Forbidden] = {
       description: STATUS_TEXT[StatusCode.Forbidden],
     };
@@ -400,14 +415,14 @@ function createResponses(
  * the route's guards, its controller and the route itself is required; the
  * alternatives of each one are combined into the accepted alternatives.
  *
- * @param {HttpRoute} route - The route.
+ * @param {ApiMetadata[]} guards - Documentation of the route's guards.
  * @param {ApiMetadata} controller - Documentation of the controller.
  * @param {ApiMetadata} handler - Documentation of the route.
  * @return {SecurityRequirementObject[] | undefined} The requirements, `[]`
  *   for a public route, `undefined` without any.
  */
 function createSecurity(
-  route: HttpRoute,
+  guards: ApiMetadata[],
   controller: ApiMetadata,
   handler: ApiMetadata,
 ): SecurityRequirementObject[] | undefined {
@@ -416,10 +431,7 @@ function createSecurity(
   }
 
   const required = controller.public ? handler.security : [
-    ...route.guards.flatMap((guard) =>
-      readClassMetadata(typeof guard === "function" ? guard : guard.constructor)
-        ?.security ?? []
-    ),
+    ...guards.flatMap((guard) => guard.security),
     ...controller.security,
     ...handler.security,
   ];
@@ -535,6 +547,14 @@ export function createDocument(
       continue;
     }
 
+    // Guards in evaluation order; classes without decorators and functions
+    // have no documentation.
+    const guards = route.guards
+      .map((guard) =>
+        readClassMetadata(
+          typeof guard === "function" ? guard : guard.constructor,
+        ) ?? NO_METADATA
+      );
     const method = OPERATION_METHODS[route.method];
     const templates = toPathTemplates(route.path).filter((template) =>
       paths[template.path]?.[method] === undefined
@@ -553,7 +573,7 @@ export function createDocument(
       `${route.controller.name}_${
         typeof name === "symbol" ? name.description : name
       }`;
-    const security = createSecurity(route, controller, handler);
+    const security = createSecurity(guards, controller, handler);
     const servers = route.host === undefined
       ? undefined
       : createServers(route.host);
@@ -596,7 +616,13 @@ export function createDocument(
         ...(routeSchemas.requestBody === undefined
           ? {}
           : { requestBody: routeSchemas.requestBody }),
-        responses: createResponses(route, controller, handler, schemas),
+        responses: createResponses(
+          route,
+          guards,
+          controller,
+          handler,
+          schemas,
+        ),
         ...(deprecated === undefined ? {} : { deprecated }),
         ...(security === undefined ? {} : { security }),
         ...(servers === undefined ? {} : { servers }),

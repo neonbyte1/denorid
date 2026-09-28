@@ -864,6 +864,119 @@ describe("createDocument()", () => {
         },
       );
     });
+
+    describe("of guards", () => {
+      @ApiSecurity("bearer")
+      @ApiResponse(StatusCode.Unauthorized, { description: "No session" })
+      class SessionGuard implements CanActivate {
+        public canActivate(): boolean {
+          return true;
+        }
+      }
+
+      @ApiResponse(StatusCode.TooManyRequests)
+      class RateLimitGuard implements CanActivate {
+        public canActivate(): boolean {
+          return true;
+        }
+      }
+
+      @ApiSecurity("bearer")
+      class BearerGuard implements CanActivate {
+        public canActivate(): boolean {
+          return true;
+        }
+      }
+
+      it("documents the responses of guard classes and instances instead of 403", () => {
+        assertEquals(
+          operation(
+            [route(PlainController, "find", {
+              guards: [SessionGuard, new RateLimitGuard()],
+            })],
+            "/",
+          )?.responses,
+          {
+            200: { description: "OK" },
+            401: { description: "No session" },
+            429: { description: "Too Many Requests" },
+          },
+        );
+      });
+
+      it("adds 403 for another guard without documented responses", () => {
+        const statuses = (guards: HttpRoute["guards"]): string[] =>
+          Object.keys(
+            operation([route(PlainController, "find", { guards })], "/")
+              ?.responses ?? {},
+          );
+
+        assertEquals(statuses([SessionGuard, BearerGuard]), [
+          "200",
+          "401",
+          "403",
+        ]);
+        assertEquals(statuses([(): boolean => true, SessionGuard]), [
+          "200",
+          "401",
+          "403",
+        ]);
+      });
+
+      it("lets later guards, the controller and the route replace guard responses", () => {
+        @ApiResponse(StatusCode.Unauthorized, { description: "Expired" })
+        @ApiResponse(StatusCode.BadRequest, { description: "Bad token" })
+        class TokenGuard implements CanActivate {
+          public canActivate(): boolean {
+            return true;
+          }
+        }
+
+        @ApiResponse(StatusCode.TooManyRequests, { description: "Slow down" })
+        class LimitedController {
+          public find(): void {}
+        }
+
+        assertEquals(
+          operation(
+            [route(LimitedController, "find", {
+              metadata: { query: z.object({}) },
+              guards: [SessionGuard, TokenGuard, RateLimitGuard],
+            })],
+            "/",
+          )?.responses,
+          {
+            200: { description: "OK" },
+            400: { description: "Bad token" },
+            401: { description: "Expired" },
+            429: { description: "Slow down" },
+          },
+        );
+      });
+
+      it("keeps the success response when a guard documents a redirect", () => {
+        @ApiResponse(StatusCode.Found, { description: "To the login page" })
+        class LoginRedirectGuard implements CanActivate {
+          public canActivate(): boolean {
+            return true;
+          }
+        }
+
+        assertEquals(
+          operation(
+            [route(PlainController, "find", {
+              metadata: { statusCode: StatusCode.Created },
+              guards: [LoginRedirectGuard],
+            })],
+            "/",
+          )?.responses,
+          {
+            201: { description: "Created" },
+            302: { description: "To the login page" },
+          },
+        );
+      });
+    });
   });
 
   describe("streamed responses", () => {
