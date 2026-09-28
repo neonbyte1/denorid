@@ -38,8 +38,9 @@ export class AmqpConnection implements AsyncDisposable {
     timestamp: true,
   });
 
+  /** Unset when the connection is constructed outside the DI container. */
   @Inject(AMQP_MODULE_OPTIONS)
-  private readonly options!: AmqpModuleOptions;
+  private readonly options?: AmqpModuleOptions;
 
   @Inject(AMQP_SERIALIZER)
   private readonly _serializer?: AmqpSerializer;
@@ -153,7 +154,9 @@ export class AmqpConnection implements AsyncDisposable {
     const generation = this.generation;
 
     try {
-      const model = await amqplib.connect(this.options.url ?? DEFAULT_AMQP_URL);
+      const model = await amqplib.connect(
+        this.options?.url ?? DEFAULT_AMQP_URL,
+      );
 
       model.on("error", (err: Error) => {
         this.logger.error("AMQP connection error", err);

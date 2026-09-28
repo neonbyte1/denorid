@@ -104,6 +104,11 @@ export class AppModule {}
 > singleton provider and tags it for discovery. A pattern decorator alone does
 > not register the class.
 
+Every consuming decorator takes `prefetch` (default `1`): how many
+unacknowledged messages the broker hands the handler at once. Named queues are
+durable by default; RabbitMQ 4 refuses a non-durable named queue unless the
+deprecated `transient_nonexcl_queues` feature is enabled.
+
 ### Send messages
 
 Clients are instantiated directly with the shared `AmqpConnection`. Each owns a
@@ -331,12 +336,19 @@ A handler that throws (or whose guard denies, or whose body cannot be
 deserialized) has its message rejected without requeue: the broker moves it to
 the `deadLetterExchange` when the queue has one, and drops it otherwise.
 
+`WorkerClient` declares the work queue too, so give it the same `queueType`,
+`deadLetterExchange`, `deadLetterRoutingKey`, `deliveryLimit` and
+`queueArguments` as the `@Worker`: the broker refuses a redeclaration whose
+arguments differ (406 `PRECONDITION_FAILED`).
+
 `retry` delays that rejection to ride out transient failures such as a short
-database outage. Each delay gets a queue named `<queue>.retry.<delay>` whose
-messages expire after `delay` milliseconds and return to `<queue>`. A failing
-message is copied to the delay queue of its attempt and acked once the broker
-confirmed the copy; a copy the broker did not confirm requeues the original
-instead. After the last delay the next failure rejects the message.
+database outage. Each delay gets a fanout exchange and a queue, both named
+`<queue>.retry.<delay>`, whose messages expire after `delay` milliseconds and
+return to `<queue>` through the `<queue>.retry` exchange. A failing message is
+copied, with its routing key, to the delay exchange of its attempt and acked
+once the broker confirmed the copy; a copy the broker did not confirm requeues
+the original instead. After the last delay the next failure rejects the message,
+which reaches the dead-letter exchange with its original routing key.
 
 ```ts
 import { AmqpConsumer, Topic } from "@denorid/amqp";
@@ -369,9 +381,11 @@ export class NotificationsConsumer {
 
 - `retry` needs a named `queue`; the decorator throws otherwise.
 - Delay queues inherit `queueType` and the durability of the consumed queue.
-- A retried message carries the headers `x-retry-count`, `x-original-exchange`
-  and `x-original-routing-key`. Guards and the `ExceptionHandler` see the
-  original routing key as the pattern.
+- A retried message carries the headers `x-retry-count` and
+  `x-original-exchange`, and keeps its routing key. Guards and the
+  `ExceptionHandler` see the original pattern. The headers only count for a
+  message returning through the queue's own `<queue>.retry` exchange, so a
+  message dead-lettered from another retrying queue starts with a fresh count.
 - The module does not declare the dead-letter exchange or its queue. Declare
   them yourself; the broker drops messages dead-lettered to a missing exchange.
 - `deliveryLimit` (quorum queues) bounds redeliveries of a message whose handler
@@ -386,8 +400,11 @@ export class NotificationsConsumer {
   process. A closed connection is dropped, so the next client call connects
   again, and a client whose channel closed opens a new one on its next call.
 - A consumer whose channel closes unexpectedly (broker restart, lost connection,
-  channel error) is subscribed again after `reconnectDelay` milliseconds
-  (default `1000`), retrying until it succeeds.
+  channel error) or that the broker cancels (queue deleted, consumer timeout) is
+  subscribed again after `reconnectDelay` milliseconds (default `1000`),
+  retrying until it succeeds.
+- Client `send()` / `publish()` calls in flight when a client closes still
+  settle with the broker's answer: `close()` waits for their confirms.
 - `RpcClient` rejects the requests waiting on a channel when that channel
   closes, and rejects a reply it cannot deserialize.
 - A message whose body cannot be deserialized is routed to the

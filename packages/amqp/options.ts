@@ -9,10 +9,12 @@ export type AmqpPatternType =
 /**
  * Delayed redelivery for messages whose handler threw.
  *
- * A failing message is moved to a delay queue named `<queue>.retry.<delay>`
- * and returns to the consumer queue once the delay expired. After the last
- * delay the next failure rejects the message: the broker dead-letters it when
- * the queue has a `deadLetterExchange`, otherwise it is dropped.
+ * A failing message is republished, with its routing key, to the delay queue
+ * `<queue>.retry.<delay>` and returns to the consumer queue through the
+ * `<queue>.retry` exchange once the delay expired. After the last delay the
+ * next failure rejects the message: the broker dead-letters it (still with its
+ * original routing key) when the queue has a `deadLetterExchange`, otherwise
+ * it is dropped.
  */
 export interface RetryOptions {
   /**
@@ -22,8 +24,12 @@ export interface RetryOptions {
   delays: number[];
 }
 
-/** Queue arguments and failure handling for handlers that consume a queue. */
-export interface ConsumerQueueOptions {
+/**
+ * Arguments of a declared queue. A queue must be declared with the same
+ * arguments everywhere: the broker refuses a redeclaration whose arguments
+ * differ (406 PRECONDITION_FAILED).
+ */
+export interface QueueDeclarationOptions {
   /**
    * Queue type (`x-queue-type`). A quorum queue must be named and durable.
    * Default: the broker default (classic).
@@ -47,6 +53,15 @@ export interface ConsumerQueueOptions {
    * typed options above take precedence.
    */
   queueArguments?: Record<string, unknown>;
+}
+
+/** Queue arguments, flow control and failure handling for handlers that consume a queue. */
+export interface ConsumerQueueOptions extends QueueDeclarationOptions {
+  /**
+   * Unacknowledged messages the broker hands this handler at once (fair
+   * dispatch, bounded concurrency). Default 1.
+   */
+  prefetch?: number;
   /**
    * Delayed retries for a failing handler. Requires a named queue. Default:
    * none, a failing message is rejected right away.
@@ -58,10 +73,12 @@ export interface ConsumerQueueOptions {
 export interface WorkerOptions extends ConsumerQueueOptions {
   /** Work queue name (default exchange, round-robin delivery). */
   queue: string;
-  /** Survive broker restarts. Default true. */
+  /**
+   * Survive broker restarts. Default true. RabbitMQ 4 refuses a non-durable
+   * named queue unless the deprecated `transient_nonexcl_queues` feature is
+   * enabled.
+   */
   durable?: boolean;
-  /** Per-consumer prefetch (fair dispatch). Default 1. */
-  prefetch?: number;
 }
 
 /** Options for a `@PubSub` fanout handler. */
@@ -102,17 +119,30 @@ export interface TopicOptions extends ConsumerQueueOptions {
 export interface RpcOptions {
   /** Request queue name. */
   queue: string;
+  /**
+   * Survive broker restarts. Default true. RabbitMQ 4 refuses a non-durable
+   * named queue unless the deprecated `transient_nonexcl_queues` feature is
+   * enabled.
+   */
+  durable?: boolean;
   /** Per-consumer prefetch. Default 1. */
   prefetch?: number;
 }
 
 // ---- client (sender) options ----
 
-/** Options for a {@link WorkerClient}. */
-export interface WorkerClientOptions {
+/**
+ * Options for a {@link WorkerClient}. The queue declaration options must match
+ * the ones of the `@Worker` consuming the queue.
+ */
+export interface WorkerClientOptions extends QueueDeclarationOptions {
   /** Target work queue. */
   queue: string;
-  /** Assert queue as durable. Default true. */
+  /**
+   * Assert queue as durable. Default true. RabbitMQ 4 refuses a non-durable
+   * named queue unless the deprecated `transient_nonexcl_queues` feature is
+   * enabled.
+   */
   durable?: boolean;
   /** Persist published messages to disk. Default true. */
   persistent?: boolean;

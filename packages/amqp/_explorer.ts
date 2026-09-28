@@ -25,7 +25,6 @@ import type {
   ConsumeMessage,
   MessageProperties,
   MessagePropertyHeaders,
-  Options,
 } from "amqplib";
 import type { Buffer } from "node:buffer";
 import {
@@ -34,6 +33,7 @@ import {
   AMQP_SERIALIZER,
 } from "./_constants.ts";
 import { type AmqpBinding, getAmqpBindings } from "./_metadata.ts";
+import { queueDeclaration } from "./_queue.ts";
 import { AmqpConnection } from "./connection.ts";
 import { AmqpExecutionContext, AmqpHostArguments } from "./host_arguments.ts";
 import type { AmqpModuleOptions } from "./module_options.ts";
@@ -70,11 +70,19 @@ const RETRY_COUNT_HEADER = "x-retry-count";
 /** Header keeping the exchange a retried message was first published to. */
 const ORIGINAL_EXCHANGE_HEADER = "x-original-exchange";
 
-/** Header keeping the routing key a retried message was first published with. */
-const ORIGINAL_ROUTING_KEY_HEADER = "x-original-routing-key";
-
 /** How a handled message is settled with the broker. */
 type Settlement = "ack" | "reject" | "requeue";
+
+/** Where a failed message goes per retry attempt, and how it comes back. */
+interface RetryRoute {
+  /**
+   * `<queue>.retry`: fanout exchange the delay queues dead-letter to, bound to
+   * the consumed queue only.
+   */
+  returnExchange: string;
+  /** `<queue>.retry.<delay>` fanout exchange per attempt (index = retries so far). */
+  delayExchanges: string[];
+}
 
 /** One decorated handler method and the channel currently consuming for it. */
 interface Subscription {
@@ -84,8 +92,8 @@ interface Subscription {
   binding: AmqpBinding;
   controllerGuards: Guard[];
   methodGuards: Guard[];
-  /** Delay queue per retry attempt, when the binding retries failed messages. */
-  retryQueues?: string[];
+  /** Set when the binding retries failed messages. */
+  retryRoute?: RetryRoute;
   /** The live consumer channel, unset while (re)subscribing. */
   channel?: ConfirmChannel;
   /** The broker consumer tag on {@link channel}. */
@@ -94,35 +102,6 @@ interface Subscription {
   retry?: NodeJS.Timeout;
   /** A resubscribe in progress. */
   resubscribing?: Promise<void>;
-}
-
-/**
- * Builds the `assertQueue` options of a consumer queue, adding the typed queue
- * options as `x-` arguments on top of the raw `queueArguments`.
- *
- * @param {ConsumerQueueOptions} o - The binding's queue options.
- * @param {Options.AssertQueue} base - Durability and exclusivity flags.
- * @return {Options.AssertQueue} The queue declaration options.
- */
-function consumerQueueOptions(
-  o: ConsumerQueueOptions,
-  base: Options.AssertQueue,
-): Options.AssertQueue {
-  const args: Record<string, unknown> = { ...o.queueArguments };
-  const typed: Record<string, unknown> = {
-    "x-queue-type": o.queueType,
-    "x-dead-letter-exchange": o.deadLetterExchange,
-    "x-dead-letter-routing-key": o.deadLetterRoutingKey,
-    "x-delivery-limit": o.deliveryLimit,
-  };
-
-  for (const [key, value] of Object.entries(typed)) {
-    if (value !== undefined) {
-      args[key] = value;
-    }
-  }
-
-  return Object.keys(args).length > 0 ? { ...base, arguments: args } : base;
 }
 
 /**
@@ -266,7 +245,17 @@ export class AmqpExplorer
         (msg) => {
           if (msg !== null) {
             this.dispatch(subscription, channel, msg);
+
+            return;
           }
+
+          // The broker cancelled the consumer (queue deleted, node lost,
+          // consumer timeout). Closing the channel requeues its unacked
+          // messages, and its `close` listener subscribes again.
+          this.logger.warn(
+            `Consumer of ${subscription.label} was cancelled by the broker`,
+          );
+          channel.close().catch(() => {});
         },
         { noAck: false },
       );
@@ -347,11 +336,8 @@ export class AmqpExplorer
         const o = binding.options as WorkerOptions;
         const durable = o.durable ?? true;
 
-        await channel.assertQueue(
-          o.queue,
-          consumerQueueOptions(o, { durable }),
-        );
-        await this.assertRetryQueues(
+        await channel.assertQueue(o.queue, queueDeclaration(o, { durable }));
+        await this.assertRetryTopology(
           channel,
           subscription,
           o,
@@ -412,7 +398,7 @@ export class AmqpExplorer
         // Narrowed by the `binding.type` discriminant; the union cannot unify.
         const o = binding.options as RpcOptions;
 
-        await channel.assertQueue(o.queue, { durable: false });
+        await channel.assertQueue(o.queue, { durable: o.durable ?? true });
         await channel.prefetch(o.prefetch ?? 1);
 
         return o.queue;
@@ -421,8 +407,9 @@ export class AmqpExplorer
   }
 
   /**
-   * Asserts the queue an exchange binding consumes: the named durable queue,
-   * or an exclusive auto-delete server-named one when `queue` is omitted.
+   * Asserts the queue an exchange binding consumes (the named durable queue,
+   * or an exclusive auto-delete server-named one when `queue` is omitted) and
+   * its retry delay queues, and sets the consumer prefetch.
    *
    * @param {Channel} channel - The consumer channel.
    * @param {Subscription} subscription - The subscription being set up.
@@ -437,29 +424,32 @@ export class AmqpExplorer
   ): Promise<string> {
     const response = await channel.assertQueue(
       o.queue ?? "",
-      consumerQueueOptions(o, {
+      queueDeclaration(o, {
         exclusive: !o.queue,
         durable: !!o.queue,
         autoDelete: !o.queue,
       }),
     );
 
-    await this.assertRetryQueues(
+    await this.assertRetryTopology(
       channel,
       subscription,
       o,
       response.queue,
       true,
     );
+    await channel.prefetch(o.prefetch ?? 1);
 
     return response.queue;
   }
 
   /**
-   * Asserts one delay queue per distinct retry delay. A message published to
-   * `<queue>.retry.<delay>` expires after `delay` ms and is dead-lettered back
-   * to `queue` through the default exchange. Records the delay queue of every
-   * attempt on the subscription.
+   * Asserts the retry route of a queue: per distinct delay a
+   * `<queue>.retry.<delay>` fanout exchange feeding the same-named delay
+   * queue, whose messages expire after `delay` ms and are dead-lettered to the
+   * `<queue>.retry` fanout exchange bound to `queue`. Messages keep their
+   * routing key on the whole round trip, so a later dead-letter from `queue`
+   * still carries it. Records the route on the subscription.
    *
    * @param {Channel} channel - The consumer channel.
    * @param {Subscription} subscription - The subscription being set up.
@@ -468,7 +458,7 @@ export class AmqpExplorer
    * @param {boolean} durable - Whether the consumed queue is durable.
    * @return {Promise<void>}
    */
-  private async assertRetryQueues(
+  private async assertRetryTopology(
     channel: Channel,
     subscription: Subscription,
     o: ConsumerQueueOptions,
@@ -479,21 +469,30 @@ export class AmqpExplorer
       return;
     }
 
+    const returnExchange = `${queue}.retry`;
+    const delayExchanges = o.retry.delays.map((delay) =>
+      `${queue}.retry.${delay}`
+    );
+
+    await channel.assertExchange(returnExchange, "fanout", { durable });
+    await channel.bindQueue(queue, returnExchange, "");
+
     for (const delay of new Set(o.retry.delays)) {
-      await channel.assertQueue(`${queue}.retry.${delay}`, {
+      const delayed = `${queue}.retry.${delay}`;
+
+      await channel.assertExchange(delayed, "fanout", { durable });
+      await channel.assertQueue(delayed, {
         durable,
         arguments: {
           ...(o.queueType && { "x-queue-type": o.queueType }),
           "x-message-ttl": delay,
-          "x-dead-letter-exchange": "",
-          "x-dead-letter-routing-key": queue,
+          "x-dead-letter-exchange": returnExchange,
         },
       });
+      await channel.bindQueue(delayed, delayed, "");
     }
 
-    subscription.retryQueues = o.retry.delays.map((delay) =>
-      `${queue}.retry.${delay}`
-    );
+    subscription.retryRoute = { returnExchange, delayExchanges };
   }
 
   private async handle(
@@ -501,17 +500,16 @@ export class AmqpExplorer
     channel: ConfirmChannel,
     msg: ConsumeMessage,
   ): Promise<void> {
-    const { binding, consumer, retryQueues } = subscription;
+    const { binding, consumer, retryRoute } = subscription;
     const ctx = this.ctx!;
     const headers: MessagePropertyHeaders = msg.properties.headers ?? {};
-    // A retried message returns through the default exchange; its original
-    // route travels in the headers set when it was sent to a delay queue.
-    const route: MessagePropertyHeaders = retryQueues ? headers : {};
-    const exchange: string = route[ORIGINAL_EXCHANGE_HEADER] ??
-      msg.fields.exchange;
-    const routingKey: string = route[ORIGINAL_ROUTING_KEY_HEADER] ??
-      msg.fields.routingKey;
-    const pattern = routingKey || exchange;
+    // Retry headers are trusted only on a message that came back through this
+    // queue's own retry route, never on one carrying another queue's state.
+    const retried = msg.fields.exchange === retryRoute?.returnExchange;
+    const exchange: string = retried
+      ? headers[ORIGINAL_EXCHANGE_HEADER] ?? msg.fields.exchange
+      : msg.fields.exchange;
+    const pattern = msg.fields.routingKey || exchange;
     const contextId = crypto.randomUUID();
     const replyTo: string | undefined = msg.properties.replyTo;
 
@@ -559,17 +557,19 @@ export class AmqpExplorer
     }
 
     let settlement: Settlement = outcome.ok ? "ack" : "reject";
-    const retryCount: number = typeof headers[RETRY_COUNT_HEADER] === "number"
-      ? headers[RETRY_COUNT_HEADER]
-      : 0;
-    const retryQueue = outcome.ok ? undefined : retryQueues?.[retryCount];
+    const retryCount: number =
+      retried && typeof headers[RETRY_COUNT_HEADER] === "number"
+        ? headers[RETRY_COUNT_HEADER]
+        : 0;
+    const delayExchange = outcome.ok
+      ? undefined
+      : retryRoute?.delayExchanges[retryCount];
 
-    if (retryQueue !== undefined) {
+    if (delayExchange !== undefined) {
       try {
-        await this.publishRetry(channel, msg, retryQueue, {
+        await this.publishRetry(channel, msg, delayExchange, {
           [RETRY_COUNT_HEADER]: retryCount + 1,
           [ORIGINAL_EXCHANGE_HEADER]: exchange,
-          [ORIGINAL_ROUTING_KEY_HEADER]: routingKey,
         });
         settlement = "ack";
       } catch (err) {
@@ -595,20 +595,20 @@ export class AmqpExplorer
   }
 
   /**
-   * Publishes a copy of a failed message to a delay queue, resolving once the
-   * broker confirmed the copy.
+   * Publishes a copy of a failed message, with its routing key, to the delay
+   * exchange of its attempt, resolving once the broker confirmed the copy.
    *
    * @param {ConfirmChannel} channel - The channel the message was consumed on.
    * @param {ConsumeMessage} msg - The failed message.
-   * @param {string} retryQueue - The delay queue of this attempt.
+   * @param {string} delayExchange - The delay exchange of this attempt.
    * @param {MessagePropertyHeaders} retryHeaders - Retry count and original
-   *   route, merged into the message headers.
+   *   exchange, merged into the message headers.
    * @return {Promise<void>}
    */
   private publishRetry(
     channel: ConfirmChannel,
     msg: ConsumeMessage,
-    retryQueue: string,
+    delayExchange: string,
     retryHeaders: MessagePropertyHeaders,
   ): Promise<void> {
     // The broker closes the channel when `userId` differs from the user the
@@ -616,8 +616,9 @@ export class AmqpExplorer
     const { headers, userId: _userId, ...properties } = msg.properties;
     const { promise, resolve, reject } = Promise.withResolvers<void>();
 
-    channel.sendToQueue(
-      retryQueue,
+    channel.publish(
+      delayExchange,
+      msg.fields.routingKey,
       msg.content,
       { ...properties, headers: { ...headers, ...retryHeaders } },
       (err: unknown): void => {

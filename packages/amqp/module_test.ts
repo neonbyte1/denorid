@@ -304,6 +304,11 @@ describe(AmqpModule.name, () => {
           return true;
         }
 
+        public waitForConfirms(): Promise<void> {
+          // Every publish is confirmed right away: nothing is outstanding.
+          return Promise.resolve();
+        }
+
         public close(): Promise<void> {
           events.push("channel.close");
           this.emit("close");

@@ -110,7 +110,7 @@ describe(AmqpConnection.name, () => {
       await connection.close();
     });
 
-    it("defaults the url to amqp://localhost", async () => {
+    it("defaults the url to amqp://localhost when the options omit it", async () => {
       let usedUrl = "";
       const model = new FakeModel();
       using _s = stub(amqplib, "connect", (url: unknown) => {
@@ -122,6 +122,22 @@ describe(AmqpConnection.name, () => {
       const connection = makeConnection();
       await connection.connect();
 
+      assertEquals(usedUrl, "amqp://localhost");
+      await connection.close();
+    });
+
+    it("connects to amqp://localhost when constructed outside the DI container", async () => {
+      let usedUrl = "";
+      const model = new FakeModel();
+      using _s = stub(amqplib, "connect", (url: unknown) => {
+        usedUrl = url as string;
+
+        return Promise.resolve(model as never);
+      });
+
+      const connection = new AmqpConnection();
+
+      assertStrictEquals(await connection.connect(), model as never);
       assertEquals(usedUrl, "amqp://localhost");
       await connection.close();
     });

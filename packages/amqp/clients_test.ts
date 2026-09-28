@@ -114,6 +114,30 @@ class FakeChannel extends EventEmitter {
     return Promise.resolve();
   }
 
+  /**
+   * Like amqplib's `ConfirmChannel#waitForConfirms`: resolves once every held
+   * confirm was acked, rejects when one is nacked or the channel closes.
+   */
+  public waitForConfirms(): Promise<void> {
+    const awaiting = this.heldConfirms.map((cb, index): Promise<void> => {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+      this.heldConfirms[index] = (err: Error | null): void => {
+        cb(err);
+
+        if (err === null) {
+          resolve();
+        } else {
+          reject(err);
+        }
+      };
+
+      return promise;
+    });
+
+    return Promise.all(awaiting).then((): void => {});
+  }
+
   /** Delivers a reply to the consumed reply queue. */
   public reply(
     correlationId: string | undefined,
@@ -268,6 +292,30 @@ describe(WorkerClient.name, () => {
       persistent: false,
       contentType: "application/json",
     });
+  });
+
+  it("declares the queue with the same arguments as the worker consuming it", async () => {
+    const channel = new FakeChannel();
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, {
+      queue: "tasks",
+      queueType: "quorum",
+      deadLetterExchange: "dlx",
+    });
+
+    await client.send({ x: 1 });
+
+    // The broker refuses (406) a redeclaration with different arguments.
+    assertEquals(call(channel, "assertQueue")!.args, [
+      "tasks",
+      {
+        durable: true,
+        arguments: {
+          "x-queue-type": "quorum",
+          "x-dead-letter-exchange": "dlx",
+        },
+      },
+    ]);
   });
 
   it("omits the content type when the serializer does not provide one", async () => {
@@ -675,7 +723,6 @@ describe(RpcClient.name, () => {
 
     channel.reply(undefined, Buffer.from("{}"));
     channel.reply("unknown", Buffer.from("{}"));
-    channel.consumeCallback!(null);
     channel.reply(
       sentOptions(channel).correlationId,
       Buffer.from(JSON.stringify("ok")),
@@ -776,6 +823,32 @@ describe(RpcClient.name, () => {
     await client.close();
   });
 
+  it("closes the channel when the broker cancels the reply consumer and reconnects on the next request", async () => {
+    const first = new FakeChannel("reply-1");
+    const second = new FakeChannel("reply-2");
+    const tracked = makeConnection(first, second);
+    const client = new RpcClient(tracked.connection, { queue: "rpc" });
+
+    const lost = client.request({ x: 1 });
+    await flush();
+
+    // amqplib delivers `null` once the broker cancelled the consumer.
+    first.consumeCallback!(null);
+
+    await assertRejects(() => lost, Error, "RPC channel closed");
+    assertEquals(count(first, "close"), 1);
+
+    const next = client.request({ x: 2 });
+    await flush();
+
+    assertEquals(tracked.channelCalls, 2);
+    assertEquals(sentOptions(second).replyTo, "reply-2");
+
+    second.reply(sentOptions(second).correlationId, Buffer.from("2"));
+    assertEquals(await next, 2);
+    await client.close();
+  });
+
   it("keeps requests sent on a newer channel when an old channel closes late", async () => {
     const first = new FakeChannel("reply-1");
     const second = new FakeChannel("reply-2");
@@ -852,6 +925,46 @@ describe("client teardown", () => {
     await sending;
     await closing;
 
+    assertEquals(count(channel, "close"), 1);
+  });
+
+  it("waits for the confirm of an in-flight publish before closing the channel", async () => {
+    const channel = new FakeChannel();
+    channel.confirm = "hold";
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, { queue: "tasks" });
+
+    const sending = client.send({ a: 1 });
+    await flush();
+
+    const closing = client.close();
+    await flush();
+
+    // Closing now would fail a publish the broker is about to confirm.
+    assertEquals(count(channel, "close"), 0);
+
+    channel.heldConfirms.shift()!(null);
+
+    await sending;
+    await closing;
+    assertEquals(count(channel, "close"), 1);
+  });
+
+  it("still closes the channel when an in-flight publish is nacked", async () => {
+    const channel = new FakeChannel();
+    channel.confirm = "hold";
+    const { connection } = makeConnection(channel);
+    const client = new WorkerClient(connection, { queue: "tasks" });
+
+    const sending = client.send({ a: 1 });
+    await flush();
+
+    const closing = client.close();
+    await flush();
+    channel.heldConfirms.shift()!(new Error("message nacked"));
+
+    await assertRejects(() => sending, Error, "message nacked");
+    await closing;
     assertEquals(count(channel, "close"), 1);
   });
 

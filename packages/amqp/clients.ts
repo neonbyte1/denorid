@@ -1,5 +1,6 @@
 import type { Channel, ConfirmChannel, ConsumeMessage } from "amqplib";
 import type { Buffer } from "node:buffer";
+import { queueDeclaration } from "./_queue.ts";
 import type { AmqpConnection } from "./connection.ts";
 import type {
   ExchangeClientOptions,
@@ -138,8 +139,9 @@ export abstract class AbstractClient<T> implements AsyncDisposable {
   }
 
   /**
-   * Closes the client channel (waiting for one still being opened),
-   * swallowing any close error. Idempotent: a second call with no channel is a
+   * Closes the client channel (waiting for one still being opened), once the
+   * broker confirmed or refused every message still in flight on it, and
+   * swallows any close error. Idempotent: a second call with no channel is a
    * no-op; a later call reopens a channel.
    *
    * @return {Promise<void>}
@@ -150,6 +152,10 @@ export abstract class AbstractClient<T> implements AsyncDisposable {
     this.channelReady = undefined;
 
     const channel = await ready?.catch(() => undefined);
+
+    // Closing first would fail publishes the broker already accepted: amqplib
+    // drops confirms that arrive while the channel is closing.
+    await channel?.waitForConfirms().catch(() => {});
 
     try {
       await channel?.close();
@@ -228,9 +234,12 @@ export class WorkerClient extends AbstractClient<WorkerClientOptions> {
   }
 
   protected async setupChannel(channel: Channel): Promise<void> {
-    await channel.assertQueue(this.options.queue, {
-      durable: this.options.durable ?? true,
-    });
+    await channel.assertQueue(
+      this.options.queue,
+      queueDeclaration(this.options, {
+        durable: this.options.durable ?? true,
+      }),
+    );
   }
 }
 
@@ -425,7 +434,14 @@ export class RpcClient extends AbstractClient<RpcClientOptions> {
       (msg) => {
         if (msg !== null) {
           this.handleReply(msg);
+
+          return;
         }
+
+        // The broker cancelled the reply consumer (e.g. the queue was
+        // deleted): no reply can arrive anymore. Closing the channel rejects
+        // the requests waiting on it; the next request opens a new one.
+        channel.close().catch(() => {});
       },
       { noAck: true },
     );
