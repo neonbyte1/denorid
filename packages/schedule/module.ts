@@ -3,12 +3,14 @@ import { ScheduleExplorer } from "./_explorer.ts";
 import { SchedulerRegistry } from "./registry.ts";
 
 /**
- * Denorid module that enables decorator-based cron job registration.
+ * Denorid module that enables decorator-based cron job and interval
+ * registration.
  *
- * Import this module to activate `@Cron()` discovery at bootstrap and make
- * {@linkcode SchedulerRegistry} available for injection. Jobs run on
- * `Deno.cron()` when the runtime provides it and on croner otherwise (Bun,
- * Node.js, Deno without `--unstable-cron`).
+ * Import this module to activate `@Cron()` and `@Interval()` discovery at
+ * bootstrap and make {@linkcode SchedulerRegistry} available for injection.
+ * Cron jobs run on `Deno.cron()` when the runtime provides it and on croner
+ * otherwise (Bun, Node.js, Deno without `--unstable-cron`); intervals run on
+ * `setInterval` everywhere.
  *
  * > **Deno Deploy note:** Jobs are registered at runtime during
  * > `onApplicationBootstrap`. Deno Deploy's static top-level cron discovery

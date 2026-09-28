@@ -1,23 +1,25 @@
 /**
- * Denorid schedule module providing decorator-based cron job registration
- * that runs on Deno, Bun and Node.js.
+ * Denorid schedule module providing decorator-based cron job and interval
+ * registration that runs on Deno, Bun and Node.js.
  *
- * Jobs are backed by `Deno.cron()` when the runtime provides it (Deno with
- * `--unstable-cron` or the `"cron"` entry in the `unstable` array of
+ * Cron jobs are backed by `Deno.cron()` when the runtime provides it (Deno
+ * with `--unstable-cron` or the `"cron"` entry in the `unstable` array of
  * `deno.json`, Deno Deploy) and by
  * [croner](https://jsr.io/@hexagon/croner) otherwise. Both backends use the
  * same cron dialect (5 fields, UTC, numeric weekdays `1`-`7` starting on
  * Sunday), never overlap runs and retry failed runs according to
- * `backoffSchedule`. Closing the application stops every cron job, interval
- * and timeout held by {@linkcode SchedulerRegistry}.
+ * `backoffSchedule`. For schedules finer than one minute, {@linkcode Interval}
+ * runs a method every given number of milliseconds with `setInterval`, also
+ * without overlapping runs. Closing the application stops every cron job,
+ * interval and timeout held by {@linkcode SchedulerRegistry}.
  *
  * # Usage
  *
  * Import {@linkcode ScheduleModule} into your application module and annotate
- * methods with {@linkcode Cron}:
+ * methods with {@linkcode Cron} or {@linkcode Interval}:
  *
  * ```ts
- * import { ScheduleModule, Cron } from "@denorid/schedule";
+ * import { Cron, Interval, ScheduleModule } from "@denorid/schedule";
  * import { Injectable, Module } from "@denorid/injector";
  *
  * \@Injectable()
@@ -27,6 +29,9 @@
  *
  *   \@Cron("0 9 * * 1", { name: "weekly-report" })
  *   weeklyReport() { ... }
+ *
+ *   \@Interval(10_000)
+ *   everyTenSeconds() { ... }
  * }
  *
  * \@Module({
