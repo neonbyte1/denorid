@@ -3,21 +3,24 @@ import { Logger, type LoggerService } from "@denorid/logger";
 import type { ZodType } from "zod";
 import {
   CONTROLLER_METADATA,
-  CONTROLLER_REQUEST_MAPPING,
   HTTP_CONTROLLER_METADATA,
 } from "../_constants.ts";
 import { BadRequestException } from "../exceptions/http/bad_request.ts";
 import { ZodValidationException } from "../exceptions/http/zod_validation.ts";
 import type { CanActivate, CanActivateFn } from "../guards/can_activate.ts";
-import { GUARDS_METADATA } from "../guards/decorator.ts";
 import type { ExecutionContext } from "../guards/execution_context.ts";
 import { isClass, isFunction } from "../type_guards.ts";
 import { createQueryInput } from "./_query_input.ts";
 import type { RequestMappingMetadata } from "./_request_mapping.ts";
+import {
+  createControllerHttpRoutes,
+  joinPaths,
+  normalizePaths,
+  readControllerRoutes,
+} from "./_routes.ts";
 import { VALIDATED_INPUTS } from "./_validated.ts";
 import type { ControllerMappingOptions } from "./adapter.ts";
 import type { ControllerOptions } from "./controller_options.ts";
-import type { HttpMethod } from "./method.ts";
 import type { RequestContext } from "./request_context.ts";
 import type { HttpRoute } from "./routes.ts";
 
@@ -155,61 +158,24 @@ export abstract class ControllerMapping {
     controllerClass: Type<HttpController>,
     basePath: string,
   ): Promise<HttpRoute[]> {
-    const metadata = controllerClass[Symbol.metadata];
-    const options = metadata?.[CONTROLLER_METADATA] as ControllerOptions;
-    const controllerPaths = this.normalizePaths(options.path);
+    const controller = readControllerRoutes(controllerClass, basePath);
 
-    const routes = (
-      (metadata?.[CONTROLLER_REQUEST_MAPPING] ?? []) as RequestMappingMetadata[]
-    ).filter((route): route is RequestMappingMetadata & {
-      method: HttpMethod;
-    } => route.method !== undefined);
-
-    const controllerGuardSet = metadata?.[GUARDS_METADATA] as
-      | Set<Type<CanActivate> | CanActivate | CanActivateFn>
-      | undefined;
-    const controllerGuards = [...(controllerGuardSet ?? [])];
-    const registered: HttpRoute[] = [];
-    const host = options.host !== undefined ? { host: options.host } : {};
-
-    for (
-      const controllerPath of controllerPaths.length > 0
-        ? controllerPaths
-        : [""]
-    ) {
-      const controllerBasePath = this.joinPaths(basePath, controllerPath);
-
-      for (const route of routes) {
+    for (const controllerBasePath of controller.basePaths) {
+      for (const route of controller.routes) {
         await this.registerRoute(
           controllerClass,
           controllerBasePath,
-          [...controllerGuards],
+          [...controller.guards],
           route,
         );
-
-        const guards = [
-          ...new Set([
-            ...this.options.globalGuards,
-            ...controllerGuards,
-            ...(route.guards ?? []),
-          ]),
-        ];
-        const routePaths = this.normalizePaths(route.path);
-
-        for (const routePath of routePaths.length > 0 ? routePaths : [""]) {
-          registered.push({
-            method: route.method,
-            path: this.joinPaths(controllerBasePath, routePath),
-            controller: controllerClass,
-            ...host,
-            metadata: route,
-            guards,
-          });
-        }
       }
     }
 
-    return registered;
+    return createControllerHttpRoutes(
+      controllerClass,
+      controller,
+      this.options.globalGuards,
+    );
   }
 
   /**
@@ -407,7 +373,7 @@ export abstract class ControllerMapping {
    * @return {string[]} An array of path strings, or an empty array if undefined.
    */
   protected normalizePaths(path: string | string[] | undefined): string[] {
-    return path !== undefined ? Array.isArray(path) ? path : [path] : [];
+    return normalizePaths(path);
   }
 
   /**
@@ -420,8 +386,6 @@ export abstract class ControllerMapping {
    * @return {string} The normalized combined path (e.g. `"/foo/bar"`).
    */
   protected joinPaths(...parts: string[]): string {
-    return `/${
-      parts.map((p) => p.replace(/^\/+|\/+$/g, "")).filter(Boolean).join("/")
-    }`;
+    return joinPaths(...parts);
   }
 }
