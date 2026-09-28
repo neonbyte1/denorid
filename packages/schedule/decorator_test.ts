@@ -4,16 +4,24 @@ import {
 } from "@denorid/injector";
 import { assertEquals, assertThrows } from "@std/assert";
 import { describe, it } from "node:test";
-import { CRON_METADATA, SCHEDULE_PROVIDER } from "./_constants.ts";
-import type { CronMetadata } from "./_metadata.ts";
+import {
+  CRON_METADATA,
+  INTERVAL_METADATA,
+  SCHEDULE_PROVIDER,
+} from "./_constants.ts";
+import type { CronMetadata, IntervalMetadata } from "./_metadata.ts";
 import type { CronSchedule } from "./cron_schedule.ts";
-import { Cron } from "./decorator.ts";
+import { Cron, Interval } from "./decorator.ts";
 
 /** A decorated class: TypeScript types `Symbol.metadata` on every class. */
 type Decorated = { [Symbol.metadata]: DecoratorMetadataObject | null };
 
 function getCronMetadata(target: Decorated): CronMetadata[] {
   return target[Symbol.metadata]?.[CRON_METADATA] as CronMetadata[];
+}
+
+function getIntervalMetadata(target: Decorated): IntervalMetadata[] {
+  return target[Symbol.metadata]?.[INTERVAL_METADATA] as IntervalMetadata[];
 }
 
 function getTags(target: Decorated): unknown[] {
@@ -167,6 +175,91 @@ describe(Cron.name, () => {
     assertEquals(
       error.message,
       'Decorator @Cron() cannot be applied to static function "run".',
+    );
+  });
+});
+
+describe(Interval.name, () => {
+  it("stores delay, method and name metadata", () => {
+    class Service {
+      @Interval(10_000)
+      heartbeat() {}
+
+      @Interval(30_000, { name: "sweep" })
+      sweep() {}
+    }
+
+    assertEquals(getIntervalMetadata(Service), [
+      { ms: 10_000, method: "heartbeat", name: undefined },
+      { ms: 30_000, method: "sweep", name: "sweep" },
+    ]);
+  });
+
+  it("coerces empty string name to undefined", () => {
+    class Service {
+      @Interval(1_000, { name: "" })
+      run() {}
+    }
+
+    assertEquals(getIntervalMetadata(Service)[0].name, undefined);
+  });
+
+  it("keeps cron and interval metadata apart under one SCHEDULE_PROVIDER tag", () => {
+    class Service {
+      @Cron("* * * * *")
+      @Interval(5_000)
+      run() {}
+    }
+
+    assertEquals(getTags(Service), [SCHEDULE_PROVIDER]);
+    assertEquals(getCronMetadata(Service).length, 1);
+    assertEquals(getIntervalMetadata(Service), [
+      { ms: 5_000, method: "run", name: undefined },
+    ]);
+  });
+
+  it("accepts the smallest and largest timer delays", () => {
+    class Service {
+      @Interval(1)
+      fastest() {}
+
+      @Interval(2_147_483_647)
+      slowest() {}
+    }
+
+    assertEquals(getIntervalMetadata(Service).map(({ ms }) => ms), [
+      1,
+      2_147_483_647,
+    ]);
+  });
+
+  for (const ms of [0, -1, 1.5, 2_147_483_648, Number.NaN, Infinity]) {
+    it(`rejects ${ms} ms, which timers would run almost continuously`, () => {
+      const error = assertThrows(() => Interval(ms), RangeError);
+
+      assertEquals(
+        error.message,
+        `Invalid interval delay ${ms}: expected an integer from 1 to 2147483647 ms.`,
+      );
+    });
+  }
+
+  it("throws when applied to a static method", () => {
+    const error = assertThrows(
+      () => {
+        class Service {
+          @Interval(1_000)
+          static run() {}
+        }
+
+        return Service;
+      },
+      InvalidStaticMemberDecoratorUsageError,
+    );
+
+    assertEquals(
+      error.message,
+      'Decorator @Interval() cannot be applied to static function "run".',
     );
   });
 });

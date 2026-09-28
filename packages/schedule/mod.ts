@@ -47,5 +47,6 @@ export * from "./cron_options.ts";
 export * from "./cron_schedule.ts";
 export * from "./decorator.ts";
 export * from "./exceptions.ts";
+export * from "./interval_options.ts";
 export * from "./module.ts";
 export * from "./registry.ts";

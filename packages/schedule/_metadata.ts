@@ -6,3 +6,9 @@ export interface CronMetadata {
   name?: string;
   backoffSchedule?: number[];
 }
+
+export interface IntervalMetadata {
+  ms: number;
+  method: string | symbol;
+  name?: string;
+}
