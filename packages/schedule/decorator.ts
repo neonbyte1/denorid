@@ -5,7 +5,7 @@ import {
   type Tag,
   TAG_METADATA,
 } from "@denorid/injector";
-import { CRON_METADATA, CRON_PROVIDER } from "./_constants.ts";
+import { CRON_METADATA, SCHEDULE_PROVIDER } from "./_constants.ts";
 import type { CronMetadata } from "./_metadata.ts";
 import type { CronOptions } from "./cron_options.ts";
 import type { CronSchedule } from "./cron_schedule.ts";
@@ -60,18 +60,7 @@ export function Cron(
     target: V,
     ctx: ClassMethodDecoratorContext<T, V>,
   ): V {
-    if (ctx.static) {
-      throw new InvalidStaticMemberDecoratorUsageError(
-        Cron.name,
-        ctx.name,
-        "function",
-      );
-    }
-
-    const existingTags = (ctx.metadata[TAG_METADATA] ?? []) as Tag[];
-    ctx.metadata[TAG_METADATA] = [
-      ...new Set<Tag>([...existingTags, CRON_PROVIDER]),
-    ];
+    tagScheduleProvider(Cron.name, ctx);
 
     const cache = (ctx.metadata[CRON_METADATA] ??= []) as CronMetadata[];
 
@@ -84,4 +73,35 @@ export function Cron(
 
     return target;
   };
+}
+
+/**
+ * Rejects static members and tags the class so {@linkcode ScheduleExplorer}
+ * finds it on bootstrap.
+ *
+ * @param {string} decorator - Decorator name used in the error message.
+ * @param {ClassMethodDecoratorContext} ctx - Context of the decorated method.
+ * @return {void}
+ * @throws {InvalidStaticMemberDecoratorUsageError} When the method is static.
+ */
+function tagScheduleProvider<
+  T extends object,
+  V extends ClassMethodDecoratorInitializer<T>,
+>(
+  decorator: string,
+  ctx: ClassMethodDecoratorContext<T, V>,
+): void {
+  if (ctx.static) {
+    throw new InvalidStaticMemberDecoratorUsageError(
+      decorator,
+      ctx.name,
+      "function",
+    );
+  }
+
+  const existingTags = (ctx.metadata[TAG_METADATA] ?? []) as Tag[];
+
+  ctx.metadata[TAG_METADATA] = [
+    ...new Set<Tag>([...existingTags, SCHEDULE_PROVIDER]),
+  ];
 }

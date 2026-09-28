@@ -4,21 +4,20 @@ import {
 } from "@denorid/injector";
 import { assertEquals, assertThrows } from "@std/assert";
 import { describe, it } from "node:test";
-import { CRON_METADATA, CRON_PROVIDER } from "./_constants.ts";
+import { CRON_METADATA, SCHEDULE_PROVIDER } from "./_constants.ts";
 import type { CronMetadata } from "./_metadata.ts";
 import type { CronSchedule } from "./cron_schedule.ts";
 import { Cron } from "./decorator.ts";
 
-function getCronMetadata(target: object): CronMetadata[] {
-  return (target as { [Symbol.metadata]: Record<symbol, unknown> })[
-    Symbol.metadata
-  ]![CRON_METADATA] as CronMetadata[];
+/** A decorated class: TypeScript types `Symbol.metadata` on every class. */
+type Decorated = { [Symbol.metadata]: DecoratorMetadataObject | null };
+
+function getCronMetadata(target: Decorated): CronMetadata[] {
+  return target[Symbol.metadata]?.[CRON_METADATA] as CronMetadata[];
 }
 
-function getTags(target: object): unknown[] {
-  return (target as { [Symbol.metadata]: Record<symbol, unknown> })[
-    Symbol.metadata
-  ]![TAG_METADATA] as unknown[];
+function getTags(target: Decorated): unknown[] {
+  return target[Symbol.metadata]?.[TAG_METADATA] as unknown[];
 }
 
 describe(Cron.name, () => {
@@ -131,16 +130,16 @@ describe(Cron.name, () => {
     ]);
   });
 
-  it("tags the class with CRON_PROVIDER", () => {
+  it("tags the class with SCHEDULE_PROVIDER", () => {
     class Service {
       @Cron("* * * * *")
       run() {}
     }
 
-    assertEquals(getTags(Service), [CRON_PROVIDER]);
+    assertEquals(getTags(Service), [SCHEDULE_PROVIDER]);
   });
 
-  it("deduplicates CRON_PROVIDER tag when multiple methods are decorated", () => {
+  it("deduplicates SCHEDULE_PROVIDER tag when multiple methods are decorated", () => {
     class Service {
       @Cron("* * * * *")
       first() {}
@@ -149,7 +148,7 @@ describe(Cron.name, () => {
       second() {}
     }
 
-    assertEquals(getTags(Service), [CRON_PROVIDER]);
+    assertEquals(getTags(Service), [SCHEDULE_PROVIDER]);
   });
 
   it("throws when applied to a static method", () => {

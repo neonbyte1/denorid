@@ -5,7 +5,7 @@ import {
   type OnApplicationBootstrap,
   type Type,
 } from "@denorid/injector";
-import { CRON_METADATA, CRON_PROVIDER } from "./_constants.ts";
+import { CRON_METADATA, SCHEDULE_PROVIDER } from "./_constants.ts";
 import { registerCronJob } from "./_cron_runtime.ts";
 import type { CronMetadata } from "./_metadata.ts";
 import { CronJobRef } from "./cron_job_ref.ts";
@@ -56,7 +56,7 @@ export class ScheduleExplorer implements OnApplicationBootstrap {
    * @return {Promise<void>}
    */
   private async discoverCronJobs(registered: Set<CronJobRef>): Promise<void> {
-    const providers = this.moduleRef.getTokensByTag<Type>(CRON_PROVIDER, {
+    const providers = this.moduleRef.getTokensByTag<Type>(SCHEDULE_PROVIDER, {
       strict: false,
     });
 

@@ -7,7 +7,7 @@ import {
 } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
 import { describe, it } from "node:test";
-import { CRON_PROVIDER } from "./_constants.ts";
+import { SCHEDULE_PROVIDER } from "./_constants.ts";
 import { cronHost, type CronHostScope } from "./_cron_runtime.ts";
 import { ScheduleExplorer } from "./_explorer.ts";
 import { CronJobRef } from "./cron_job_ref.ts";
@@ -60,7 +60,7 @@ function createHarness(options: {
       throw new Error(`Unexpected token: ${String(token)}`);
     },
     getTokensByTag: (tag: symbol) =>
-      tag === CRON_PROVIDER ? (options.providers ?? []) : [],
+      tag === SCHEDULE_PROVIDER ? (options.providers ?? []) : [],
   } as unknown as ModuleRef;
 
   const registry = new SchedulerRegistry();
@@ -80,7 +80,7 @@ function createHarness(options: {
 
 describe(ScheduleExplorer.name, () => {
   describe("onApplicationBootstrap", () => {
-    it("does nothing when no providers are tagged with CRON_PROVIDER", async () => {
+    it("does nothing when no providers are tagged with SCHEDULE_PROVIDER", async () => {
       const harness = createHarness({});
 
       try {
