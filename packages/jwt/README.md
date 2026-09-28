@@ -121,6 +121,47 @@ are merged, per-call values win.
 export class AppModule {}
 ```
 
+### Several registrations
+
+Every `forRoot` / `forRootAsync` call creates its own `JwtService` and
+`JwkService`, configured with its own options. A module injecting `JwtService`
+gets the one of the registration it imports, e.g. an auth module signing with a
+private key next to a session module verifying with the public key:
+
+```ts
+@Module({
+  imports: [
+    JwtModule.forRootAsync({
+      imports: [KeysModule],
+      inject: [KeyStore],
+      useFactory: async (keys: KeyStore) => ({
+        privateKey: await keys.privateKey(),
+      }),
+    }),
+  ],
+  providers: [AuthService],
+})
+export class AuthModule {}
+
+@Module({
+  imports: [
+    JwtModule.forRootAsync({
+      imports: [KeysModule],
+      inject: [KeyStore],
+      useFactory: async (keys: KeyStore) => ({
+        publicKey: await keys.publicKey(),
+      }),
+    }),
+  ],
+  providers: [SessionGuard],
+})
+export class SessionModule {}
+```
+
+To share one `JwtService` between modules, import the same registration (keep
+the module returned by `forRoot` in a constant) or register it with
+`global: true`.
+
 ### Using JwtService
 
 ```ts
