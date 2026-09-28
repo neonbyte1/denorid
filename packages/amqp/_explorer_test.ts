@@ -26,6 +26,7 @@ import {
   Topic,
   Worker,
 } from "./decorators.ts";
+import { RejectMessageException } from "./exceptions.ts";
 import { AmqpHostArguments } from "./host_arguments.ts";
 import type { AmqpModuleOptions } from "./module_options.ts";
 import { type AmqpSerializer, JsonAmqpSerializer } from "./serialization.ts";
@@ -1825,6 +1826,41 @@ describe(AmqpExplorer.name, () => {
       assertEquals(argsOf(harness.channel, "publish"), []);
       assertEquals(argsOf(harness.channel, "nack"), [[msg, false, false]]);
       assertEquals(argsOf(harness.channel, "ack"), []);
+    });
+
+    it("rejects a message whose handler threw a RejectMessageException without retrying it", async () => {
+      const rejection = new RejectMessageException(
+        "payload can never be valid",
+        {
+          cause: new Error("missing field"),
+        },
+      );
+
+      @AmqpConsumer()
+      class RejectingConsumer {
+        @Worker({ queue: "tasks", retry: { delays: [1000, 5000] } })
+        run(): void {
+          throw rejection;
+        }
+      }
+
+      const harness = createHarness({
+        consumers: [RejectingConsumer],
+        instances: new Map([[RejectingConsumer, new RejectingConsumer()]]),
+      });
+
+      await harness.explorer.onApplicationBootstrap();
+
+      const msg = makeMessage({ payload: { job: 1 }, routingKey: "tasks" });
+      harness.channel.consumeCallback!(msg);
+      await flush();
+
+      assertEquals(argsOf(harness.channel, "publish"), []);
+      assertEquals(argsOf(harness.channel, "nack"), [[msg, false, false]]);
+      assertEquals(argsOf(harness.channel, "ack"), []);
+      // Still routed to the exception handler, which logs it.
+      assertEquals(harness.exceptionCalls.length, 1);
+      assertStrictEquals(harness.exceptionCalls[0].err, rejection);
     });
 
     it("logs and requeues the message when the broker nacks the retry copy", async () => {

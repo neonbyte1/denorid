@@ -34,6 +34,7 @@
 export * from "./clients.ts";
 export * from "./connection.ts";
 export * from "./decorators.ts";
+export * from "./exceptions.ts";
 export * from "./host_arguments.ts";
 export * from "./module.ts";
 export * from "./module_options.ts";

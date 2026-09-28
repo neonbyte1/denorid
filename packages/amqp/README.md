@@ -377,7 +377,7 @@ which reaches the dead-letter exchange with its original routing key (unless
 `deadLetterRoutingKey` or `deadLetterQueue` sets another).
 
 ```ts
-import { AmqpConsumer, Topic } from "@denorid/amqp";
+import { AmqpConsumer, RejectMessageException, Topic } from "@denorid/amqp";
 import { Inject } from "@denorid/injector";
 import type { MessageProperties } from "amqplib";
 
@@ -402,11 +402,20 @@ export class NotificationsConsumer {
     event: ForumEvent,
     properties: MessageProperties,
   ): Promise<void> {
+    if (!isForumEvent(event)) {
+      // Can never succeed: dead-letter it now instead of after the delays.
+      throw new RejectMessageException("Invalid forum event");
+    }
+
     await this.notifications.handle(properties.messageId, event);
   }
 }
 ```
 
+- Throw a `RejectMessageException` (from the handler, a guard, or a custom
+  serializer's `deserialize`) for a message that can never succeed, such as an
+  invalid payload: it is routed to the `ExceptionHandler` and logged like any
+  error, but the message is rejected right away, skipping the remaining delays.
 - `retry` needs a named `queue`; the decorator throws otherwise.
 - Delay queues inherit `queueType` and the durability of the consumed queue.
 - A retried message carries the headers `x-retry-count` and

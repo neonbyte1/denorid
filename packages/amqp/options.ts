@@ -14,7 +14,8 @@ export type AmqpPatternType =
  * `<queue>.retry` exchange once the delay expired. After the last delay the
  * next failure rejects the message: the broker dead-letters it (still with its
  * original routing key) when the queue has a `deadLetterExchange`, otherwise
- * it is dropped.
+ * it is dropped. A handler throwing a {@link RejectMessageException} has its
+ * message rejected right away, without retries.
  */
 export interface RetryOptions {
   /**

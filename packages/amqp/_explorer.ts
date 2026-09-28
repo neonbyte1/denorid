@@ -35,6 +35,7 @@ import {
 import { type AmqpBinding, getAmqpBindings } from "./_metadata.ts";
 import { deadLetterRoute, queueDeclaration } from "./_queue.ts";
 import { AmqpConnection } from "./connection.ts";
+import { RejectMessageException } from "./exceptions.ts";
 import { AmqpExecutionContext, AmqpHostArguments } from "./host_arguments.ts";
 import type { AmqpModuleOptions } from "./module_options.ts";
 import type {
@@ -115,7 +116,8 @@ interface Subscription {
  *
  * A failed message of a binding with `retry` is republished to the delay queue
  * of its attempt (and acked once the broker confirmed the copy); without
- * retries left it is rejected, so the broker dead-letters or drops it.
+ * retries left, or when the handler threw a {@link RejectMessageException}, it
+ * is rejected, so the broker dead-letters or drops it.
  *
  * A consumer that cannot be subscribed on bootstrap (broker unreachable,
  * topology refused) or whose channel closes unexpectedly (broker restart,
@@ -629,9 +631,11 @@ export class AmqpExplorer
       retried && typeof headers[RETRY_COUNT_HEADER] === "number"
         ? headers[RETRY_COUNT_HEADER]
         : 0;
-    const delayExchange = outcome.ok
-      ? undefined
-      : retryRoute?.delayExchanges[retryCount];
+    // A rejected message is never going to succeed: no retry.
+    const delayExchange =
+      outcome.ok || outcome.error instanceof RejectMessageException
+        ? undefined
+        : retryRoute?.delayExchanges[retryCount];
 
     if (delayExchange !== undefined) {
       try {
