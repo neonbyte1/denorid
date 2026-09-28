@@ -74,6 +74,30 @@ type DrizzleMigrator = (
 ) => Promise<unknown>;
 
 /**
+ * The part of a `pg.PoolClient` used while migrating a postgres connection.
+ */
+interface PgPoolClient {
+  query(text: string, values: readonly unknown[]): Promise<unknown>;
+  release(destroy?: boolean): void;
+}
+
+/**
+ * Derives the key of the postgres advisory lock guarding a migrations table:
+ * the first 64 bits of the SHA-256 digest of its qualified name.
+ *
+ * @param {string} name - The qualified name of the migrations table.
+ * @returns {Promise<string>} The signed 64-bit key as decimal string.
+ */
+async function advisoryLockKey(name: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`drizzle-migrations:${name}`),
+  );
+
+  return new DataView(digest).getBigInt64(0).toString();
+}
+
+/**
  * Type representing a bag of Drizzle ORM table definitions, usually the
  * namespace import of your schema module.
  *
@@ -641,7 +665,12 @@ export class DrizzleService
    * one connection after the other, through drizzle-orm's migrator. Needs no
    * `drizzle-kit`, only read access to the migrations folders.
    *
-   * The pending migrations of a connection are applied in one transaction.
+   * On postgres, a session-level advisory lock on the migrations table
+   * serializes concurrently starting instances: the first one applies the
+   * migrations, the others wait and find nothing left to apply. The pending
+   * migrations are applied in one transaction. On sqlite, the pending
+   * migrations are applied in one transaction without a lock between
+   * processes: start one instance first when several share a database.
    *
    * @returns {Promise<void>} Resolves once the migrations are applied.
    * @throws {Error} Naming the connection whose migrations failed, with the
@@ -1076,22 +1105,62 @@ export class DrizzleService
         MIGRATOR_PACKAGES[options.type],
       ) as { migrate: DrizzleMigrator };
 
-      await migrate(
-        db,
-        options.type === "postgres"
-          ? {
-            ...config,
-            migrationsSchema: (migrations as DrizzlePostgresMigrationOptions)
-              .schema ?? DEFAULT_MIGRATIONS_SCHEMA,
-          }
-          : config,
-      );
+      if (options.type === "postgres") {
+        await this.applyPostgresMigrations(options, db, migrate, {
+          ...config,
+          migrationsSchema: (migrations as DrizzlePostgresMigrationOptions)
+            .schema ?? DEFAULT_MIGRATIONS_SCHEMA,
+        });
+      } else {
+        await migrate(db, config);
+      }
     } catch (cause) {
       throw new Error(
         `Failed to migrate ${options.type} connection: ${options.name}`,
         { cause },
       );
     }
+  }
+
+  /**
+   * Applies the migrations of a postgres connection on one pool client
+   * holding a session-level advisory lock on the migrations table, so
+   * concurrently starting instances apply them one after the other. The
+   * client is destroyed on failure: ending its session releases the lock
+   * even when unlocking failed.
+   *
+   * @private
+   * @param {DrizzleOrmPostgresConnectionOptions} options - The connection options.
+   * @param {DrizzleConnection} db - The drizzle instance of the connection.
+   * @param {DrizzleMigrator} migrate - drizzle-orm's postgres migrator.
+   * @param {MigrationConfig} config - The migrator configuration.
+   * @returns {Promise<void>} Resolves once the migrations are applied and the
+   *   lock is released.
+   */
+  private async applyPostgresMigrations(
+    options: DrizzleOrmPostgresConnectionOptions,
+    db: DrizzleConnection,
+    migrate: DrizzleMigrator,
+    config: MigrationConfig,
+  ): Promise<void> {
+    const drizzle = await this.getDrizzleFactory(this.factories, options);
+    const key = await advisoryLockKey(
+      `${config.migrationsSchema}.${config.migrationsTable}`,
+    );
+    const pool = db.$client as unknown as { connect(): Promise<PgPoolClient> };
+    const client = await pool.connect();
+
+    try {
+      await client.query("SELECT pg_advisory_lock($1::bigint)", [key]);
+      await migrate(drizzle({ ...options.drizzle, client }), config);
+      await client.query("SELECT pg_advisory_unlock($1::bigint)", [key]);
+    } catch (error) {
+      client.release(true);
+
+      throw error;
+    }
+
+    client.release();
   }
 
   /**

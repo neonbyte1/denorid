@@ -769,6 +769,154 @@ describe("DrizzleService", () => {
         );
       });
     });
+
+    describe("postgres", () => {
+      useMigrations();
+
+      /**
+       * Registers a postgres connection whose pool hands out one client
+       * recording its calls, next to drizzle's migrator.
+       */
+      const usePostgres = async (
+        migrations: Record<string, unknown>,
+        migrate: (db: unknown) => Promise<void>,
+      ) => {
+        const calls: unknown[][] = [];
+        const client = {
+          query: (text: string, values: unknown[]) => {
+            calls.push(["query", text, ...values]);
+
+            return Promise.resolve();
+          },
+          release: (destroy?: boolean) => {
+            calls.push(["release", destroy]);
+          },
+        };
+        const pool = {
+          connect: () => Promise.resolve(client),
+          end: () => Promise.resolve(),
+        };
+
+        configure([{
+          type: "postgres",
+          name: "main",
+          connection: "pg://main",
+          drizzle: { logger: false },
+          migrations,
+        }]);
+        const importStub = stub(
+          migrating,
+          // @ts-ignore - private import seam
+          "import",
+          (name: string) =>
+            Promise.resolve(
+              ({
+                "drizzle-orm/node-postgres": {
+                  drizzle: (config: { client?: unknown }) =>
+                    config.client ? { onClient: config } : { $client: pool },
+                },
+                "drizzle-orm/node-postgres/migrator": {
+                  migrate: (db: unknown, config: unknown) => {
+                    calls.push(["migrate", db, config]);
+
+                    return migrate(db);
+                  },
+                },
+              } as Record<string, unknown>)[name] ?? {},
+            ),
+        );
+
+        await migrating.onModuleInit();
+
+        return { calls, client, importStub };
+      };
+
+      it("migrates on one pool client holding an advisory lock on the migrations table", async () => {
+        const { calls, client, importStub } = await usePostgres(
+          { folder: "./drizzle" },
+          () => Promise.resolve(),
+        );
+
+        try {
+          await migrating.onApplicationBootstrap();
+        } finally {
+          importStub.restore();
+        }
+
+        const [lock, migrate, unlock, release] = calls;
+
+        assertEquals(lock.slice(0, 2), [
+          "query",
+          "SELECT pg_advisory_lock($1::bigint)",
+        ]);
+        assertEquals(migrate, ["migrate", {
+          onClient: { logger: false, client },
+        }, {
+          migrationsFolder: "./drizzle",
+          migrationsTable: "__drizzle_migrations",
+          migrationsSchema: "drizzle",
+        }]);
+        assertEquals(unlock, [
+          "query",
+          "SELECT pg_advisory_unlock($1::bigint)",
+          lock[2],
+        ]);
+        assertEquals(release, ["release", undefined]);
+        assertEquals(calls.length, 4);
+      });
+
+      it("locks per migrations table", async () => {
+        const keys: unknown[] = [];
+
+        for (
+          const migrations of [{}, { schema: "app" }, { table: "applied" }]
+        ) {
+          const { calls, importStub } = await usePostgres(
+            { folder: "./drizzle", ...migrations },
+            () => Promise.resolve(),
+          );
+
+          try {
+            await migrating.migrate();
+          } finally {
+            importStub.restore();
+            await migrating[Symbol.asyncDispose]();
+            migrating = new DrizzleService();
+          }
+
+          keys.push(calls[0][2]);
+        }
+
+        assertEquals(new Set(keys).size, 3);
+      });
+
+      it("destroys the client of a failed migration, releasing its lock", async () => {
+        const failure = new Error("relation already exists");
+        const { calls, importStub } = await usePostgres(
+          { folder: "./drizzle" },
+          () => Promise.reject(failure),
+        );
+
+        try {
+          const error = await assertRejects(
+            () => migrating.migrate(),
+            Error,
+            "Failed to migrate postgres connection: main",
+          );
+
+          assertStrictEquals(error.cause, failure);
+        } finally {
+          importStub.restore();
+        }
+
+        assertEquals(calls.map(([call]) => call), [
+          "query",
+          "migrate",
+          "release",
+        ]);
+        assertEquals(calls[2], ["release", true]);
+      });
+    });
   });
 
   describe("deno.json map integrity", () => {
