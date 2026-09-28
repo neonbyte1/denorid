@@ -23,14 +23,20 @@ export interface AmqpModuleOptions {
    */
   globalGuards?: (Type<CanActivate> | CanActivate | CanActivateFn)[];
   /**
-   * Overrides the default JSON serializer.
+   * The serializer shared by the consumers and every client.
    *
-   * Pass an {@link AmqpSerializer} instance to use it directly, or a
-   * `Type<AmqpSerializer>` class to have it resolved through DI - a class MUST
-   * also be registered in {@link extraProviders} so the container can build it
-   * (with its own injected dependencies).
+   * - `"json"` (default): {@link JsonAmqpSerializer}.
+   * - `"msgpack"`: {@link MsgpackAmqpSerializer}.
+   * - An {@link AmqpSerializer} instance is used directly.
+   * - A `Type<AmqpSerializer>` class is resolved through DI and MUST also be
+   *   registered in {@link extraProviders} so the container can build it (with
+   *   its own injected dependencies).
+   *
+   * Both built-in serializers decode received bodies by their `contentType`,
+   * so services publishing JSON and MessagePack can share queues; the choice
+   * decides what is published.
    */
-  serializer?: AmqpSerializer | Type<AmqpSerializer>;
+  serializer?: "json" | "msgpack" | AmqpSerializer | Type<AmqpSerializer>;
   /**
    * Additional providers registered alongside the connection and explorer.
    * Register a provider for the `AMQP_SERIALIZER` token here to override the

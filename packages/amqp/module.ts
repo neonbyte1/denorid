@@ -26,7 +26,11 @@ import type {
   RpcClientOptions,
   WorkerClientOptions,
 } from "./options.ts";
-import { type AmqpSerializer, JsonAmqpSerializer } from "./serialization.ts";
+import {
+  type AmqpSerializer,
+  JsonAmqpSerializer,
+  MsgpackAmqpSerializer,
+} from "./serialization.ts";
 
 /**
  * Denorid module that provides the shared AMQP broker connection and the
@@ -148,10 +152,10 @@ export class AmqpModule {
    * For a statically-known class serializer (`forRoot`), aliases the token to
    * the class via `useExisting` - the class must be registered in
    * `extraProviders` so the container builds it (with its injected
-   * dependencies). Otherwise a factory reads the resolved options and uses the
-   * instance, the default JSON serializer, or - for a class arriving through
-   * `forRootAsync` - throws guiding the user to register an `AMQP_SERIALIZER`
-   * provider in `extraProviders`.
+   * dependencies). Otherwise a factory reads the resolved options and builds
+   * the named built-in serializer (`"json"`, the default, or `"msgpack"`),
+   * uses the instance, or - for a class arriving through `forRootAsync` or an
+   * unknown name - throws.
    *
    * @param {AmqpModuleOptions | AmqpAsyncModuleOptions} options - Module config.
    * @return {ExistingProvider | FactoryProvider} The serializer provider.
@@ -167,15 +171,32 @@ export class AmqpModule {
 
     return {
       provide: AMQP_SERIALIZER,
-      useFactory: (opts: AmqpModuleOptions): AmqpSerializer => {
-        if (typeof opts.serializer === "function") {
+      useFactory: (
+        { serializer = "json" }: AmqpModuleOptions,
+      ): AmqpSerializer => {
+        switch (serializer) {
+          case "json":
+            return new JsonAmqpSerializer();
+          case "msgpack":
+            return new MsgpackAmqpSerializer();
+        }
+
+        if (typeof serializer === "function") {
           throw new Error(
             "A class serializer must be registered in AmqpModuleOptions." +
               "extraProviders as a provider for the AMQP_SERIALIZER token.",
           );
         }
 
-        return opts.serializer ?? new JsonAmqpSerializer();
+        // An options factory can hand over any string at runtime.
+        if (typeof serializer === "string") {
+          throw new Error(
+            `Unknown AMQP serializer "${serializer}", expected "json" or ` +
+              `"msgpack"`,
+          );
+        }
+
+        return serializer;
       },
       inject: [AMQP_MODULE_OPTIONS],
     };

@@ -31,7 +31,11 @@ import {
 import { AmqpConnection } from "./connection.ts";
 import { AmqpModule } from "./module.ts";
 import type { AmqpClientRegistration } from "./options.ts";
-import { type AmqpSerializer, JsonAmqpSerializer } from "./serialization.ts";
+import {
+  type AmqpSerializer,
+  JsonAmqpSerializer,
+  MsgpackAmqpSerializer,
+} from "./serialization.ts";
 
 describe(AmqpModule.name, () => {
   describe("forRoot", () => {
@@ -114,6 +118,32 @@ describe(AmqpModule.name, () => {
       assertInstanceOf(
         provider.useFactory({}) as AmqpSerializer,
         JsonAmqpSerializer,
+      );
+    });
+
+    it("builds the built-in serializer named in options", () => {
+      const provider = serializerProvider(
+        AmqpModule.forRoot({ serializer: "msgpack" }).providers!,
+      );
+
+      assertInstanceOf(
+        provider.useFactory({ serializer: "msgpack" }),
+        MsgpackAmqpSerializer,
+      );
+      assertInstanceOf(
+        provider.useFactory({ serializer: "json" }),
+        JsonAmqpSerializer,
+      );
+    });
+
+    it("throws on an unknown serializer name from an async options factory", () => {
+      const mod = AmqpModule.forRootAsync({ useFactory: () => ({}) });
+      const provider = serializerProvider(mod.providers!);
+
+      assertThrows(
+        () => provider.useFactory({ serializer: "yaml" }),
+        Error,
+        'Unknown AMQP serializer "yaml"',
       );
     });
 

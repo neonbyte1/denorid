@@ -246,30 +246,61 @@ AmqpModule.forRoot({ globalGuards: [AuthGuard] });
 `@UseGuards` is imported from `@denorid/core` - this package does not re-export
 it.
 
-## Custom serialization
+## Serialization
 
-Payloads are JSON-encoded by default (with `Uint8Array` passthrough). Override
-the serializer by implementing `AmqpSerializer`. The `serializer` option accepts
-either an instance or a class; a class is resolved through DI and MUST also be
+The `serializer` option picks how payloads are encoded:
+
+| `serializer`       | Serializer              | Published `contentType`   |
+| ------------------ | ----------------------- | ------------------------- |
+| `"json"` (default) | `JsonAmqpSerializer`    | `application/json`        |
+| `"msgpack"`        | `MsgpackAmqpSerializer` | `application/vnd.msgpack` |
+
+```ts
+AmqpModule.forRoot({ url: "amqp://localhost", serializer: "msgpack" });
+```
+
+Both send a `Uint8Array` payload verbatim as `application/octet-stream` and
+encode the `undefined` returned by a `void` RPC handler as `null`. MessagePack
+bodies are smaller than JSON, and `bigint` and nested `Uint8Array` values
+survive the round trip (nested bytes arrive as views into the message body).
+MessagePack cannot represent nested `undefined` values, `Date`, `Map`, `Set` or
+class instances: publishing them throws, so send dates as strings or numbers.
+
+Both decode received bodies by their `contentType`: `application/json`,
+`application/vnd.msgpack` (also `application/msgpack` and
+`application/x-msgpack`) and `application/octet-stream`, ignoring parameters
+such as `charset`. Only untagged bodies are decoded in the configured format.
+Services publishing JSON and MessagePack can therefore share a queue, and a
+system can switch format one service at a time: roll out the consumers first,
+they read both formats either way.
+
+### Custom serializers
+
+Implement `AmqpSerializer` for any other format. The `serializer` option also
+accepts an instance or a class; a class is resolved through DI and MUST also be
 registered in `extraProviders` so the container can build it (with its own
 injected dependencies).
 
 ```ts
 import { Inject, Injectable } from "@denorid/injector";
 import type { AmqpSerializer } from "@denorid/amqp";
+import { decodeCbor, encodeCbor } from "@std/cbor";
 import { Buffer } from "node:buffer";
 
 // Option A - an instance:
-class MsgpackSerializer implements AmqpSerializer {
+class CborSerializer implements AmqpSerializer {
   serialize(value: unknown): Buffer {
-    return Buffer.from(encode(value));
+    return Buffer.from(encodeCbor(value as never));
   }
   deserialize(content: Uint8Array): unknown {
-    return decode(content);
+    return decodeCbor(content);
+  }
+  contentType(): string {
+    return "application/cbor";
   }
 }
 
-AmqpModule.forRoot({ serializer: new MsgpackSerializer() });
+AmqpModule.forRoot({ serializer: new CborSerializer() });
 
 // Option B - a class resolved through DI (with its own injected dependencies).
 // The class goes in `extraProviders`; `serializer` aliases AMQP_SERIALIZER to it.
@@ -295,17 +326,14 @@ AmqpModule.forRoot({
 import { AMQP_SERIALIZER } from "@denorid/amqp";
 
 AmqpModule.forRoot({
-  extraProviders: [{ provide: AMQP_SERIALIZER, useClass: MsgpackSerializer }],
+  extraProviders: [{ provide: AMQP_SERIALIZER, useClass: CborSerializer }],
 });
 ```
 
 The serializer is shared by the explorer and every client through the
 `AmqpConnection`. Publishers set the message `contentType` from the optional
 `contentType(value)` method, and `deserialize(content, properties)` receives the
-message properties, so a serializer can tell encodings apart. The default
-`JsonAmqpSerializer` uses this to round-trip `Uint8Array` payloads
-(`application/octet-stream`) and encodes values JSON cannot represent at the top
-level (for example the `undefined` returned by a `void` RPC handler) as `null`.
+message properties, so a serializer can tell encodings apart.
 
 ## Async configuration
 
