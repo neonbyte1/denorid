@@ -427,10 +427,12 @@ export class NotificationsConsumer {
 - Connection and channel `error` events are logged; they never crash the
   process. A closed connection is dropped, so the next client call connects
   again, and a client whose channel closed opens a new one on its next call.
-- A consumer whose channel closes unexpectedly (broker restart, lost connection,
-  channel error) or that the broker cancels (queue deleted, consumer timeout) is
-  subscribed again after `reconnectDelay` milliseconds (default `1000`),
-  retrying until it succeeds.
+- A consumer that cannot be subscribed on bootstrap (broker unreachable,
+  topology refused), whose channel closes unexpectedly (broker restart, lost
+  connection, channel error), or that the broker cancels (queue deleted,
+  consumer timeout) is subscribed again after `reconnectDelay` milliseconds
+  (default `1000`), retrying until it succeeds. The application starts while the
+  broker is down; each failed attempt is logged.
 - Client `send()` / `publish()` calls in flight when a client closes still
   settle with the broker's answer: `close()` waits for their confirms.
 - `RpcClient` rejects the requests waiting on a channel when that channel

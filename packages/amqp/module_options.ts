@@ -44,10 +44,12 @@ export interface AmqpModuleOptions {
    */
   clients?: AmqpClientRegistration[];
   /**
-   * Delay in milliseconds before a consumer whose channel closed unexpectedly
-   * (broker restart, lost connection, channel error) is subscribed again. A
-   * failed attempt is retried after the same delay until it succeeds or the
-   * application shuts down.
+   * Delay in milliseconds before a consumer that could not be subscribed on
+   * application bootstrap (broker unreachable, topology refused) or whose
+   * channel closed unexpectedly (broker restart, lost connection, channel
+   * error) is subscribed again. A failed attempt is retried after the same
+   * delay until it succeeds or the application shuts down, so the application
+   * starts while the broker is down.
    *
    * @default 1000
    */

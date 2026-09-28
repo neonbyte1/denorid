@@ -9,7 +9,6 @@ import { InjectorContext, type ModuleRef, type Type } from "@denorid/injector";
 import {
   assertEquals,
   assertInstanceOf,
-  assertRejects,
   assertStrictEquals,
 } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
@@ -2263,28 +2262,91 @@ describe(AmqpExplorer.name, () => {
       assertEquals(harness.loggerErrors.length, 1);
     });
 
-    it("closes the channel and fails bootstrap when the topology cannot be asserted", async () => {
+    it("starts while the broker is unreachable, subscribes the other consumers, and retries after reconnectDelay", async () => {
+      @AmqpConsumer()
+      class AuditConsumer {
+        @Worker({ queue: "audit" })
+        run(): void {}
+      }
+
+      const unreachable = new Error("connect ECONNREFUSED 127.0.0.1:5673");
+      const audit = makeChannel();
+      const tasks = makeChannel();
+      const consumer = new WorkerConsumer();
+      const harness = createHarness({
+        consumers: [WorkerConsumer, AuditConsumer],
+        instances: new Map<Type, unknown>([
+          [WorkerConsumer, consumer],
+          [AuditConsumer, new AuditConsumer()],
+        ]),
+        channels: [unreachable, audit, tasks],
+        options: { reconnectDelay: 5_000 },
+      });
+
+      using time = new FakeTime();
+
+      await harness.explorer.onApplicationBootstrap();
+
+      assertEquals(harness.loggerErrors, [
+        ["Failed to subscribe WorkerConsumer.run", unreachable],
+      ]);
+      assertEquals(call(audit, "consume")!.args, ["audit", { noAck: false }]);
+      assertEquals(harness.channelsCreated(), 2);
+
+      await time.tickAsync(4_999);
+      await flush();
+
+      assertEquals(harness.channelsCreated(), 2);
+
+      await time.tickAsync(1);
+      await flush();
+
+      assertEquals(harness.channelsCreated(), 3);
+      assertEquals(call(tasks, "consume")!.args, ["tasks", { noAck: false }]);
+
+      const msg = makeMessage({ payload: { n: 1 }, routingKey: "tasks" });
+      tasks.consumeCallback!(msg);
+      await flush();
+
+      assertEquals(consumer.calls, [{ n: 1 }]);
+      assertStrictEquals(call(tasks, "ack")!.args[0], msg);
+
+      await harness.explorer.onBeforeApplicationShutdown();
+    });
+
+    it("closes the channel and subscribes again later when the topology cannot be asserted on bootstrap", async () => {
+      const refused = new Error("Channel closed by server: 406");
       const channel = makeChannel();
-      channel.assertQueue = () =>
-        Promise.reject(new Error("Channel closed by server: 406"));
+      channel.assertQueue = () => Promise.reject(refused);
       channel.close = () => {
         channel.calls.push({ method: "close", args: [] });
 
         return Promise.reject(new Error("Channel closed"));
       };
+      const second = makeChannel();
 
       const harness = createHarness({
         consumers: [WorkerConsumer],
         instances: new Map([[WorkerConsumer, new WorkerConsumer()]]),
-        channel,
+        channels: [channel, second],
+        options: { reconnectDelay: 1 },
       });
 
-      await assertRejects(
-        () => harness.explorer.onApplicationBootstrap(),
-        Error,
-        "406",
-      );
+      using time = new FakeTime();
+
+      await harness.explorer.onApplicationBootstrap();
+
       assertEquals(methods(channel), ["close"]);
+      assertEquals(harness.loggerErrors, [
+        ["Failed to subscribe WorkerConsumer.run", refused],
+      ]);
+
+      await time.tickAsync(1);
+      await flush();
+
+      assertEquals(call(second, "consume")!.args, ["tasks", { noAck: false }]);
+
+      await harness.explorer.onBeforeApplicationShutdown();
     });
   });
 });

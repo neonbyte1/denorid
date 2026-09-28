@@ -61,7 +61,10 @@ type HandlerOutcome =
   | { ok: true; result: unknown }
   | { ok: false; error: unknown };
 
-/** Default delay before a consumer whose channel closed is subscribed again. */
+/**
+ * Default delay before a consumer whose subscription failed, or whose channel
+ * closed, is subscribed again.
+ */
 const DEFAULT_RECONNECT_DELAY = 1000;
 
 /** Header counting the retries a message went through. */
@@ -98,7 +101,7 @@ interface Subscription {
   channel?: ConfirmChannel;
   /** The broker consumer tag on {@link channel}. */
   consumerTag?: string;
-  /** Pending resubscribe timer after the channel closed unexpectedly. */
+  /** Pending resubscribe timer after subscribing failed or the channel closed. */
   retry?: NodeJS.Timeout;
   /** A resubscribe in progress. */
   resubscribing?: Promise<void>;
@@ -114,11 +117,13 @@ interface Subscription {
  * of its attempt (and acked once the broker confirmed the copy); without
  * retries left it is rejected, so the broker dead-letters or drops it.
  *
- * A consumer whose channel closes unexpectedly (broker restart, connection
- * loss, channel error) is subscribed again after
- * `AmqpModuleOptions.reconnectDelay`. Before application shutdown every
- * consumer is cancelled, in-flight handlers are awaited (so they can still
- * ack and reply), and only then are the channels closed.
+ * A consumer that cannot be subscribed on bootstrap (broker unreachable,
+ * topology refused) or whose channel closes unexpectedly (broker restart,
+ * connection loss, channel error) is subscribed again after
+ * `AmqpModuleOptions.reconnectDelay`, so the application starts while the
+ * broker is down. Before application shutdown every consumer is cancelled,
+ * in-flight handlers are awaited (so they can still ack and reply), and only
+ * then are the channels closed.
  */
 @Injectable()
 export class AmqpExplorer
@@ -230,7 +235,15 @@ export class AmqpExplorer
 
         this.subscriptions.push(subscription);
 
-        await this.subscribe(subscription);
+        try {
+          await this.subscribe(subscription);
+        } catch (err) {
+          this.subscribeFailed(
+            subscription,
+            `Failed to subscribe ${subscription.label}`,
+            err,
+          );
+        }
       }
     }
   }
@@ -293,19 +306,36 @@ export class AmqpExplorer
       subscription.retry = undefined;
       subscription.resubscribing = this.subscribe(subscription)
         .catch((err: unknown) => {
-          this.logger.error(
+          this.subscribeFailed(
+            subscription,
             `Failed to subscribe ${subscription.label} again`,
             err,
           );
-
-          if (!this.stopping) {
-            this.scheduleResubscribe(subscription);
-          }
         })
         .finally(() => {
           subscription.resubscribing = undefined;
         });
     }, this.options.reconnectDelay ?? DEFAULT_RECONNECT_DELAY);
+  }
+
+  /**
+   * Logs a failed subscribe and, unless shutting down, schedules the next
+   * attempt.
+   *
+   * @param {Subscription} subscription - The subscription that failed.
+   * @param {string} message - The log message.
+   * @param {unknown} err - Why subscribing failed.
+   */
+  private subscribeFailed(
+    subscription: Subscription,
+    message: string,
+    err: unknown,
+  ): void {
+    this.logger.error(message, err);
+
+    if (!this.stopping) {
+      this.scheduleResubscribe(subscription);
+    }
   }
 
   private dispatch(
