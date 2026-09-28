@@ -47,6 +47,10 @@ export interface JwtModuleAsyncOptions extends Pick<ModuleMetadata, "imports"> {
  * Register synchronously via {@link forRoot} when options are available at module definition time,
  * or asynchronously via {@link forRootAsync} when they depend on injected providers.
  *
+ * Every registration gets its own `JwtService` and `JwkService` configured
+ * with its own options, so modules can register the JWT module with
+ * different keys (e.g. one for signing, one for verifying).
+ *
  * @example Synchronous registration
  * ```ts
  * JwtModule.forRoot({ secret: "my-secret", signOptions: { exp: "1h" } })
@@ -69,7 +73,8 @@ export interface JwtModuleAsyncOptions extends Pick<ModuleMetadata, "imports"> {
 })
 export class JwtModule {
   /**
-   * Registers the JWT module with static options.
+   * Registers the JWT module with static options. The returned module has
+   * its own `JwtService`: import the same returned module to share it.
    *
    * @param {JwtModuleOptions} options - Module configuration.
    * @return {DynamicModule} Configured dynamic module.
@@ -81,7 +86,9 @@ export class JwtModule {
   }
 
   /**
-   * Registers the JWT module with async options resolved via a factory.
+   * Registers the JWT module with async options resolved via a factory. The
+   * returned module has its own `JwtService`: import the same returned
+   * module to share it.
    *
    * @param {JwtModuleAsyncOptions} options - Async module configuration.
    * @return {DynamicModule} Configured dynamic module.
@@ -97,8 +104,16 @@ export class JwtModule {
     options: JwtModuleOptions | JwtModuleAsyncOptions,
     providerData: Omit<ValueProvider | FactoryProvider, "provide">,
   ): DynamicModule {
+    // The injector keeps one container per module class, so registrations
+    // sharing `JwtModule` would share the providers of the first one. A
+    // subclass per registration inherits the `@Module()` metadata and gets
+    // its own container.
+    const module = class extends JwtModule {};
+
+    Object.defineProperty(module, "name", { value: JwtModule.name });
+
     return {
-      module: JwtModule,
+      module,
       global: options.global,
       imports: (options as JwtModuleAsyncOptions).imports ?? [],
       providers: [
