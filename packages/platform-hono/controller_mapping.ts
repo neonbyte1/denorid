@@ -302,7 +302,12 @@ export class HonoControllerMapping extends ControllerMapping {
 
           const res = await controller[route.name](context);
 
-          return this.resolveResponse(c, res, route.statusCode);
+          return this.resolveResponse(
+            c,
+            res,
+            route.statusCode,
+            context.responseHeaders,
+          );
         } catch (err) {
           return await this.handleError(c, hostArguments, err);
           // I haven't found a solution to catch the finally :(
@@ -359,13 +364,15 @@ export class HonoControllerMapping extends ControllerMapping {
   }
 
   /**
-   * Serializes the result of a controller method (see {@linkcode serialize}).
-   * `undefined` and `null` answer with an empty body and the route's status
-   * code, `204` without one.
+   * Serializes the result of a controller method (see {@linkcode serialize})
+   * and adds the headers set through the request context. `undefined` and
+   * `null` answer with an empty body and the route's status code, `204`
+   * without one. A `Response` is returned as is.
    *
    * @param {Context} c - The Hono context of the request.
    * @param {unknown} res - The result of the controller method.
    * @param {StatusCode | undefined} statusCode - Status code set by `@HttpCode()`.
+   * @param {Headers} headers - Response headers set through the request context.
    * @return {Response} The response.
    * @throws {UnprocessableContentException} When the result cannot be serialized.
    */
@@ -373,15 +380,30 @@ export class HonoControllerMapping extends ControllerMapping {
     c: Context,
     res: unknown,
     statusCode: StatusCode | undefined,
+    headers: Headers,
   ): Response {
-    if (res === undefined || res === null) {
-      return c.body(null, (statusCode ?? StatusCode.NoContent) as 204);
+    if (res instanceof Response) {
+      return res;
     }
 
-    const response = this.serialize(c, res, statusCode ?? StatusCode.Ok);
+    const empty = res === undefined || res === null;
+    const status = statusCode ??
+      (empty ? StatusCode.NoContent : StatusCode.Ok);
+    const response = empty
+      ? c.body(null, status as 204)
+      : this.serialize(c, res, status);
 
     if (response === undefined) {
       throw new UnprocessableContentException();
+    }
+
+    for (const [name, value] of headers) {
+      // Headers yields every cookie on its own, all others joined.
+      if (name === "set-cookie") {
+        response.headers.append(name, value);
+      } else {
+        response.headers.set(name, value);
+      }
     }
 
     return response;

@@ -978,6 +978,170 @@ describe(HonoControllerMapping.name, () => {
     });
   });
 
+  describe("response headers", () => {
+    const etag = '"r42"';
+
+    /**
+     * App with a `GET /test` route that sets `headers` through the request
+     * context and returns `result`.
+     */
+    function createPageApp(
+      headers: Record<string, string>,
+      opts: { route?: Partial<RequestMappingMetadata>; result?: unknown } = {},
+    ): Promise<Hono> {
+      return registerOnHono({
+        route: { name: "page", ...opts.route },
+        controller: {
+          page: (ctx: RequestContext) => {
+            for (const [name, value] of Object.entries(headers)) {
+              ctx.responseHeaders.set(name, value);
+            }
+
+            return "result" in opts ? opts.result : { id: 1 };
+          },
+        },
+      });
+    }
+
+    for (
+      const [kind, result, status, body] of [
+        ["JSON", { id: 1 }, StatusCode.Ok, '{"id":1}'],
+        ["text", "pong", StatusCode.Ok, "pong"],
+        ["empty", null, StatusCode.NoContent, ""],
+      ] as const
+    ) {
+      it(`adds the headers set by the handler to ${kind} results`, async () => {
+        const app = await createPageApp({
+          "Cache-Control": "public, no-cache",
+          ETag: etag,
+          Vary: "Accept-Language",
+        }, { result });
+        const response = await app.request("/test");
+
+        assertEquals(response.status, status);
+        assertEquals(await response.text(), body);
+        assertEquals(
+          response.headers.get("cache-control"),
+          "public, no-cache",
+        );
+        assertEquals(response.headers.get("etag"), etag);
+        assertEquals(response.headers.get("vary"), "Accept-Language");
+      });
+    }
+
+    it("replaces the default Content-Type and keeps every cookie", async () => {
+      const app = await registerOnHono({
+        route: { name: "page" },
+        controller: {
+          page: (ctx: RequestContext) => {
+            ctx.responseHeaders.set("Content-Type", "application/problem+json");
+            ctx.responseHeaders.append("Set-Cookie", "a=1");
+            ctx.responseHeaders.append("Set-Cookie", "b=2");
+
+            return { id: 1 };
+          },
+        },
+      });
+      const response = await app.request("/test");
+
+      assertEquals(
+        response.headers.get("content-type"),
+        "application/problem+json",
+      );
+      assertEquals(response.headers.getSetCookie(), ["a=1", "b=2"]);
+    });
+
+    it("adds the headers set by a guard", async () => {
+      const guard: CanActivateFn = (ctx) => {
+        ctx.switchToHttp().getRequest().responseHeaders.set(
+          "X-RateLimit-Remaining",
+          "9",
+        );
+
+        return true;
+      };
+      const app = await registerOnHono({
+        route: { name: "page", guards: new Set([guard]) },
+        controller: { page: () => ({ id: 1 }) },
+      });
+      const response = await app.request("/test");
+
+      assertEquals(response.headers.get("x-ratelimit-remaining"), "9");
+    });
+
+    it("never adds the headers to error responses", async () => {
+      const app = await registerOnHono({
+        route: { name: "page" },
+        controller: {
+          page: (ctx: RequestContext) => {
+            ctx.responseHeaders.set("Cache-Control", "public, max-age=60");
+            ctx.responseHeaders.set("ETag", etag);
+
+            throw new NotFoundException();
+          },
+        },
+      });
+      const response = await app.request("/test", {
+        headers: { "If-None-Match": etag },
+      });
+
+      assertEquals(response.status, StatusCode.NotFound);
+      assertEquals(response.headers.get("cache-control"), null);
+      assertEquals(response.headers.get("etag"), null);
+    });
+
+    it("sends a Response returned by the handler as is", async () => {
+      const app = await registerOnHono({
+        route: { name: "page" },
+        controller: {
+          page: (ctx: RequestContext) => {
+            ctx.responseHeaders.set("ETag", etag);
+            ctx.responseHeaders.set("Cache-Control", "no-store");
+
+            return new Response("raw", { headers: { "X-Raw": "1" } });
+          },
+        },
+      });
+      const response = await app.request("/test", {
+        headers: { "If-None-Match": etag },
+      });
+
+      assertEquals(response.status, StatusCode.Ok);
+      assertEquals(await response.text(), "raw");
+      assertEquals(response.headers.get("x-raw"), "1");
+      assertEquals(response.headers.get("etag"), null);
+      assertEquals(response.headers.get("cache-control"), null);
+    });
+
+    it("keeps a Vary header next to the CORS Vary: Origin", async () => {
+      const origin = "https://b.example";
+      const app = await createApp([{
+        path: "/test",
+        routes: [{ name: "page", method: HttpMethod.GET }],
+        instance: {
+          page: (ctx: RequestContext) => {
+            ctx.responseHeaders.set("Vary", "Accept-Language");
+            ctx.responseHeaders.set("ETag", etag);
+
+            return { id: 1 };
+          },
+        },
+      }], { cors: { origin } });
+
+      for (const ifNoneMatch of ['"r41"', etag]) {
+        const response = await app.request("/test", {
+          headers: { origin, "If-None-Match": ifNoneMatch },
+        });
+
+        assertEquals(response.headers.get("vary"), "Accept-Language, Origin");
+        assertEquals(
+          response.headers.get("access-control-allow-origin"),
+          origin,
+        );
+      }
+    });
+  });
+
   describe("handleError()", () => {
     it("returns the Response from exceptionHandler when it handles the error", async () => {
       const customResponse = new Response("handled", { status: 200 });
