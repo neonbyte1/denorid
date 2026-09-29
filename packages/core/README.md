@@ -164,6 +164,37 @@ export class ThreadController {
   global `Headers` class.
 - Refinements may be async.
 
+## Response headers
+
+Guards and handlers add response headers through `ctx.responseHeaders` (a
+standard `Headers` object) and keep returning their typed result. With an `ETag`
+or `Last-Modified` header, a successful `GET` or `HEAD` request whose client
+copy is current is answered with `304 Not Modified` and no body.
+
+```ts
+@Get(":threadId")
+public async page(ctx: RequestContext): Promise<ThreadPage> {
+  const page = await this.threads.page(ctx.param("threadId")!);
+
+  ctx.responseHeaders.set("Cache-Control", "public, no-cache");
+  ctx.responseHeaders.set("ETag", `"${page.revision}"`);
+  ctx.responseHeaders.set("Vary", "Accept-Language");
+
+  return page;
+}
+```
+
+- The client copy is current when an entity tag in `If-None-Match` matches the
+  `ETag` (weak comparison, `*` matches any) or, without `If-None-Match`, when
+  `If-Modified-Since` is not older than `Last-Modified`. Other methods and
+  statuses outside `2xx` ignore the conditional headers.
+- The `304` carries the same headers. Routes that set neither `ETag` nor
+  `Last-Modified` never answer `304`.
+- The headers replace the ones the adapter sets itself, e.g. `Content-Type`.
+- A `Response` returned by the handler is sent as is, without these headers.
+- Error responses never carry them, so a failed request is not cached with the
+  `Cache-Control` or `ETag` of the result.
+
 ## Registered routes
 
 `HttpRoutes` lists the routes of the HTTP application, e.g. to generate API
