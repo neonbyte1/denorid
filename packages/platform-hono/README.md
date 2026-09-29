@@ -59,6 +59,12 @@ await app.listen();
   symbols as text, other objects as JSON, with the `@HttpCode()` status or
   `200`. `undefined`/`null` send an empty body with the `@HttpCode()` status or
   `204`.
+- Headers set through `ctx.responseHeaders` are added to these results (not to a
+  returned `Response` or error responses). With an `ETag` or `Last-Modified`
+  among them, a `2xx` answer to a `GET`/`HEAD` request whose `If-None-Match`
+  (or, without it, `If-Modified-Since`) shows a current client copy becomes
+  `304 Not Modified` without body. `Vary` values are kept next to the
+  `Vary: Origin` of the CORS middleware.
 - Errors: an `HttpException` is sent with its body and status. Any other error
   is answered with the standard `500` body
   (`{"message":"Internal Server Error","statusCode":500}`); its message is only
