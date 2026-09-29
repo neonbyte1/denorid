@@ -980,6 +980,7 @@ describe(HonoControllerMapping.name, () => {
 
   describe("response headers", () => {
     const etag = '"r42"';
+    const lastModified = "Wed, 01 Jan 2025 00:00:00 GMT";
 
     /**
      * App with a `GET /test` route that sets `headers` through the request
@@ -1068,6 +1069,113 @@ describe(HonoControllerMapping.name, () => {
 
       assertEquals(response.headers.get("x-ratelimit-remaining"), "9");
     });
+
+    for (
+      const [ifNoneMatch, responseTag] of [
+        [etag, etag],
+        ['W/"r42"', etag],
+        [etag, 'W/"r42"'],
+        ['"r41", "r42"', etag],
+        ["*", etag],
+      ]
+    ) {
+      it(`answers 304 without body for If-None-Match ${ifNoneMatch} and ETag ${responseTag}`, async () => {
+        const app = await createPageApp({
+          "Cache-Control": "public, no-cache",
+          ETag: responseTag,
+          Vary: "Accept-Language",
+        });
+
+        for (const method of ["GET", "HEAD"]) {
+          const response = await app.request("/test", {
+            method,
+            headers: { "If-None-Match": ifNoneMatch },
+          });
+
+          assertEquals(response.status, StatusCode.NotModified);
+          assertEquals(await response.text(), "");
+          assertEquals(response.headers.get("etag"), responseTag);
+          assertEquals(
+            response.headers.get("cache-control"),
+            "public, no-cache",
+          );
+          assertEquals(response.headers.get("vary"), "Accept-Language");
+        }
+      });
+    }
+
+    it("sends the result when If-None-Match does not match the ETag", async () => {
+      const app = await createPageApp({ ETag: etag });
+      const response = await app.request("/test", {
+        headers: { "If-None-Match": '"r41", W/"r4"' },
+      });
+
+      assertEquals(response.status, StatusCode.Ok);
+      assertEquals(await response.json(), { id: 1 });
+      assertEquals(response.headers.get("etag"), etag);
+    });
+
+    for (
+      const [ifModifiedSince, status] of [
+        [lastModified, StatusCode.NotModified],
+        ["Thu, 02 Jan 2025 00:00:00 GMT", StatusCode.NotModified],
+        ["Tue, 31 Dec 2024 23:59:59 GMT", StatusCode.Ok],
+        ["yesterday", StatusCode.Ok],
+      ] as const
+    ) {
+      it(`answers ${status} for If-Modified-Since ${ifModifiedSince}`, async () => {
+        const app = await createPageApp({ "Last-Modified": lastModified });
+        const response = await app.request("/test", {
+          headers: { "If-Modified-Since": ifModifiedSince },
+        });
+
+        assertEquals(response.status, status);
+        assertEquals(response.headers.get("last-modified"), lastModified);
+      });
+    }
+
+    it("ignores If-Modified-Since when If-None-Match is present", async () => {
+      const app = await createPageApp({
+        ETag: etag,
+        "Last-Modified": lastModified,
+      });
+      const response = await app.request("/test", {
+        headers: {
+          "If-None-Match": '"r41"',
+          "If-Modified-Since": lastModified,
+        },
+      });
+
+      assertEquals(response.status, StatusCode.Ok);
+    });
+
+    it("answers conditional requests normally without ETag or Last-Modified", async () => {
+      const app = await createPageApp({ "Cache-Control": "no-store" });
+      const response = await app.request("/test", {
+        headers: { "If-None-Match": "*", "If-Modified-Since": lastModified },
+      });
+
+      assertEquals(response.status, StatusCode.Ok);
+      assertEquals(await response.json(), { id: 1 });
+    });
+
+    for (
+      const [label, route] of [
+        ["POST routes", { method: HttpMethod.POST }],
+        ["3xx statuses", { statusCode: StatusCode.MultipleChoices }],
+      ] as const
+    ) {
+      it(`ignores conditional requests for ${label}`, async () => {
+        const app = await createPageApp({ ETag: etag }, { route });
+        const response = await app.request("/test", {
+          method: HttpMethod[route.method ?? HttpMethod.GET],
+          headers: { "If-None-Match": etag },
+        });
+
+        assertEquals(response.status, route.statusCode ?? StatusCode.Ok);
+        assertEquals(await response.json(), { id: 1 });
+      });
+    }
 
     it("never adds the headers to error responses", async () => {
       const app = await registerOnHono({

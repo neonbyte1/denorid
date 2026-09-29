@@ -19,6 +19,7 @@ import type { Type } from "@denorid/injector";
 import type { Context, Hono, MiddlewareHandler } from "@hono/hono";
 import { cors } from "@hono/hono/cors";
 import { createClientIpResolver } from "./_client_ip.ts";
+import { isNotModified } from "./_conditional.ts";
 import { createStaticFilesHandler } from "./_static_files.ts";
 import type { HonoAdapterOptions } from "./adapter.ts";
 import { HonoExecutionContext } from "./execution_context.ts";
@@ -83,6 +84,30 @@ function createCorsMiddleware(
     ...(credentials === undefined ? {} : { credentials }),
     ...(exposeHeaders === undefined ? {} : { exposeHeaders }),
   });
+}
+
+/**
+ * Whether a successful response to a `GET` or `HEAD` request becomes
+ * `304 Not Modified`: the response headers carry an `ETag` or
+ * `Last-Modified` validator and the client copy is current.
+ *
+ * @param {Context} c - The Hono context of the request.
+ * @param {number} status - Status code of the response.
+ * @param {Headers} headers - Response headers set through the request context.
+ * @return {boolean} `true` when the response is `304 Not Modified`.
+ */
+function isClientCopyCurrent(
+  c: Context,
+  status: number,
+  headers: Headers,
+): boolean {
+  const etag = headers.get("ETag");
+  const lastModified = headers.get("Last-Modified");
+
+  return (c.req.method === "GET" || c.req.method === "HEAD") &&
+    status >= 200 && status < 300 &&
+    (etag !== null || lastModified !== null) &&
+    isNotModified(c, etag, Date.parse(lastModified ?? ""));
 }
 
 /**
@@ -367,7 +392,9 @@ export class HonoControllerMapping extends ControllerMapping {
    * Serializes the result of a controller method (see {@linkcode serialize})
    * and adds the headers set through the request context. `undefined` and
    * `null` answer with an empty body and the route's status code, `204`
-   * without one. A `Response` is returned as is.
+   * without one. A successful `GET` or `HEAD` request whose client copy is
+   * current (see {@linkcode isClientCopyCurrent}) is answered with
+   * `304 Not Modified` and no body. A `Response` is returned as is.
    *
    * @param {Context} c - The Hono context of the request.
    * @param {unknown} res - The result of the controller method.
@@ -389,7 +416,9 @@ export class HonoControllerMapping extends ControllerMapping {
     const empty = res === undefined || res === null;
     const status = statusCode ??
       (empty ? StatusCode.NoContent : StatusCode.Ok);
-    const response = empty
+    const response = isClientCopyCurrent(c, status, headers)
+      ? c.body(null, 304)
+      : empty
       ? c.body(null, status as 204)
       : this.serialize(c, res, status);
 
