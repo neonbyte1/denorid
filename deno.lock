@@ -851,7 +851,7 @@
         "dependencies": [
           "jsr:@denorid/core@^1.0.0-beta6",
           "jsr:@denorid/injector@^1.0.0-beta2",
-          "jsr:@denorid/logger@^1.0.0-beta2",
+          "jsr:@denorid/logger@^1.0.0-beta3",
           "jsr:@std/msgpack@^1.0.3",
           "npm:amqplib@^2.0.1"
         ]
