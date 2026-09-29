@@ -30,6 +30,22 @@ logger.warn("Low memory");
 logger.error("Something went wrong");
 ```
 
+## Custom Logger
+
+`Logger.overrideLogger()` installs a `LoggerService` (or a configured `Logger`)
+for the whole application: static `Logger.*` calls and every `Logger` instance,
+including Denorid's internal ones, write through it. Instances still apply their
+own `levels` and add their context label.
+
+```ts
+import { Logger } from "@denorid/logger";
+
+Logger.overrideLogger(new Logger({ json: true }));
+
+new Logger("AppModule").log("Application started");
+// {"level":"log","pid":1234,"timestamp":1790640000000,"context":"AppModule","message":"Application started"}
+```
+
 ## License
 
 The [@denorid/logger](https://github.com/neonbyte1/denorid) package is
