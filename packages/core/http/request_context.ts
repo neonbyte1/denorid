@@ -26,6 +26,36 @@ export type InferIfZod<T> = T extends ZodType ? z.infer<T> : T;
  * @template Dto - The type or Zod schema describing the request body.
  */
 export abstract class RequestContext<Dto = unknown> {
+  /**
+   * Headers of the response to this request, e.g. `Cache-Control`, `ETag` or
+   * `Vary`, set by guards or the handler. The adapter adds them to the
+   * response it builds from the value the handler returns, so the handler
+   * keeps returning its typed result; a header the adapter sets itself (e.g.
+   * `Content-Type`) is replaced. They are not added to a `Response` returned
+   * by the handler, which is sent as is, and not sent when the request fails:
+   * error responses never carry them.
+   *
+   * With an `ETag` or `Last-Modified` header, a successful (`2xx`) `GET` or
+   * `HEAD` request is answered with `304 Not Modified`, these headers and no
+   * body when the client copy is current: an entity tag in `If-None-Match`
+   * matches (weak comparison, `*` matches any) or, without `If-None-Match`,
+   * `If-Modified-Since` is not older than `Last-Modified`.
+   *
+   * @example
+   * ```ts
+   * \@Get(":threadId")
+   * public async page(ctx: RequestContext): Promise<ThreadPage> {
+   *   const page = await this.threads.page(ctx.param("threadId")!);
+   *
+   *   ctx.responseHeaders.set("Cache-Control", "public, no-cache");
+   *   ctx.responseHeaders.set("ETag", `"${page.revision}"`);
+   *
+   *   return page; // or 304 Not Modified for a matching If-None-Match
+   * }
+   * ```
+   */
+  public readonly responseHeaders: Headers = new Headers();
+
   public constructor(
     public readonly contextId: string,
     public dto: InferIfZod<Dto> | undefined,
