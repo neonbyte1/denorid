@@ -4,6 +4,7 @@ import { createReadStream, type Stats } from "node:fs";
 import { stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
+import { isNotModified } from "./_conditional.ts";
 import type { BunRuntime, RuntimeGlobals } from "./_serve.ts";
 import type { StaticFilesOptions } from "./adapter.ts";
 
@@ -106,36 +107,6 @@ async function findFile(path: string): Promise<StaticFile | undefined> {
   }
 
   return stats?.isFile() ? { path, stats } : undefined;
-}
-
-/**
- * Evaluates the conditional request headers against the file validators.
- * `If-None-Match` takes precedence over `If-Modified-Since` (RFC 9110,
- * section 13.2.2).
- *
- * @param {Context} c - Hono context of the current request.
- * @param {string} etag - Strong entity tag of the file.
- * @param {number} lastModified - Modification time in whole seconds, as ms.
- * @return {boolean} `true` when the client copy is current.
- */
-function isNotModified(
-  c: Context,
-  etag: string,
-  lastModified: number,
-): boolean {
-  const ifNoneMatch = c.req.header("If-None-Match");
-
-  if (ifNoneMatch !== undefined) {
-    // Weak comparison (RFC 9110, section 8.8.3.2) ignores the `W/` prefix.
-    return ifNoneMatch.split(",").some((candidate) => {
-      const tag = candidate.trim();
-
-      return tag === "*" || tag.replace(/^W\//, "") === etag;
-    });
-  }
-
-  // An absent or invalid date parses to NaN.
-  return Date.parse(c.req.header("If-Modified-Since") ?? "") >= lastModified;
 }
 
 /**
