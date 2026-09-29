@@ -73,6 +73,10 @@ type ArgsWithOptionalContext = [...any, string?];
  * Can be used as a static singleton or instantiated per module with a
  * dedicated context label.
  *
+ * Once a logger is installed via {@linkcode Logger.overrideLogger}, every
+ * other instance forwards its (level-filtered) calls to it, adding its own
+ * context label, so the whole application logs through one implementation.
+ *
  * @example Basic usage
  * ```ts
  * // Static singleton
@@ -91,10 +95,25 @@ type ArgsWithOptionalContext = [...any, string?];
  * logger.log({ userId: 1, action: "login" });
  * // {"level":"log","pid":12345,"timestamp":1712345678000,"message":{"userId":1,"action":"login"}}
  * ```
+ *
+ * @example Application-wide JSON output
+ * ```ts
+ * Logger.overrideLogger(new Logger({ json: true }));
+ * new Logger("MyService").log("Initialised");
+ * // {"level":"log","pid":12345,"timestamp":1712345678000,"context":"MyService","message":"Initialised"}
+ * ```
  */
 export class Logger implements LoggerService {
-  /** Backing store for the lazily-created static singleton {@linkcode Logger.staticInstanceRef}. */
+  /** Backing store for the static logger {@linkcode Logger.staticInstanceRef}: the built-in default or the logger installed via {@linkcode Logger.overrideLogger}. */
   private static [STATIC_LOGGER_INSTANCE]?: LoggerService;
+  /** The built-in default created lazily by {@linkcode Logger.staticInstanceRef}; instances never forward to it. */
+  private static defaultInstanceRef?: Logger;
+  /**
+   * `true` while the static logger handles a message. {@linkcode Logger}
+   * instances used by a custom {@linkcode LoggerService} then print
+   * themselves instead of forwarding back into it.
+   */
+  private static dispatching = false;
 
   /**
    * Unix epoch milliseconds recorded at the end of the most recent
@@ -168,11 +187,21 @@ export class Logger implements LoggerService {
    * The shared {@linkcode LoggerService} instance used by all static methods.
    *
    * Lazily created on first access. Replace it via
-   * {@linkcode Logger.overrideLogger} to redirect static log calls to a
-   * custom logger implementation.
+   * {@linkcode Logger.overrideLogger} to redirect static log calls and the
+   * calls of every other {@linkcode Logger} instance to a custom logger
+   * implementation.
    */
   public static get staticInstanceRef(): LoggerService {
-    return (this[STATIC_LOGGER_INSTANCE] ??= new Logger({ timestamp: true }));
+    const ref = this[STATIC_LOGGER_INSTANCE];
+
+    if (ref) {
+      return ref;
+    }
+
+    Logger.defaultInstanceRef = new Logger({ timestamp: true });
+    this[STATIC_LOGGER_INSTANCE] = Logger.defaultInstanceRef;
+
+    return Logger.defaultInstanceRef;
   }
 
   /**
@@ -209,7 +238,10 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public debug(message: string, ...optionalArgs: unknown[]): void {
-    if (this.isValidLevel("debug")) {
+    if (
+      this.isValidLevel("debug") &&
+      !this.forwardToOverride("debug", message, optionalArgs)
+    ) {
       const { messages, context } = this.getContextAndMessagesToPrint([
         message,
         ...optionalArgs,
@@ -240,7 +272,10 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public verbose(message: string, ...optionalArgs: unknown[]): void {
-    if (this.isValidLevel("verbose")) {
+    if (
+      this.isValidLevel("verbose") &&
+      !this.forwardToOverride("verbose", message, optionalArgs)
+    ) {
       const { messages, context } = this.getContextAndMessagesToPrint([
         message,
         ...optionalArgs,
@@ -266,7 +301,10 @@ export class Logger implements LoggerService {
    */
   public log(message: unknown, ...optionalArgs: ArgsWithOptionalContext): void;
   public log(message: string, ...optionalArgs: unknown[]): void {
-    if (this.isValidLevel("log")) {
+    if (
+      this.isValidLevel("log") &&
+      !this.forwardToOverride("log", message, optionalArgs)
+    ) {
       const { messages, context } = this.getContextAndMessagesToPrint([
         message,
         ...optionalArgs,
@@ -292,7 +330,10 @@ export class Logger implements LoggerService {
    */
   public warn(message: unknown, ...optionalArgs: ArgsWithOptionalContext): void;
   public warn(message: string, ...optionalArgs: unknown[]): void {
-    if (this.isValidLevel("warn")) {
+    if (
+      this.isValidLevel("warn") &&
+      !this.forwardToOverride("warn", message, optionalArgs)
+    ) {
       const { messages, context } = this.getContextAndMessagesToPrint([
         message,
         ...optionalArgs,
@@ -321,7 +362,10 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public fatal(message: string, ...optionalArgs: unknown[]): void {
-    if (this.isValidLevel("fatal")) {
+    if (
+      this.isValidLevel("fatal") &&
+      !this.forwardToOverride("fatal", message, optionalArgs)
+    ) {
       const { messages, context } = this.getContextAndMessagesToPrint([
         message,
         ...optionalArgs,
@@ -361,7 +405,10 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public error(message: string, ...optionalArgs: unknown[]): void {
-    if (this.isValidLevel("error")) {
+    if (
+      this.isValidLevel("error") &&
+      !this.forwardToOverride("error", message, optionalArgs)
+    ) {
       const { messages, context, stack } = this
         .getContextAndStackAndMessagesToPrint([
           message,
@@ -399,7 +446,7 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public static debug(message: string, ...optionalArgs: unknown[]): void {
-    this.staticInstanceRef.debug?.(message, ...optionalArgs);
+    Logger.dispatch(this.staticInstanceRef, "debug", message, optionalArgs);
   }
 
   /**
@@ -422,7 +469,7 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public static verbose(message: string, ...optionalArgs: unknown[]): void {
-    this.staticInstanceRef.verbose?.(message, ...optionalArgs);
+    Logger.dispatch(this.staticInstanceRef, "verbose", message, optionalArgs);
   }
 
   /**
@@ -444,7 +491,7 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public static log(message: string, ...optionalArgs: unknown[]): void {
-    this.staticInstanceRef.log(message, ...optionalArgs);
+    Logger.dispatch(this.staticInstanceRef, "log", message, optionalArgs);
   }
 
   /**
@@ -466,7 +513,7 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public static warn(message: string, ...optionalArgs: unknown[]): void {
-    this.staticInstanceRef.warn(message, ...optionalArgs);
+    Logger.dispatch(this.staticInstanceRef, "warn", message, optionalArgs);
   }
 
   /**
@@ -490,7 +537,7 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public static fatal(message: string, ...optionalArgs: unknown[]): void {
-    this.staticInstanceRef.fatal(message, ...optionalArgs);
+    Logger.dispatch(this.staticInstanceRef, "fatal", message, optionalArgs);
   }
 
   /**
@@ -513,7 +560,7 @@ export class Logger implements LoggerService {
     ...optionalArgs: ArgsWithOptionalContext
   ): void;
   public static error(message: string, ...optionalArgs: unknown[]): void {
-    this.staticInstanceRef.error(message, ...optionalArgs);
+    Logger.dispatch(this.staticInstanceRef, "error", message, optionalArgs);
   }
 
   /**
@@ -549,7 +596,14 @@ export class Logger implements LoggerService {
    * Replace the static logger singleton with a custom
    * {@linkcode LoggerService} implementation (a {@linkcode Logger} instance
    * works as well). All subsequent static `Logger.*` calls will be forwarded
-   * to it.
+   * to it, and so will the calls of every other {@linkcode Logger} instance
+   * that pass its own `levels` filter. Such an instance appends its context
+   * label when the call carries none (`error` keeps the stack slot:
+   * `error(message, undefined, context)`).
+   *
+   * A custom logger may print through a {@linkcode Logger} instance of its
+   * own; that instance writes directly as long as it is called synchronously
+   * from within the custom logger.
    *
    * @param {LoggerService} logger Custom logger instance.
    *
@@ -583,6 +637,99 @@ export class Logger implements LoggerService {
       ref.context = ref.originalContext.value;
       ref.originalContext = undefined;
     }
+  }
+
+  /**
+   * Calls the `level` method of `target` and marks the static logger as busy
+   * for the duration of the call (see {@linkcode Logger.dispatching}).
+   *
+   * @param {LoggerService} target - The static logger.
+   * @param {LogLevel} level - Severity level; also the name of the method to call.
+   * @param {unknown} message - The primary value to log.
+   * @param {unknown[]} optionalArgs - Remaining arguments, passed on unchanged.
+   */
+  private static dispatch(
+    target: LoggerService,
+    level: LogLevel,
+    message: unknown,
+    optionalArgs: unknown[],
+  ): void {
+    const dispatching = Logger.dispatching;
+
+    Logger.dispatching = true;
+
+    try {
+      target[level]?.(message, ...optionalArgs);
+    } finally {
+      Logger.dispatching = dispatching;
+    }
+  }
+
+  /**
+   * Forwards a call to the logger installed via
+   * {@linkcode Logger.overrideLogger}, appending this instance's context label
+   * when the arguments carry none.
+   *
+   * Nothing is forwarded while no logger is installed, when this instance is
+   * the installed logger, or while the installed logger is handling a message
+   * (a custom logger printing through a {@linkcode Logger} instance would
+   * otherwise call itself again).
+   *
+   * @param {LogLevel} level - Severity level; also the name of the method to call.
+   * @param {unknown} message - The primary value to log.
+   * @param {unknown[]} optionalArgs - Remaining arguments as passed by the caller.
+   * @returns {boolean} `true` when forwarded, `false` when this instance prints the message itself.
+   */
+  private forwardToOverride(
+    level: LogLevel,
+    message: unknown,
+    optionalArgs: unknown[],
+  ): boolean {
+    const target = Logger[STATIC_LOGGER_INSTANCE];
+
+    if (
+      !target || target === this || target === Logger.defaultInstanceRef ||
+      Logger.dispatching
+    ) {
+      return false;
+    }
+
+    let args = optionalArgs;
+
+    if (this.context && !this.hasContextArgument(level, optionalArgs)) {
+      // keep the stack slot of `error(message, stack, context)`
+      args = level === "error" && optionalArgs.length === 0
+        ? [undefined, this.context]
+        : [...optionalArgs, this.context];
+    }
+
+    Logger.dispatch(target, level, message, args);
+
+    return true;
+  }
+
+  /**
+   * Returns `true` when the caller passed an explicit context label, i.e. the
+   * last argument is a string that is read as the context rather than as a
+   * message or, for `error`, as a stack trace (see
+   * {@linkcode Logger.getContextAndStackAndMessagesToPrint}).
+   *
+   * @param {LogLevel} level - Severity level of the call.
+   * @param {unknown[]} optionalArgs - Arguments following the message.
+   * @returns {boolean} `true` if the arguments end with a context label.
+   */
+  private hasContextArgument(
+    level: LogLevel,
+    optionalArgs: unknown[],
+  ): boolean {
+    const last = optionalArgs.at(-1);
+
+    if (typeof last !== "string") {
+      return false;
+    }
+
+    return level !== "error" || optionalArgs.length > 1 ||
+      !this.isStackFormat(last);
   }
 
   /**

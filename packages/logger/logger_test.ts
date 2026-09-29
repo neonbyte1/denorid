@@ -1228,6 +1228,168 @@ describe("Logger", () => {
     });
   });
 
+  describe("instances with an installed logger", () => {
+    useCapturedConsole();
+
+    const STATIC_KEY = Symbol.for("drizzle.static_logger");
+
+    beforeEach(() => {
+      (Logger as unknown as Record<symbol, unknown>)[STATIC_KEY] = undefined;
+    });
+
+    afterEach(() => {
+      (Logger as unknown as Record<symbol, unknown>)[STATIC_KEY] = undefined;
+    });
+
+    const parseLines = (output: string): Record<string, unknown>[] =>
+      output.trim().split("\n").map((line) => JSON.parse(line));
+
+    it("should print through a Logger installed via overrideLogger", () => {
+      Logger.overrideLogger(new Logger({ json: true }));
+      new Logger("Foo", { colors: true }).log("instance");
+      new Logger("Foo").error("boom", "Error: x\n    at main (file.ts:1:1)");
+
+      const [log] = parseLines(capturedOutput);
+      const [error] = parseLines(capturedStderr);
+
+      assertEquals([log.level, log.context, log.message], [
+        "log",
+        "Foo",
+        "instance",
+      ]);
+      assertEquals([error.level, error.context, error.message, error.stack], [
+        "error",
+        "Foo",
+        "boom",
+        "Error: x\n    at main (file.ts:1:1)",
+      ]);
+    });
+
+    it("should let the installed Logger print calls made on it directly", () => {
+      const installed = new Logger("App", { json: true });
+
+      Logger.overrideLogger(installed);
+      installed.log("direct");
+
+      const lines = parseLines(capturedOutput);
+
+      assertEquals(lines.length, 1);
+      assertEquals([lines[0].context, lines[0].message], ["App", "direct"]);
+    });
+
+    it("should append the instance context only when the call carries none", () => {
+      const stack = "Error: x\n    at main (file.ts:1:1)";
+      const custom = {
+        log: spy((_msg: unknown, ..._args: unknown[]): void => {}),
+        warn: spy((_msg: unknown, ..._args: unknown[]): void => {}),
+        fatal: spy((_msg: unknown, ..._args: unknown[]): void => {}),
+        error: spy((_msg: unknown, ..._args: unknown[]): void => {}),
+        debug: spy((_msg: unknown, ..._args: unknown[]): void => {}),
+        verbose: spy((_msg: unknown, ..._args: unknown[]): void => {}),
+      } satisfies LoggerService;
+      const logger = new Logger("Foo", {
+        levels: ["debug", "verbose", "log", "warn", "error", "fatal"],
+      });
+
+      Logger.overrideLogger(custom);
+      logger.log("a");
+      logger.log("a", "Bar");
+      logger.log("a", 1);
+      new Logger().log("no context");
+      logger.warn("w");
+      logger.fatal("f");
+      logger.debug("d");
+      logger.verbose("v");
+      logger.error("e");
+      logger.error("e", stack);
+      logger.error("e", "Bar");
+      logger.error("e", stack, "Bar");
+      logger.error("e", { id: 1 });
+
+      assertEquals(custom.log.calls.map((call) => call.args), [
+        ["a", "Foo"],
+        ["a", "Bar"],
+        ["a", 1, "Foo"],
+        ["no context"],
+      ]);
+      assertEquals(custom.warn.calls[0].args, ["w", "Foo"]);
+      assertEquals(custom.fatal.calls[0].args, ["f", "Foo"]);
+      assertEquals(custom.debug.calls[0].args, ["d", "Foo"]);
+      assertEquals(custom.verbose.calls[0].args, ["v", "Foo"]);
+      assertEquals(custom.error.calls.map((call) => call.args), [
+        ["e", undefined, "Foo"],
+        ["e", stack, "Foo"],
+        ["e", "Bar"],
+        ["e", stack, "Bar"],
+        ["e", { id: 1 }, "Foo"],
+      ]);
+      assertEquals(capturedOutput + capturedStderr, "");
+    });
+
+    it("should filter by the instance levels before forwarding", () => {
+      const custom = {
+        log: spy((_msg: unknown, ..._args: unknown[]): void => {}),
+        warn: () => {},
+        fatal: () => {},
+        error: () => {},
+        debug: spy((_msg: unknown, ..._args: unknown[]): void => {}),
+      } satisfies LoggerService;
+
+      Logger.overrideLogger(custom);
+      new Logger("Foo").debug("hidden");
+      new Logger("Foo", { levels: ["error"] }).log("hidden");
+
+      assertEquals(custom.debug.calls.length, 0);
+      assertEquals(custom.log.calls.length, 0);
+    });
+
+    it("should drop levels the installed logger does not implement", () => {
+      Logger.overrideLogger({
+        log: () => {},
+        warn: () => {},
+        fatal: () => {},
+        error: () => {},
+      });
+      new Logger("Foo", { levels: ["verbose"] }).verbose("dropped");
+
+      assertEquals(capturedOutput, "");
+    });
+
+    it("should print Logger instances used inside a custom logger once", () => {
+      class WrappingLogger implements LoggerService {
+        private readonly inner = new Logger({ json: true });
+
+        public log(message: unknown, ...optionalArgs: unknown[]): void {
+          this.inner.log({ wrapped: message }, ...optionalArgs);
+        }
+
+        public warn(): void {}
+
+        public fatal(): void {}
+
+        public error(): void {}
+      }
+
+      Logger.overrideLogger(new WrappingLogger());
+      new Logger("Foo").log("instance");
+      Logger.log("static", "Bar");
+
+      assertEquals(
+        parseLines(capturedOutput).map((line) => [line.context, line.message]),
+        [["Foo", { wrapped: "instance" }], ["Bar", { wrapped: "static" }]],
+      );
+    });
+
+    it("should keep printing locally while only the default static Logger exists", () => {
+      Logger.staticInstanceRef;
+      new Logger("Foo", { json: true }).log("local");
+
+      const [line] = parseLines(capturedOutput);
+
+      assertEquals([line.context, line.message], ["Foo", "local"]);
+    });
+  });
+
   describe("edge cases", () => {
     useCapturedConsole();
 
