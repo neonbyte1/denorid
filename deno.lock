@@ -939,7 +939,7 @@
       },
       "packages/platform-socket-io": {
         "dependencies": [
-          "jsr:@denorid/core@^1.0.0-beta5",
+          "jsr:@denorid/core@^1.0.0-beta6",
           "npm:socket.io-client@^4.8.4",
           "npm:socket.io@^4.8.4"
         ]
