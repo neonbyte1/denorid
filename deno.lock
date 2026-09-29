@@ -873,7 +873,7 @@
       "packages/core": {
         "dependencies": [
           "jsr:@denorid/injector@^1.0.0-beta2",
-          "jsr:@denorid/logger@^1.0.0-beta2",
+          "jsr:@denorid/logger@^1.0.0-beta3",
           "jsr:@std/http@^1.1.4",
           "jsr:@std/uuid@^1.1.2",
           "npm:zod@^4.6.5"
